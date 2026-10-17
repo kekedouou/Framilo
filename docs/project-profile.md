@@ -2,6 +2,8 @@
 
 ## 身份与入口
 
+- 2026-10-17当前工作为发布后规划：用户授权路线整合与文档，E-01有界稳定性/E-02画质实验尚待开发授权，E-03正式接入需先看结果及确认行为。方向见roadmap，执行范围见development-plan当前段；旧MVP历史不能自动授权新工作。
+
 - 正式主线是Eagle Window视频分析插件，正式实现只在plugin/；MVP固定720p、短MP4，默认RAM1GiB、512MiB及1～10GiB档位，JPEG池≤总额度1/8，额度不是整个程序内存硬上限。
 - 阶段3A/3B/3C已批准，阶段4主要实现已收尾。R1已接受Beta限定范围，R2独立安装用户人工验收通过；用户已最终确认R3，Beta2及ZIP/校验已在GitHub发布并实际下载核对。R4归档完成，本轮开发冻结，历史路径公开已明确接受，许可证未指定，不自动进入后续开发。
 - Git根为eagle-video-analysis/，只有一个.git。正式开发入口为plugin/manifest.json；发行入口名为“视频分析 · MVP Beta”，独立ID，不与日常开发入口混为一谈。
@@ -15,7 +17,8 @@
 | --- | --- |
 | 长期权限和工程规则 | 根AGENTS.md；不堆进度 |
 | 产品、架构 | docs/product.md的R/P及批准补充；docs/architecture.md的C/A-01～A-08 |
-| 任务、清理规则 | docs/development-plan.md的T0～T4及F-01～F-07 |
+| 愿景与未来候选 | docs/roadmap.md；EV决定、近期/中期/远期及调整理由，不是已实现功能 |
+| 任务、清理规则 | docs/development-plan.md的近期E-01～E-03、历史T0～T4及F-01～F-07 |
 | 验证协议 | docs/verification.md；协议、真实运行和人工反馈分开 |
 | 当前状态 | docs/progress.md；先读当前段，日期部分为历史 |
 | 专项结果 | docs/experiments/A、B、S1、T0～T4；保留原数据/失败/测量局限 |

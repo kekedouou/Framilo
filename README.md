@@ -70,6 +70,8 @@
 
 本机素材、配置和原始证据不公开，媒体实验需单独配置及授权，不能从源码ZIP复现私人素材的运行。包内 `BUILD-INFO.json` 保存来源提交和逐文件SHA256；新编译器输出须重新核对，不承诺跨机器生成完全相同的二进制字节。
 
-[产品规格](docs/product.md) · [技术架构](docs/architecture.md) · [验证规范](docs/verification.md) · [进度](docs/progress.md) · [更新记录](CHANGELOG.md) · [Beta2发布记录](docs/releases/v0.1.0-beta.2.md)
+[产品规格](docs/product.md) · [产品路线图](docs/roadmap.md) · [技术架构](docs/architecture.md) · [验证规范](docs/verification.md) · [进度](docs/progress.md) · [更新记录](CHANGELOG.md) · [Beta2发布记录](docs/releases/v0.1.0-beta.2.md)
+
+2026-10-17：发布后路线已整理，近期优先稳定性及有损/无损与1080p验证；当前发行版仍固定720p有损预览，未来功能未实现，开发仍待授权。
 
 项目开源许可证尚未指定，本次未新增LICENSE或授权声明。Eagle及外部工具的权利归各自作者，插件包不分发其程序。
