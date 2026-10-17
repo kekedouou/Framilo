@@ -47,6 +47,37 @@ function frameReader(bytes, onFrame) {
   } }, finish() { if (offset) throw Error('Truncated raw frame'); return count; } };
 }
 function percentile(a, p) { const xs = a.slice().sort((x,y) => x-y); return xs.length ? xs[Math.ceil(xs.length*p)-1] : null; }
+function clipEnd(times, probe, options={}) {
+  function integer(value) {
+    if(typeof value==='number'&&!Number.isSafeInteger(value))throw Error('原视频时间信息超过可精确读取的范围');
+    return (typeof value==='string'||typeof value==='number')&&/^-?\d+$/.test(String(value))?BigInt(value):null;
+  }
+  const combined=Array.isArray(probe.packets_and_frames)?probe.packets_and_frames:[];
+  const frames=Array.isArray(probe.frames)?probe.frames:combined.filter(x=>x.type==='frame');
+  const packets=Array.isArray(probe.packets)?probe.packets:combined.filter(x=>x.type==='packet');
+  const stamps=frames.map(f=>({frame:f,pts:integer(f.best_effort_timestamp)})).filter(x=>x.pts!==null);
+  if(!times.length||times.some(t=>!stamps.some(x=>x.pts===integer(t.pts))))throw Error('独立核对没有找到全部源画面时间点');
+  const last=integer(times[times.length-1].pts);
+  const later=stamps.filter(x=>x.pts>last).reduce((best,x)=>best===null||x.pts<best?x.pts:best,null);
+  if(later!==null)return {lastFrameEndTicks:String(later),method:'next independently probed source-frame PTS'};
+  const matched=stamps.filter(x=>x.pts===last);
+  for(const x of matched)for(const field of ['duration','pkt_duration']){
+    const duration=integer(x.frame[field]);if(duration!==null&&duration>0n)return {lastFrameEndTicks:String(last+duration),method:'explicit final source-frame duration'};
+  }
+  const durations=packets.filter(p=>integer(p.pts)===last).map(p=>integer(p.duration)).filter(n=>n!==null&&n>0n);
+  if(durations.length&&durations.every(n=>n===durations[0]))return {lastFrameEndTicks:String(last+durations[0]),method:'matching source packet PTS plus explicit packet duration'};
+  // A successful read to EOF, with no later source frame, proves this is the
+  // actual final presentation. Only then may the declared video-stream end
+  // stand in for a missing optional per-frame/per-packet duration.
+  const stream=Array.isArray(probe.streams)&&probe.streams.find(s=>s.codec_type==='video'),base=options.timeBase;
+  if(options.reachedEOF===true&&stream&&typeof stream.time_base==='string'&&/^\d+\/\d+$/.test(stream.time_base)&&
+    Array.isArray(base)&&base.length===2&&base.every(n=>Number.isSafeInteger(n)&&n>0)){
+    const [n,d]=stream.time_base.split('/').map(BigInt),start=integer(stream.start_pts),duration=integer(stream.duration_ts);
+    if(n>0n&&d>0n&&n*BigInt(base[1])===d*BigInt(base[0])&&start!==null&&duration!==null&&duration>0n&&start+duration>last)
+      return {lastFrameEndTicks:String(start+duration),method:'confirmed source EOF plus explicit video-stream start_pts + duration_ts'};
+  }
+  const error=Error('暂时无法确认片段末帧的准确结束时间；源时间点及明确时长均不足，未按平均帧率猜测');error.code='CLIP_FINAL_DURATION_MISSING';throw error;
+}
 async function command(exe, args, onData, onErrorLine, control, timeoutMs=60000) {
   if (control.failure) throw control.failure;
   const child = cp.spawn(exe, args, { windowsHide: true, shell: false, stdio: ['ignore','pipe','pipe'] }); control.child = child;
@@ -145,16 +176,19 @@ async function run(selection, heights, formats=['jpeg','png'], capture=false, fu
             else work.remove([name],records);
           }
           if(capture){
-            const probeChunks=[];let probeBytes=0;
-            await command(config.ffprobe,['-v','error','-select_streams','v:0','-read_intervals',`${Math.max(0,start)}%${usedTimes[count-1].time+1}`,'-show_frames','-show_entries','frame=best_effort_timestamp,pkt_duration,duration','-of','json',source.file],
-              b=>{probeBytes+=b.length;if(probeBytes>2*1024**2)throw Error('Independent probe output exceeds boundary');probeChunks.push(b);},null,control,15000);
-            const probed=JSON.parse(Buffer.concat(probeChunks).toString('utf8')).frames;
-            if(usedTimes.some(t=>!probed.some(f=>String(f.best_effort_timestamp)===t.pts)))throw Error('Source PTS differs from independent probe');
-            const frame=probed.find(f=>String(f.best_effort_timestamp)===usedTimes[count-1].pts),duration=frame&&(frame.duration||frame.pkt_duration);
-            if(!duration||BigInt(duration)<=0n)throw Error('Explicit final source-frame duration missing');
-            const finalTicks=(BigInt(usedTimes[count-1].pts)+BigInt(duration)).toString();
+            async function probeFrames(interval){
+              const chunks=[];let bytes=0;
+              await command(config.ffprobe,['-v','error','-select_streams','v:0','-read_intervals',interval,'-show_frames','-show_packets','-show_streams','-show_entries','frame=best_effort_timestamp,pkt_duration,duration:packet=pts,duration:stream=codec_type,start_pts,duration_ts,time_base','-of','json',source.file],
+                b=>{bytes+=b.length;if(bytes>2*1024**2)throw Error('Independent probe output exceeds boundary');chunks.push(b);},null,control,15000);
+              return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            }
+            const sourceBase=source.timeBase.split('/').map(Number);let resolvedEnd;
+            try{resolvedEnd=clipEnd(usedTimes,await probeFrames(`${Math.max(0,start)}%${usedTimes[count-1].time+1}`),{timeBase:sourceBase});}
+            catch(e){if(e.code!=='CLIP_FINAL_DURATION_MISSING')throw e;
+              resolvedEnd=clipEnd(usedTimes,await probeFrames(`${Math.max(0,start)}%`),{timeBase:sourceBase,reachedEOF:true});}
+            const finalTicks=resolvedEnd.lastFrameEndTicks;
             const data={schema:'eva-display-clip-v1',source:key,sourceSha256:source.sha256,width,height,times:usedTimes,
-              timeBase:source.timeBase.split('/').map(Number),lastFrameEndTicks:finalTicks,referenceHashes:refs,displays,
+              timeBase:source.timeBase.split('/').map(Number),lastFrameEndTicks:finalTicks,lastFrameEndMethod:resolvedEnd.method,referenceHashes:refs,displays,
               scope:'One-second isolated source clip; no original audio or library operations. Not full-video preparation/latency acceptance.'};
             const meta=work.create('display-index.json');work.write(meta,Buffer.from(JSON.stringify(data)));work.seal(meta);
             records.save('display-ready',{directory:path.relative(REPO,work.root),files:work.names().filter(n=>n!==raw).map(n=>({name:n,identity:identity(work.path(n)),sha256:hashFile(work.path(n))})),exitCondition:'Retain for the single pending user/Eagle quality check; retire using this receipt after acceptance.'});
@@ -172,4 +206,4 @@ async function run(selection, heights, formats=['jpeg','png'], capture=false, fu
   const summary={schema:'eva-quality-summary-v1',results,sourceFilesUnchanged:true,productionUntouched:true,hostVerified:false};records.save('quality-summary',summary);return summary;
 }
 if(require.main===module){const keys=(process.argv[2]||'fenshen,sonic,hevc,vp9').split(','),heights=(process.argv[3]||'720,1080').split(',').map(Number),formats=(process.argv[4]||'jpeg,png').split(',');run(keys,heights,formats,process.argv[5]==='capture',process.argv[5]==='full').catch(e=>{console.error(e.message);process.exitCode=1;});}
-module.exports={PngParser,WebpParser,frameReader,percentile,run,command,monitor};
+module.exports={PngParser,WebpParser,frameReader,percentile,clipEnd,run,command,monitor};
