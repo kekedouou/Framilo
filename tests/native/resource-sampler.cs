@@ -221,7 +221,7 @@ class ResourceSampler {
       bool compact=args.Length>2 && args[2]=="compact"; int firstRoot=compact ? 3 : 2;
       if(args.Length<firstRoot+4 || (args.Length-firstRoot)%4!=0 || args.Length>firstRoot+32) throw new IOException("Expected interval duration and explicit pid/startTicks/role/image roots.");
       int interval=Int32.Parse(args[0]), duration=Int32.Parse(args[1]);
-      if(interval!=100 || duration<500 || duration>(compact ? 3960000 : 3900000)) throw new IOException("Observation interval/duration outside protocol.");
+      if((interval!=100 && interval!=1000) || duration<500 || duration>(compact ? 3960000 : 3900000)) throw new IOException("Observation interval/duration outside protocol.");
       var roots=new List<Root>(); var ids=new HashSet<int>();
       for(int i=firstRoot;i<args.Length;i+=4) {
         int pid=Int32.Parse(args[i]); string role=args[i+2],image=args[i+3]; long ticks;

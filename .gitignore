@@ -42,3 +42,6 @@
 /tests/host/t4/preparation-scratch/
 /tests/host/t4/packed-runtime-scratch/
 /tests/host/t4/stability-scratch/
+/prototypes/preview-quality/scratch/
+/prototypes/preview-quality/config.local.json
+/prototypes/preview-quality/display.local.json
