@@ -224,3 +224,40 @@ slot-108按本轮已关闭授权刷新同一入口并复核20份副本、19份�
 **尚未确认：** 不能据此宣布Canvas实现有缺陷、左侧绝对色彩准确、Windows独立视频图层/驱动增强/特定gamma或ICC已是根因，也不能外推全部素材/帧/机器。该结果是定位进展，**不是颜色修复通过或E-03接入授权**。本轮仅保存反馈/文档及本地版本，不改播放器、实验入口、源文件/素材库、系统设置或冻结版本，不重跑功能/性能验收。
 
 文档收尾：41份Markdown、423处本地链接/锚点及Git Diff空白检查通过；无代码修改，不重复自动模型、媒体或GUI验收。
+
+## 同帧颜色说明与显示输出候选（2026-10-17）
+
+### 范围与调查结果
+
+基线3c23409。用户在已有“左侧更鲜艳”观察后批准继续解决，并确认实验窗口已关闭。本轮没有重做该观察、调饱和度或改正式渲染架构；只在同一已批准入口增加实际颜色说明、受控合成和一个单帧视频输出候选。冻结Beta2、外部安装、原视频/标注及系统/显卡设置不改，E-03仍等待颜色验收。
+
+直接读取Chromium **108.0.5359.215**源码（匹配此前真实Eagle记录的Chrome版本）：
+
+- [video_frame.cc](https://github.com/chromium/chromium/blob/108.0.5359.215/third_party/blink/renderer/modules/webcodecs/video_frame.cc#L532-L588)对HTMLVideoElement直接取得底层VideoFrame；colorSpace来自该帧。因此可以仅读元数据/立即close，区分实际浏览器解释和仅由ffprobe推断；仍不是显卡最终上屏颜色。
+- [color_space.cc](https://github.com/chromium/chromium/blob/108.0.5359.215/ui/gfx/color_space.cc#L880-L895)在这一Skia传递函数路径将BT709按sRGB兼容处理；不能仅凭两个标准名称不同，直接给本插件补严格gamma曲线并称根因解决。
+- [dc_layer_overlay.cc](https://github.com/chromium/chromium/blob/108.0.5359.215/components/viz/service/display/dc_layer_overlay.cc#L109-L115)普通YUV/texture候选拒绝非SrcOver混合，根合成层处理见[overlay_processor_win.cc](https://github.com/chromium/chromium/blob/108.0.5359.215/components/viz/service/display/overlay_processor_win.cc#L65-L73)。白底multiply数学上保持颜色，能建立有源码依据的对照；但前者L791～794有MediaFoundation DComp例外，未取得本机quad/route遥测便不能宣布实际叠加已被关闭。
+- [static_bitmap_image_to_video_frame_copier.cc](https://github.com/chromium/chromium/blob/108.0.5359.215/third_party/blink/renderer/platform/graphics/static_bitmap_image_to_video_frame_copier.cc#L76-L122)的captureStream相关路径可将sRGB转REC709、退回I420或内部读回。因此视频输出候选不是零转换/无损保证，需另验颜色、目标帧与性能，不能因“不写JPEG”便宣称无损。
+
+本机Eagle官方插件桥将require('electron')映射为空对象；公开Eagle app/window接口不提供主进程getGPUInfo/contentTracing。没有绕过宿主边界、启用调试或截页。截图本身也可能改变叠加条件，未将截页RGB当物理显示真值。本轮沙箱无法只读CIM进程枚举，旧renderer参数只作此前证据，不称本轮重新核实。
+
+### 实现与资源边界
+
+新增display-output.cjs：读取VideoFrame的实际格式/尺寸/时间/颜色说明、Canvas实际配置，未知明确标记；finally关闭VideoFrame。源video和候选复用同一个元素，进入③先卸载源src，返回①重新确认同一首帧时间。②仅对同一暂停源video应用白底multiply/isolate，①/③恢复normal/auto，保持右侧Canvas。没有两个原视频竞争显示资源，没有磁盘图片生成。
+
+③仅将固定Canvas通过captureStream(0)送至视频元素，确认实际视频帧回调后暂停；成功保留静态画面至取消，关闭停止所有自有tracks、回调/计时器并清srcObject/src和Canvas。显式记录targetSourcePtsVerified=false；流时间不是源PTS证明。pixelReadback=false指JS未调用getImageData，不能解释成浏览器内部零读回。同面板最多12条小记录，仍用check-recorder合并到原16MiB/128文件边界；记录失败不关闭画面，不存画面/完整路径/名称。
+
+独立审查在交付前发现首帧启动依赖：captureStream初始requestFrame只置标记，实际捕获依赖Canvas后续绘制，详见[auto_canvas_draw_listener.cc](https://github.com/chromium/chromium/blob/108.0.5359.215/third_party/blink/renderer/modules/mediacapturefromelement/auto_canvas_draw_listener.cc#L30-L32)及[Canvas通知](https://github.com/chromium/chromium/blob/108.0.5359.215/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc#L585-L592)。不能等play成功/metadata才请求静止画面，已将这一顺序纳入修正和模型；此发现是工具缺陷，不是用户颜色根因。
+
+### 验证与当前界限
+
+独立已安装Chrome155的2×2流API冒烟未进入页面：约384ms因Crashpad管道错误自行退出（4294930433）。按计划未重试/扩大权限；自有profile为空，确认已知进程退出并按规范路径/身份清理，未读素材或截图。不能记为浏览器API通过，更不能记为Eagle颜色/性能通过。Node16模型、默认检查和同入口刷新结果在本节收尾追加。
+
+当前颜色根因与修复效果仍待真实宿主结果。集中操作只需在同一入口点“颜色显示通道对照”，用之前1080p山景，依次选①②③：报告②相对①是否变淡、③是否比右侧鲜艳并接近①。自动记录由Codex核对，无需命令、内存观察或长测。若②接近Canvas，支持最终显示路线差异；若没有变化，也要保留特殊路径例外，不能硬称驱动或画布有错。若③有效，才据性能/准确性影响提出正式最小落地方案，不能把首帧候选直接当整段播放器修复通过。
+
+### 本轮自动检查与入口交付
+
+slot-111保存Chromium108原始只读源码片段、独立Chrome失败说明、实际Eagle可执行文件Node16.17.1的七组检查，以及Node24默认完整检查原输出；两类Node检查均exit0。七组为输出流/元数据、实际工具条组合、首帧门控、纯绘图、原颜色参考、颜色probe、选中/退出；工具条16项模型通过。静态Canvas启动顺序检查覆盖“收到requestFrame＋同帧重绘后才提供metadata/画面、play尚未兑现”，防止以立即成功的模拟play掩盖循环等待；成功/失败/超时/晚回调和退出均释放。111为85507B，SHA256 `323b000081e95fa8db59b069ea60138a12d140538d596520fdd14421751f506a`。这些是兼容性/模型证据，没有运行真实Eagle画面或判断颜色。
+
+slot-112依用户已关闭确认刷新同一host，核对20份副本、20份实验脚本语法、41份Markdown/424处本地链接，以及辅助模块摘要。已有host缓存/设置身份/摘要、001～111旧记录均保持；scratch249331368B（约237.78MiB），无临时run目录、无新视频/图片，证据含两控制文件共114份/1117874B，原配额未扩。111/112均未删原始证据；只有失败独立Chrome的自有空profile已按身份退出清理。112为29384B，SHA256 `25618476af8c00bc86b57d15adf45643f088d2b772fba09e13650a3e3d9662fb`。
+
+冻结Beta2仍9e2fd0d，ZIP仍ed893506…6a93；正式plugin源码无diff、仓库外安装不改。本轮保存本地Git，未推送/发布。入口准备完成，**待这次真实颜色对照，不能记为已修复或E-03通过**；后续若源元数据未知/候选不支持，保留明确失败，不以回调或CSS属性代替颜色证据。

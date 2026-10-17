@@ -4,7 +4,7 @@
   let toolRoot=null,observation=null,clip=null,qualityToken=0,opening=false,currentClose=null,checkRecorder=null,pageClosed=false;
   const bar=document.createElement('div');
   bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:999;background:#303030;padding:6px;color:white;font:13px sans-serif;display:flex;flex-wrap:wrap;gap:8px;align-items:center';
-  bar.innerHTML='<strong>演进验证</strong><button id="evObserve">开始内存记录</button><button id="evStop" disabled>停止并保存</button><button id="evQuality">所选视频颜色对照</button><button id="evDirect">原视频／画布验证（无缓存）</button><span id="evStatus">普通播放仍是720p JPEG；记录默认关闭</span><span id="evResources" style="width:100%" title="受管RAM是当前播放器缓存账目；进程内存还包含程序本身，不含共享Eagle/GPU，二者不能相加。">内存记录未开启</span>';
+  bar.innerHTML='<strong>演进验证</strong><button id="evObserve">开始内存记录</button><button id="evStop" disabled>停止并保存</button><button id="evQuality">所选视频颜色对照</button><button id="evDirect">颜色显示通道对照</button><span id="evStatus">普通播放仍是720p JPEG；记录默认关闭</span><span id="evResources" style="width:100%" title="受管RAM是当前播放器缓存账目；进程内存还包含程序本身，不含共享Eagle/GPU，二者不能相加。">内存记录未开启</span>';
   document.body.prepend(bar);document.body.style.paddingTop='72px';
   const start=bar.querySelector('#evObserve'),stop=bar.querySelector('#evStop'),status=bar.querySelector('#evStatus'),resources=bar.querySelector('#evResources'),qualityButton=bar.querySelector('#evQuality'),directButton=bar.querySelector('#evDirect');
   if(typeof eagle==='object'&&typeof eagle.onPluginCreate==='function')eagle.onPluginCreate(plugin=>{toolRoot=path.dirname(path.dirname(plugin.path));});
@@ -38,12 +38,15 @@
       const released=await window.EVAEvolutionClose();if(pageClosed)return;if(released&&released.status==='error')throw Error('普通播放器资源未释放');
       const workspace=require(path.join(toolRoot,'workspace.cjs')),before=workspace.identity(selected.filePath);
       const panel=document.createElement('div');panel.id='evDirectPanel';panel.style.cssText='position:fixed;inset:72px 0 0;z-index:998;background:#181818;color:#eee;padding:16px;overflow:auto;font:14px sans-serif';
-      panel.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center"><strong id="evDirectName"></strong><button id="evDirectSelect">读取Eagle当前选中视频</button><button id="evDirectReturn">返回普通播放器</button></div><p>只比较原视频的首个画面：右侧直接复制左侧视频的像素，不经过FFmpeg、JPEG／PNG或预缓存。优先使用之前的1080p山景视频。</p><p id="evDirectInfo">正在读取原视频首帧……</p><div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start"><div style="min-width:0"><p>左：原视频直接显示</p><video id="evDirectVideo" muted playsinline style="display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:black;filter:none;opacity:1"></video></div><div style="min-width:0"><p>右：同一帧直接画入画布（无图片压缩）</p><canvas id="evDirectCanvas" width="1" height="1" style="display:block;width:100%;height:auto;aspect-ratio:16/9;background:black;filter:none;opacity:1;visibility:hidden"></canvas></div></div><p id="evDirectMessage">同一视频对象保持暂停，只需观察两侧饱和度；这不是性能或完整播放器验收。</p>';
+      panel.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center"><strong id="evDirectName"></strong><select id="evDirectMode" disabled><option value="source">① 原视频直接显示</option><option value="composite">② 原视频经页面合成</option><option value="bridge">③ 画布画面经视频通道（候选）</option></select><button id="evDirectSelect">读取Eagle当前选中视频</button><button id="evDirectReturn">返回普通播放器</button></div><p>右侧固定为同一首帧的画布；下拉只改变左侧的显示通道，不调饱和度、不生成图片。优先选之前的1080p山景视频。请比较①与②是否变淡、③是否比右侧鲜艳。</p><p id="evDirectInfo">正在读取原视频首帧与颜色说明……</p><div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start"><div style="min-width:0"><p id="evDirectLabel">左：原视频直接显示</p><div id="evDirectBackdrop" style="background:white"><video id="evDirectVideo" muted playsinline style="display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:black;filter:none;opacity:1;visibility:hidden"></video></div></div><div style="min-width:0"><p>右：同一帧画布（固定，不调色）</p><canvas id="evDirectCanvas" width="1" height="1" style="display:block;width:100%;height:auto;aspect-ratio:16/9;background:black;filter:none;opacity:1;visibility:hidden"></canvas></div></div><p id="evDirectMessage">当前只验证一帧的颜色；候选尚未接入正式播放器。原视频、标注和旧发行版不改。</p>';
       document.body.append(panel);panel.querySelector('#evDirectName').textContent=selected.name;
-      const video=panel.querySelector('#evDirectVideo'),canvas=panel.querySelector('#evDirectCanvas'),info=panel.querySelector('#evDirectInfo'),state=panel.querySelector('#evDirectMessage');
-      let closed=false,closing=null;start.disabled=true;stop.disabled=true;resources.textContent='无缓存显示验证；普通播放器和内存记录已暂停';
-      const job=require(path.join(toolRoot,'direct-display.cjs')).firstFrame(video,canvas,{valid:()=>!closed&&!pageClosed});
-      function release(){job.cancel();video.pause();video.removeAttribute('src');video.load();canvas.width=canvas.height=1;canvas.style.visibility='hidden';}
+      const video=panel.querySelector('#evDirectVideo'),canvas=panel.querySelector('#evDirectCanvas'),info=panel.querySelector('#evDirectInfo'),state=panel.querySelector('#evDirectMessage'),mode=panel.querySelector('#evDirectMode');
+      const display=require(path.join(toolRoot,'display-output.cjs')),firstFrame=require(path.join(toolRoot,'direct-display.cjs')).firstFrame;
+      let closed=false,closing=null,job=null,output=null,base=null,sourceSha256=null,currentMode=null,busy=false,generation=0,recordCount=0;
+      start.disabled=true;stop.disabled=true;resources.textContent='同帧颜色显示对照；普通播放器和内存记录已暂停';
+      const alive=()=>!closed&&!pageClosed;
+      function clearVideo(){if(job){job.cancel();job=null;}if(output){output.cancel();output=null;}video.pause();video.srcObject=null;video.removeAttribute('src');video.load();video.style.visibility='hidden';}
+      function release(){++generation;clearVideo();canvas.width=canvas.height=1;canvas.style.visibility='hidden';mode.disabled=true;}
       function closeDirect(){if(closing)return closing;closed=true;release();panel.remove();
         if(currentClose===closeDirect)currentClose=null;if(window.EVAEvolutionBeforeRun===closeDirect)window.EVAEvolutionBeforeRun=null;
         start.disabled=false;message('显示对照已释放；普通播放仍720p JPEG');resources.textContent='内存记录未开启';closing=Promise.resolve();return closing;}
@@ -51,19 +54,52 @@
       panel.querySelector('#evDirectReturn').onclick=async()=>{try{await closeDirect();if(window.EVAEvolutionRun)await window.EVAEvolutionRun();}catch(e){message(e.message);}};
       panel.querySelector('#evDirectSelect').onclick=()=>{if(opening){message('正在读取首帧，可返回取消');return;}openDirect().catch(e=>message(e.message));};
       video.muted=true;video.preload='auto';
-      try{
-        video.src=require('url').pathToFileURL(selected.filePath).href;video.load();
-        const result=await job.ready;if(closed||pageClosed||result.cancelled)return;
-        const sourceSha256=workspace.hashFile(selected.filePath);if(JSON.stringify(before)!==JSON.stringify(workspace.identity(selected.filePath)))throw Error('原视频读取期间发生变化，请重新选择');
-        const aspect=result.width+'/'+result.height;video.style.aspectRatio=canvas.style.aspectRatio=aspect;canvas.style.visibility='visible';
-        info.textContent='源 '+result.sourceWidth+'×'+result.sourceHeight+'；画布 '+result.width+'×'+result.height+'；首帧实际时间 '+result.actualMediaTime.toFixed(6)+' 秒。'+(result.scaled?'本视频发生缩小，仅作辅助；请用原生1080p山景排除缩放影响。':'没有缩小或放大，也没有图片编码。');
+      function save(value){
+        if(!alive()||recordCount>=12)return;recordCount++;
+        try{if(!checkRecorder)checkRecorder=require(path.join(toolRoot,'check-recorder.cjs')).create();
+          checkRecorder.save({kind:'native-display-output-v1',sourceSha256,node:process.versions.node,chrome:process.versions.chrome,sourceFrame:base,mode:currentMode,...value,
+            userVisualResult:'pending',physicalDisplayMeasured:false,actualOverlayRoute:'unobserved',scope:'One fixed Canvas and one video element. CSS control has Chromium108 source basis, not actual route telemetry. Stream candidate may convert RGB to YUV; no claim of lossless/target source PTS or performance pass.'});
+        }catch(e){state.textContent='画面可比较；条件记录未保存：'+e.message+'。不用重复操作，告诉Codex即可。';}
+      }
+      async function selectMode(next){
+        if(!alive()||busy)return;busy=true;mode.disabled=true;const token=++generation,valid=()=>alive()&&token===generation;
+        state.textContent='正在切换显示通道……';
         try{
-          if(!checkRecorder)checkRecorder=require(path.join(toolRoot,'check-recorder.cjs')).create();
-          checkRecorder.save({kind:'native-direct-canvas-v1',sourceSha256,...result,node:process.versions.node,chrome:process.versions.chrome,
-            scope:'Same paused video object -> visible sRGB Canvas; no cache encoding/readback or screen capture. User visual comparison pending; not proof of hardware overlay/driver enhancement.'});
-          state.textContent='对照条件已记录。请直接判断：左侧更鲜艳、两边接近，还是无法判断；不用运行任何命令。';
-        }catch(e){state.textContent='画面可比较，但条件记录未保存：'+e.message+'；请将情况告诉Codex。';}
-      }catch(e){if(!closed){release();info.textContent='本次对照未成立：'+e.message;state.textContent='请重新选择视频或返回；未将失败写成颜色结论。';}}
+          if(!['source','composite','bridge'].includes(next))throw Error('无效显示通道');
+          const sourceNeeded=next!=='bridge';
+          if(sourceNeeded&&(currentMode==='bridge'||!base||!video.src)){
+            clearVideo();canvas.style.visibility='hidden';
+            if(JSON.stringify(before)!==JSON.stringify(workspace.identity(selected.filePath)))throw Error('原视频身份已变化，请重新选择');
+            job=firstFrame(video,canvas,{valid});video.style.visibility='visible';video.src=require('url').pathToFileURL(selected.filePath).href;video.load();
+            const result=await job.ready;if(!valid()||result.cancelled)return;
+            if(base&&(base.actualMediaTime!==result.actualMediaTime||base.width!==result.width||base.height!==result.height))throw Error('重载首帧不一致，本次对照未成立');
+            if(!base){sourceSha256=workspace.hashFile(selected.filePath);if(JSON.stringify(before)!==JSON.stringify(workspace.identity(selected.filePath)))throw Error('原视频读取期间发生变化');base=result;}
+            video.style.aspectRatio=canvas.style.aspectRatio=base.width+'/'+base.height;canvas.style.visibility='visible';
+            info.textContent='源 '+base.sourceWidth+'×'+base.sourceHeight+'；画布 '+base.width+'×'+base.height+'；源首帧 '+base.actualMediaTime.toFixed(6)+' 秒。'+(base.scaled?'已缩小，仅作辅助；请用原生1080p山景排除缩放。':'无像素尺寸缩放、无JPEG/PNG编码。');
+          }
+          if(!valid())return;
+          video.style.mixBlendMode='normal';
+          panel.querySelector('#evDirectBackdrop').style.isolation=next==='composite'?'isolate':'auto';
+          if(next==='bridge'){
+            if(!base)throw Error('源首帧尚未就绪');clearVideo();
+            video.style.visibility='visible';output=display.bridge(canvas,video,{valid,VideoFrame:window.VideoFrame});const result=await output.ready;
+            if(!valid()||result.cancelled)return;
+            currentMode=next;panel.querySelector('#evDirectLabel').textContent='左：同一画布画面经视频通道（候选）';
+            state.textContent='候选已显示：请看左侧是否比右侧更鲜艳，以及是否接近①。仅一帧，不代表整段流畅度已验证。';
+            save({stream:result,canvasSettings:display.describeCanvas(canvas.getContext('2d'))});
+          }else{
+            video.style.mixBlendMode=next==='composite'?'multiply':'normal';currentMode=next;
+            panel.querySelector('#evDirectLabel').textContent=next==='composite'?'左：原视频经页面合成（白底乘色）':'左：原视频直接显示';
+            state.textContent=next==='composite'?'请看②是否比①变淡并接近右侧；这里不调整颜色参数，最终显卡路线尚未直接测得。':'①为原视频基线；再依次选②和③即可，不用开内存记录或运行命令。';
+            save({decodedFrame:display.describeFrame(video,{VideoFrame:window.VideoFrame}),canvasSettings:display.describeCanvas(canvas.getContext('2d')),
+              requestedMixBlendMode:video.style.mixBlendMode,computedMixBlendMode:typeof window.getComputedStyle==='function'?window.getComputedStyle(video).mixBlendMode:'unreported',backdrop:'white',sourcePtsPreserved:base.actualMediaTime});
+          }
+          if(valid()){mode.value=next;video.style.visibility='visible';}
+        }catch(e){if(valid()){clearVideo();currentMode=null;state.textContent='此通道未成立：'+e.message+'；可以选择①返回，不代表颜色通过。';save({failure:'display-mode-failed',requestedMode:next,errorCode:typeof e.code==='string'?e.code.slice(0,40):null});}}
+        finally{busy=false;if(valid())mode.disabled=false;}
+      }
+      mode.onchange=()=>selectMode(mode.value);
+      await selectMode('source');
     }finally{opening=false;qualityButton.disabled=directButton.disabled=false;}
   }
   async function openQuality(){
