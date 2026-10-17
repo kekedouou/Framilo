@@ -5,6 +5,7 @@ const { performance } = require('perf_hooks');
 const { REPO, sha, hashFile, identity, store, scratch } = require('./workspace.cjs');
 const { JpegParser } = require('../../plugin/media.cjs')._test;
 const { previewRgbFilter, previewColor } = require('../../plugin/media.cjs')._test;
+const {profile,encoding}=require('./image-profiles.cjs');
 const MAX_IMAGE = 32 * 1024 ** 2;
 class PngParser {
   constructor() { this.buffer = Buffer.alloc(0); }
@@ -119,7 +120,8 @@ function monitor(control) {
       limitation:'Polling can miss peaks and short FFmpeg processes. Node backend is not the Eagle renderer/GPU.' }; } };
 }
 async function run(selection, heights, formats=['jpeg','png'], capture=false, full=false, runtime={}) {
-  if(!formats.length||formats.some(f=>!['jpeg','png','webp'].includes(f)))throw Error('Unapproved candidate format');
+  if(!formats.length||new Set(formats).size!==formats.length)throw Error('Invalid candidate set');formats.forEach(profile);
+  const rounds=capture?1:runtime.rounds===undefined?3:runtime.rounds;if(![1,3].includes(rounds))throw Error('Unapproved round count');
   const config = runtime.config || JSON.parse(fs.readFileSync(path.join(__dirname,'config.local.json'))), records=runtime.records || store(), results=[];
   const execution={node:process.version,scriptSha256:hashFile(__filename),ffmpegSha256:hashFile(config.ffmpeg),formats,heights,selection,capture,full};
   const control=runtime.control || {child:null,failure:null}, observer=monitor(control);
@@ -147,13 +149,13 @@ async function run(selection, heights, formats=['jpeg','png'], capture=false, fu
           const prepared=await command(config.ffmpeg,args,b=>parser.push(b),line=>{const m=/\bn:\s*(\d+).*?pts:\s*(-?\d+).*?pts_time:([\d.e+-]+)/.exec(line);if(m)times.push({ordinal:Number(m[1]),pts:m[2],time:Number(m[3])});},control);
           const count=parser.finish();work.seal(raw); if(!count||times.length<count)throw Error('Missing source frame times');
           const usedTimes=times.slice(0,count); if(usedTimes.some((t,i)=>i&&t.time<=usedTimes[i-1].time))throw Error('Non-increasing experimental times');
-          for(let round=0;round<(capture?1:3);round++) for(const format of round%2?formats.slice().reverse():formats) {
+          for(let round=0;round<rounds;round++) for(const format of round%2?formats.slice().reverse():formats) {
+            const preset=profile(format),isJpeg=preset.lossy;
             const name=work.create(`encoded-${round}-${format}.pack`), packet=format==='png'?new PngParser():format==='webp'?new WebpParser():new JpegParser(), index=[];let total=0;
             const encoded=await command(config.ffmpeg,['-hide_banner','-loglevel','error','-nostdin','-f','rawvideo','-pixel_format','rgb24','-video_size',`${width}x${height}`,
-              '-framerate','60','-i',work.path(raw),'-frames:v',String(count),'-an',...(format==='jpeg'?['-vf','scale=in_range=pc:out_range=pc:out_color_matrix=bt601:flags=bilinear+accurate_rnd+full_chroma_int']:[]),'-c:v',format==='png'?'png':format==='webp'?'libwebp':'mjpeg','-threads','2',
-              ...(format==='png'?['-pix_fmt','rgb24','-compression_level','3']:format==='webp'?['-pix_fmt','bgra','-lossless','1','-compression_level','0','-quality','75']:['-pix_fmt','yuvj420p','-q:v','3']),'-f','image2pipe','pipe:1'],
+              '-framerate','60','-i',work.path(raw),'-frames:v',String(count),'-an',...encoding(format),'-threads','2','-f','image2pipe','pipe:1'],
               b=>{for(const image of packet.push(b)){if(index.length>=count)throw Error('Extra encoded frame');index.push({offset:total,bytes:image.length,sha256:sha(image)});total+=image.length;work.write(name,image);}},null,control);
-            if(format!=='jpeg')packet.finish();else if(packet.buffer.length)throw Error('Truncated JPEG');
+            if(!isJpeg)packet.finish();else if(packet.buffer.length)throw Error('Truncated JPEG');
             work.seal(name);if(index.length!==count)throw Error('Encoded frame count mismatch');
             const fd=fs.openSync(work.path(raw),'r'), ref=Buffer.alloc(frameBytes), differences=[], arrivals=[];let exact=0,last=performance.now();
             const decodedFrames=frameReader(frameBytes,(pixels,n)=>{
@@ -165,19 +167,19 @@ async function run(selection, heights, formats=['jpeg','png'], capture=false, fu
                 differences.push({ordinal:n,mae:sum/frameBytes,rmse:Math.sqrt(squares/frameBytes),max});
               }
             });
-            let decoded;try{decoded=await command(config.ffmpeg,['-hide_banner','-loglevel','error','-nostdin','-threads','2','-f','image2pipe','-c:v',format==='png'?'png':format==='webp'?'webp':'mjpeg','-i',work.path(name),
+            let decoded;try{decoded=await command(config.ffmpeg,['-hide_banner','-loglevel','error','-nostdin','-threads','2','-f','image2pipe','-c:v',preset.codec,'-i',work.path(name),
               '-frames:v',String(count),'-pix_fmt','rgb24','-c:v','rawvideo','-threads','2','-f','rawvideo','pipe:1'],b=>decodedFrames.push(b),null,control);}finally{fs.closeSync(fd);}
-            if(decodedFrames.finish()!==count||format!=='jpeg'&&exact!==count)throw Error('Lossless/reference integrity failed');
+            if(decodedFrames.finish()!==count||!isJpeg&&exact!==count)throw Error('Lossless/reference integrity failed');
             const result={source:key,sourceSha256:source.sha256,sourceWidth:source.width,sourceHeight:source.height,sourceCodec:source.codec,width,height,round,format,count,fullSource:full,
-              first:usedTimes[0],last:usedTimes[count-1],referenceDecodeMs:prepared.elapsedMs,encodeMs:encoded.elapsedMs,decodeMs:decoded.elapsedMs,
+              preset,first:usedTimes[0],last:usedTimes[count-1],referenceDecodeMs:prepared.elapsedMs,encodeMs:encoded.elapsedMs,decodeMs:decoded.elapsedMs,
               encodedBytes:total,exactFrames:exact,differences,arrivalP95Ms:percentile(arrivals,.95),compressedPoolFramesAt128MiB:index.filter((_,i)=>index.slice(0,i+1).reduce((n,x)=>n+x.bytes,0)<=128*1024**2).length,
               timestampConvention:capture||full?'Original input PTS with copyts':'FFmpeg normalized input timeline without copyts; not original source PTS',
-              scope:(full?'Full registered6.92-second source':'1-second window')+'; commonRGB24 -> codec -> FFmpeg RGB24. JPEG q3/yuvj420p includes RGB conversion; not production pipeline or Canvas P01/P02/P03.',
+              scope:(full?'Full registered6.92-second source':'1-second window')+'; commonRGB24 -> declared preset -> FFmpeg RGB24; not production preparation or Canvas P01/P02/P03.',
               decodedPixelBytesPerFrame:width*height*4,referenceSha256:sha(Buffer.from(refs.join('')))};
             roundRecord.append(result);roundRecord.flush();results.push(result);
             console.log(JSON.stringify({source:key,height,round,format,count,bytes:total,encodeMs:Math.round(encoded.elapsedMs),decodeMs:Math.round(decoded.elapsedMs),exactFrames:exact}));
             // Each round's generated packet is retired after its receipts are saved.
-            if(capture)displays.push({format,file:name,sha256:hashFile(work.path(name)),index});
+            if(capture)displays.push({format,preset,file:name,sha256:hashFile(work.path(name)),index});
             else work.remove([name],records);
           }
           if(capture){

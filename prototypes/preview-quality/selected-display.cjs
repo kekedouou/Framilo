@@ -59,7 +59,7 @@ async function main(){
     const local=JSON.parse(fs.readFileSync(path.join(__dirname,'config.local.json')));
     const source=await inspect(value,local,control);if(closing)throw control.failure;
     send({state:'preparing',start:source.start,width:source.width,height:source.height});
-    await run(['selected'],[1080],['jpeg','png'],true,false,{config:{...local,sources:[source]},records,control,onCapture:value=>{captured=value;}});
+    await run(['selected'],[1080],['jpeg','jpeg-fine','png'],true,false,{config:{...local,sources:[source]},records,control,onCapture:value=>{captured=value;}});
     if(closing)throw control.failure;
     if(!captured)throw Error('未生成对照数据');
     send({state:'ready',location:captured.location,start:source.start,width:source.width,height:source.height,browserTimeOrigin:source.browserTimeOrigin,sourceIdentity:source.identity,frames:captured.data.times.length});

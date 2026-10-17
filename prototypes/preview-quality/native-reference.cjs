@@ -9,9 +9,11 @@ function create(video, options){
   function seek(time,end){
     if(closed)return Promise.resolve({cancelled:true});
     if(!Number.isFinite(time)||!Number.isFinite(end)||end<=time)return Promise.reject(Error('原视频参考时间区间不明'));
-    cancel();video.style.visibility='hidden';video.pause();
+    const wasPending=!!pending;cancel();video.style.visibility='hidden';video.pause();
     if(typeof video.requestVideoFrameCallback!=='function')return Promise.reject(Error('此宿主无法核对原视频实际显示时间，未冒充同帧'));
-    if(last&&Math.abs(last.time-time)<1e-7){video.style.visibility='visible';return Promise.resolve(last);}
+    if(!wasPending&&last&&Math.abs(last.time-time)<1e-7&&video.seeking!==true&&Number.isFinite(video.currentTime)&&
+      video.currentTime>=time-(options.origin||0)&&video.currentTime<end-(options.origin||0)){video.style.visibility='visible';return Promise.resolve(last);}
+    last=null; // Any different/incomplete seek invalidates the previously shown frame.
     return new Promise((resolve,reject)=>{const p={resolve,reject,callback:null,timer:null,start:null,error:null};pending=p;
       function finish(error,result){if(pending!==p)return;pending=null;unschedule(p.timer);video.removeEventListener('loadedmetadata',p.start);video.removeEventListener('error',p.error);
         if(p.callback!==null)video.cancelVideoFrameCallback(p.callback);if(error)reject(error);else{last=result;video.style.visibility='visible';resolve(result);}}
@@ -34,13 +36,18 @@ function create(video, options){
   function dispose(){if(closed)return;closed=true;cancel();last=null;video.pause();video.removeAttribute('src');video.load();video.style.visibility='hidden';}
   return {seek,dispose};
 }
-function compare(video,canvas,document){
-  const ref=document.createElement('canvas');ref.width=canvas.width;ref.height=canvas.height;
-  const ctx=ref.getContext('2d',{alpha:false,colorSpace:'srgb'}),width=ref.width,height=ref.height;
+function render(video,ref,width,height){
+  if(ref.width!==width)ref.width=width;if(ref.height!==height)ref.height=height;
+  const ctx=ref.getContext('2d',{alpha:false,colorSpace:'srgb'});
   ctx.fillStyle='black';ctx.fillRect(0,0,width,height);
   const scale=Math.min(width/video.videoWidth,height/video.videoHeight),w=video.videoWidth*scale,h=video.videoHeight*scale;
   ctx.drawImage(video,(width-w)/2,(height-h)/2,w,h);
-  const a=ctx.getImageData(0,0,width,height).data,b=canvas.getContext('2d').getImageData(0,0,width,height).data;
+  return ctx.getImageData(0,0,width,height).data;
+}
+function compare(video,canvas,document){
+  const ref=document.createElement('canvas'),width=canvas.width,height=canvas.height;
+  const pixels=render(video,ref,width,height);
+  const a=pixels,b=canvas.getContext('2d').getImageData(0,0,width,height).data;
   const hist=new Uint32Array(256),delta=[0,0,0];let sum=0;
   for(let i=0;i<a.length;i+=4)for(let c=0;c<3;c++){const d=b[i+c]-a[i+c];sum+=Math.abs(d);hist[Math.abs(d)]++;delta[c]+=d;}
   let n=0,p95=0;for(;p95<255;p95++){n+=hist[p95];if(n>=width*height*3*.95)break;}
@@ -48,4 +55,4 @@ function compare(video,canvas,document){
   return {width,height,mae:sum/(width*height*3),p95,meanDelta:delta.map(x=>x/(width*height)),canvasColorSpace:canvas.getContext('2d').getContextAttributes?.().colorSpace||'unreported',
     scope:'Same reported mediaTime; native video drawn to sRGB Canvas vs cached Canvas. Scaling/chroma/JPEG differ; no raw pixels saved, not monitor calibration or HDR validation.'};
 }
-module.exports={create,compare};
+module.exports={create,compare,render};
