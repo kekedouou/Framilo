@@ -357,7 +357,7 @@ function createCache(options = {}) {
   }
   function assertPlan(job, plan, allowMissing = false) {
     assertWriter(job);
-    if ((!allowMissing && samePath(plan.directory, job.target) && plan.reason !== 'damaged-cache') || occupancy().has(plan.directory.toLowerCase())) fail('当前或已占用缓存不能删除。');
+    if ((!allowMissing && samePath(plan.directory, job.target) && !['damaged-cache', 'obsolete-color-cache'].includes(plan.reason)) || occupancy().has(plan.directory.toLowerCase())) fail('当前或已占用缓存不能删除。');
     if (!fs.existsSync(plan.directory)) { if (allowMissing) return []; fail('清理目录已变化。'); }
     const dir = directory(plan.directory);
     if (!sameDirectoryIdentity(plan.directory, dir, plan.directoryIdentity)) fail('清理目录身份已变化。');
@@ -407,12 +407,12 @@ function createCache(options = {}) {
       assertPlan(job, plan, true); deletePlanned(job, plan, data, true);
     }
   }
-  function discardDamaged(job, dir, inspected) {
+  function discardDamaged(job, dir, inspected, reason = 'damaged-cache') {
     assertWriter(job);
     if (occupancy().has(dir.toLowerCase())) fail('完整缓存内容指纹不符且仍被占用；未删除或重建。');
     const owner = verifyOwner(dir, 'cache');
     const plan = ownerValue('cleanup-plan', { token: nonce(), writerToken: job.token, directory: dir,
-      directoryIdentity: captureDirectoryIdentity(dir), cacheToken: owner.token, reason: 'damaged-cache', createdAt: Date.now(),
+      directoryIdentity: captureDirectoryIdentity(dir), cacheToken: owner.token, reason, createdAt: Date.now(),
       files: inspected.names.sort().map(name => leafSnapshot(path.join(dir, name))) });
     const data = jsonBytes(plan);
     if (job.disk + data.length + 4096 > diskBytes) fail('无法预留损坏缓存清理记录；保留原件。');
@@ -996,10 +996,12 @@ function createCache(options = {}) {
         catch (error) { if (primaryError) primaryError.closeError = error.message; else throw error; }
       }
     }
-    async function readComplete() {
+    async function readComplete(requirements = {}) {
+      if (requirements.colorVersion !== undefined && (typeof requirements.colorVersion !== 'string' || !/^[a-z0-9-]{1,80}$/.test(requirements.colorVersion))) fail('缓存颜色版本要求无效。');
       assertWriter(job);
       if (job.partial || job.published) fail('已经开始写入，不能再读取复用候选。');
-      if (candidate) return candidate;
+      if (candidate && (requirements.colorVersion === undefined || candidate.colorVersion === requirements.colorVersion)) return candidate;
+      candidate = null; candidatePinned = null;
       if (!fs.existsSync(target)) return null;
       const inspected = inspectDirectory(target, 'cache', sourceSha256, true); let damaged = !inspected.lengthsMatch;
       for (const item of inspected.map.values()) {
@@ -1007,6 +1009,9 @@ function createCache(options = {}) {
         assertWriter(job);
       }
       if (damaged) { discardDamaged(job, target, inspected); return null; }
+      if (requirements.colorVersion !== undefined && inspected.info.colorVersion !== requirements.colorVersion) {
+        discardDamaged(job, target, inspected, 'obsolete-color-cache'); return null;
+      }
       candidate = inspected.info; candidatePinned = frozenCopy(candidate); return candidate;
     }
     function registerLease(persisted, currentSource, metrics) {

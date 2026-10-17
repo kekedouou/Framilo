@@ -65,7 +65,7 @@
       this.index = options.frameIndex;
       if (!this.index || ['validateIndex', 'frameAt', 'stepIndex', 'audioStartPlan'].some(name => typeof this.index[name] !== 'function')) throw new Error('缺少纯帧索引模块。');
       this.env = Object.assign(browserEnvironment(), options.env || {}); this.canvas = options.canvas;
-      this.ctx = this.canvas.getContext('2d', { alpha: false }); if (!this.ctx) throw new Error('无法取得2D画布。');
+      this.ctx = this.canvas.getContext('2d', { alpha: false, colorSpace: 'srgb' }); if (!this.ctx) throw new Error('无法取得2D画布。');
       this.readAsset = options.readAsset; this.readFrameBatch = options.readFrameBatch;
       this.emit = options.emit || (() => {}); this.onChange = options.onChange || (() => {});
       this.budget = options.budget || new Budget(options.ramBytes === undefined ? RAM_LIMIT : options.ramBytes);

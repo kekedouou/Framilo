@@ -215,11 +215,33 @@ function validateDecodedSpan(info) {
   if (!Number.isFinite(span) || !(span > 0 && span <= LIMITS.duration)) fail('实际解码音视频跨度超过30秒（含音频尾部）。', 'MEDIA_DURATION');
   return span;
 }
-function ffmpegArgs(source, hasAudio, codecName) {
+const COLOR_VERSION = 'sdr-matrix-rgb-jpeg601-v1';
+function previewColor(video = {}) {
+  // Follow Chromium108's matrix guess from declared SDR fields, defaulting to
+  // Rec709 only when none identifies a matrix. Explicit matrices always win.
+  const matrices = { bt709: 'bt709', bt470bg: 'bt601', smpte170m: 'bt601', fcc: 'fcc', smpte240m: 'smpte240m', bt2020nc: 'bt2020' };
+  const declared = video.color_space, missing = !declared || ['unknown', 'unspecified', 'reserved'].includes(declared);
+  const guesses = [video.color_primaries, video.color_transfer].filter(x=>['bt709','bt470m','bt470bg','smpte170m','smpte240m'].includes(x));
+  const guessed = ['bt709','bt470m','bt470bg','smpte170m','smpte240m'].find(x=>guesses.includes(x));
+  const matrix = missing ? guessed ? matrices[guessed] || 'bt601' : 'bt709' : matrices[declared] || 'auto';
+  const range = video.color_range === 'pc' ? 'pc' : video.color_range === 'tv' ? 'tv' : 'auto';
+  const wide = ['bt2020', 'smpte431', 'smpte432'].includes(video.color_primaries) || ['smpte2084', 'arib-std-b67'].includes(video.color_transfer);
+  return { version: COLOR_VERSION, matrix, range, fallback: missing,
+    scope: wide ? 'wide-gamut/HDR not color-validated' : 'SDR matrix/range; browser Rec709 display convention',
+    declared: { matrix: declared || null, range: video.color_range || null, primaries: video.color_primaries || null, transfer: video.color_transfer || null } };
+}
+function previewRgbFilter(video, width, height) {
+  const color = previewColor(video);
+  // Materialize RGB before JPEG conversion. swscale otherwise retains the
+  // source YUV matrix, but browser JPEG decoders use the JPEG/Rec601 matrix.
+  return `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=bilinear+accurate_rnd+full_chroma_int:in_color_matrix=${color.matrix}:in_range=${color.range}:out_range=pc,format=rgb24,setsar=1,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`;
+}
+function ffmpegArgs(source, hasAudio, codecName, video = {}) {
   // Bound H.264/HEVC input decoding separately from JPEG output encoding. One video
-  // job remains active; the cache recipe, output quality and RAM pool are unchanged.
+  // job remains active; resolution/q3/audio/RAM remain unchanged. Color revision
+  // separately invalidates old pixels without changing ownership record layout.
   const args = ['-hide_banner', '-loglevel', 'info', '-nostdin', '-copyts', '-threads', ['hevc', 'h264'].includes(codecName) ? '8' : '2', '-i', source,
-    '-map', '0:v:0', '-an', '-sn', '-dn', '-vf', 'showinfo@v=checksum=0,scale=1280:720:force_original_aspect_ratio=decrease:flags=bilinear,setsar=1,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+    '-map', '0:v:0', '-an', '-sn', '-dn', '-vf', 'showinfo@v=checksum=0,' + previewRgbFilter(video, 1280, 720) + ',scale=in_range=pc:out_range=pc:out_color_matrix=bt601:flags=bilinear+accurate_rnd+full_chroma_int,format=yuvj420p',
     '-filter_threads', codecName === 'h264' ? '2' : codecName === 'hevc' ? '4' : '1', '-fps_mode', 'passthrough', '-c:v', 'mjpeg', '-threads', '2', '-q:v', '3', '-f', 'image2pipe', 'pipe:1'];
   if (hasAudio) args.push('-map', '0:a:0', '-vn', '-sn', '-dn', '-af', 'aresample=48000,ashowinfo@a', '-c:a', 'pcm_f32le', '-f', 'wav', 'pipe:3');
   return args;
@@ -299,7 +321,7 @@ async function captureProbe(job, tools, source) {
 }
 async function build(job, tools, tx, source, probe, frameIndex) {
   const end = videoEnd(probe), hasAudio = probe.streams.some(value => value.codec_type === 'audio'),
-    args = ffmpegArgs(source.filePath, hasAudio, probe.streams.find(value => value.codec_type === 'video').codec_name);
+    args = ffmpegArgs(source.filePath, hasAudio, probe.streams.find(value => value.codec_type === 'video').codec_name, end.stream);
   const { child, finish } = childProcess(job, tools.ffmpeg, args, ['ignore', 'pipe', 'pipe', hasAudio ? 'pipe' : 'ignore'], true);
   const parser = new JpegParser(), files = [], pts = []; let timeBase = null, lastDurationTicks = null, audioFirst = null, stderrBytes = 0, pending = '', tail = '';
   function line(value) {
@@ -359,7 +381,7 @@ async function build(job, tools, tx, source, probe, frameIndex) {
     mediaAudio = { ...mediaAudio, start: ratioSeconds(offset), sourceFirstPts: audioFirst, sourceTimeBase: [1, 48000] };
   }
   const duration = Math.max(indexed.videoDuration, mediaAudio ? mediaAudio.start + mediaAudio.duration : 0);
-  const info = { schema: 1, owner: OWNER, recipe: RECIPE,
+  const info = { schema: 1, owner: OWNER, recipe: RECIPE, colorVersion: COLOR_VERSION, color: previewColor(end.stream),
     source: { sha256: source.sha256, codec: end.stream.codec_name, width: end.stream.width, height: end.stream.height, hasAudioStream: hasAudio },
     width: 1280, height: 720, duration, frames: indexed.frames, audio: mediaAudio, ...(packedFrames ? { framePack: packedFrames } : {}),
     metrics: { reused: false, generationMs: exit.metrics.totalMs, tool: exit.metrics, singleVideoDecode: true, args,
@@ -401,7 +423,7 @@ function createMedia(options) {
       const analyzed = await captureProbe(job, tools, snapshot.filePath); check(job); phases.probeMs = elapsed(phaseStart);
       const selectedMetadata = validateProbe(analyzed.probe);
       notify(job, { stage: 'cache' }); phaseStart = process.hrtime.bigint();
-      let manifest = await tx.readComplete(); check(job); phases.existingCacheValidationMs = elapsed(phaseStart);
+      let manifest = await tx.readComplete({ colorVersion: COLOR_VERSION }); check(job); phases.existingCacheValidationMs = elapsed(phaseStart);
       const reused = !!manifest;
       if (manifest) { frameIndex.validateIndex(manifest); validateDecodedSpan(manifest); }
       else {
@@ -447,4 +469,4 @@ function createMedia(options) {
   return Object.freeze({ prepare });
 }
 module.exports = { createMedia, LIMITS,
-  _test: { boundedAdd, snapshotCopy, JpegParser, patchWav, videoEnd, resolveVideoEnd, validateProbe, validateDecodedSpan, ffmpegArgs, ratioSeconds, ratioSubtract, ratio } };
+  _test: { COLOR_VERSION, previewColor, previewRgbFilter, boundedAdd, snapshotCopy, JpegParser, patchWav, videoEnd, resolveVideoEnd, validateProbe, validateDecodedSpan, ffmpegArgs, ratioSeconds, ratioSubtract, ratio } };

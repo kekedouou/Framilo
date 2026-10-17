@@ -1,5 +1,7 @@
 # Eagle Video Analysis · 视频分析
 
+开发中：用户已停止整段无损路线；先修正预览偏色，再讨论画质选择。颜色修复位于新主线提交/同一演进验证入口，尚待用户同帧人工确认，已发布Beta2包不变。见[当前记录](docs/experiments/Evolution/report.md#颜色缺陷修复2026-10-17)。
+
 与Eagle素材库关联的短视频分析插件：自动准备720p预览，在独立窗口播放、快速拖动、逐帧观察，并添加Eagle时间点文字标注。保留原视频，不需要替换素材。
 
 **当前版本：[0.1.0-beta.2 · MVP Beta](https://github.com/kekedouou/eagle-frame-analyzer/releases/tag/v0.1.0-beta.2)，已发布并完成独立安装用户人工验收。** 核心功能已有测试和人工认可，长期内存稳定性及全部素材兼容仍未确认，不属于稳定版。过时的绿色独立版已撤下公开下载，本项目继续维护Eagle插件。

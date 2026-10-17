@@ -38,7 +38,7 @@ async function inspect(request,tools,control={child:null,failure:null}){
   if(!v||!Number.isFinite(duration)||duration<=0||duration>30||!/^\d+\/\d+$/.test(v.time_base))throw Error('本轮对照支持不超过30秒的MP4');
   if(JSON.stringify(before)!==JSON.stringify(identity(source.filePath)))throw Error('读取期间原视频已改变');
   return {key:'selected',file:source.filePath,sha256,identity:before,width:v.width,height:v.height,codec:v.codec_name,
-    timeBase:v.time_base,duration,start:windowStart(request.time,duration)};
+    timeBase:v.time_base,duration,start:windowStart(request.time,duration), browserTimeOrigin:Number(data.format.start_time)||0, colorMetadata:v};
 }
 async function main(){
   let pipe='',request=null,captured=null,closing=false,finished=false,resolveInput,resolveRelease;
@@ -62,7 +62,7 @@ async function main(){
     await run(['selected'],[1080],['jpeg','png'],true,false,{config:{...local,sources:[source]},records,control,onCapture:value=>{captured=value;}});
     if(closing)throw control.failure;
     if(!captured)throw Error('未生成对照数据');
-    send({state:'ready',location:captured.location,start:source.start,width:source.width,height:source.height,frames:captured.data.times.length});
+    send({state:'ready',location:captured.location,start:source.start,width:source.width,height:source.height,browserTimeOrigin:source.browserTimeOrigin,sourceIdentity:source.identity,frames:captured.data.times.length});
     await release;
   }catch(e){records.save('selected-display-failure',{cancelled:closing,message:String(e.message).replace(/[A-Za-z]:[^\n]*/g,'[local path]')});send({state:'failed',message:closing?'对照已取消':String(e.message).replace(/[A-Za-z]:[^\n]*/g,'[本机路径]')});}
   finally{

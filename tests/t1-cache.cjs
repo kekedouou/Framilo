@@ -121,6 +121,22 @@ async function prepared(h) {
 }
 async function test(name, body) { await body(); count++; console.log('ok T1 cache: ' + name); }
 async function main() {
+  await test('old color cache retires with an exact plan, new color cache reuses and reboot reads receipts',async()=>{
+    const h=harness(),old=await prepared(h);h.cache.release(old);
+    const tx=h.cache.begin({sourceSha256:SOURCE_SHA});assert(await tx.readComplete());
+    assert.strictEqual(await tx.readComplete({colorVersion:'color-test-v1'}),null);
+    const plans=[...h.nodes.values()].filter(n=>n.data&&n.data.toString().includes('obsolete-color-cache'));
+    assert(plans.length>0);
+    const a=await tx.writeAsset('000000.jpg',Buffer.from('new-color-frame'));
+    const info=await tx.finish({...manifest(a),colorVersion:'color-test-v1'},snapshot());tx.close();h.cache.release(info);
+    const cache=h.reboot(),next=cache.begin({sourceSha256:SOURCE_SHA});assert.strictEqual((await next.readComplete({colorVersion:'color-test-v1'})).colorVersion,'color-test-v1');next.close();
+    assert.strictEqual(h.descriptors.size,0);
+  });
+  await test('color replacement cannot discard an occupied or unknown cache',async()=>{
+    const h=harness(),old=await prepared(h),tx=h.cache.begin({sourceSha256:SOURCE_SHA});
+    await assert.rejects(()=>tx.readComplete({colorVersion:'color-test-v1'}),/占用/);tx.close();h.cache.release(old);
+    const next=h.cache.begin({sourceSha256:SOURCE_SHA});await assert.rejects(()=>next.readComplete({colorVersion:'../invalid'}),/颜色版本/);next.close();
+  });
   await test('writer ownership is fully written before cache inventory begins', async () => {
     const h=harness(), info=await prepared(h);h.cache.release(info);let observed=0;
     const read=h.api;const original=h.nodes.get(win.join(h.root,'owner.json'));

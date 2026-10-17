@@ -30,6 +30,14 @@ async function demand(h) {
 }
 async function test(name, work) { await work(); count++; console.log('ok T2 lifecycle: ' + name); }
 async function main() {
+  await test('interrupted obsolete-color replacement resumes its exact remaining files on reboot',async()=>{
+    const h=harness(),item=await publish(h,1);h.cache.release(item);
+    const tx=h.cache.begin({sourceSha256:hash(1)});let failed=false;
+    h.state.afterOpen=({file,flags})=>{if(!failed&&flags==='r'&&file===path.join(item.cacheDir,'manifest.json')&&!h.nodes.has(path.join(item.cacheDir,'000000.jpg'))){failed=true;throw Error('injected color replacement interruption');}};
+    await assert.rejects(()=>tx.readComplete({colorVersion:'color-test-v1'}),/interruption/);h.state.afterOpen=null;tx.close();assert(failed);
+    const reboot=h.reboot(),next=reboot.begin({sourceSha256:hash(1)});assert.strictEqual(await next.readComplete({colorVersion:'color-test-v1'}),null);next.close();
+    assert(results(h).some(r=>r.recovered));assert(!h.nodes.has(item.cacheDir));reboot.inventory();
+  });
   await test('manual clear with a large Windows directory ID can be read on next boot', async () => {
     const h = harness(), item = await publish(h, 1); h.cache.release(item);
     const dir = h.nodes.get(item.cacheDir); dir.exactIno = 10977524091718209n; dir.ino = Number(dir.exactIno);
