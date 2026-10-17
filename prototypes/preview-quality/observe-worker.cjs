@@ -39,6 +39,8 @@ async function run(argv){
         if(role==='observer'||role==='observer-child')observer+=r.rssBytes;else if(role==='ffmpeg'||role==='ffprobe')preprocessing+=r.rssBytes;else plugin+=r.rssBytes;}
       peaks.plugin=Math.max(peaks.plugin,plugin);peaks.preprocessing=Math.max(peaks.preprocessing,preprocessing);peaks.observer=Math.max(peaks.observer,observer);
       write({...row,context:lastWindow?{epoch:lastWindow.epoch,state:lastWindow.state}:null});
+      process.stdout.write(JSON.stringify({state:'resources',pluginBytes:row.liveRenderer?plugin:null,preprocessingBytes:row.liveRenderer?preprocessing:null,observerBytes:observer})+'\n');
+      if(!row.liveRenderer)stop('Renderer identity not observed; process memory unknown; playback is unaffected');
       if(row.errorCount||row.roles['owned-unclassified'])stop('Observation incomplete; playback is unaffected');
       if(plugin>=1.5*1024**3)stop('Natural observation reached baseline RSS line; playback is unaffected');
     }if(nativePipe.length>65536)throw Error('Native observation line too large');}catch(e){stop(e.message);}});
@@ -52,7 +54,7 @@ async function run(argv){
   process.stdout.write(JSON.stringify({state:'recording',intervalMs:1000})+'\n');
   await samplerDone;stopping=true;if(deadline)clearTimeout(deadline);
   try{write({schema:'eva-natural-end-v1',scope,elapsedMs:performance.now()-started,nativeRows,windowRows,peaks,metrics,issue,
-    longTermPassed:false,scope:'Only declared owned processes; shared Eagle/GPU excluded;1-second samples may miss peaks.'});}catch(e){issue=issue||e.message;}
+    longTermPassed:false,limitation:'Only declared owned processes; shared Eagle/GPU excluded;1-second samples may miss peaks.'});}catch(e){issue=issue||e.message;}
   receipts.push(writer.close());process.stdout.write(JSON.stringify({state:'saved',issue,receipts,nativeRows,windowRows})+'\n');process.stdin.destroy();
   return {issue,nativeRows,windowRows,receipts};
 }

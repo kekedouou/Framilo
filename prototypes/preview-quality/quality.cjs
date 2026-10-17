@@ -47,11 +47,11 @@ function frameReader(bytes, onFrame) {
   } }, finish() { if (offset) throw Error('Truncated raw frame'); return count; } };
 }
 function percentile(a, p) { const xs = a.slice().sort((x,y) => x-y); return xs.length ? xs[Math.ceil(xs.length*p)-1] : null; }
-async function command(exe, args, onData, onErrorLine, control) {
+async function command(exe, args, onData, onErrorLine, control, timeoutMs=60000) {
   if (control.failure) throw control.failure;
   const child = cp.spawn(exe, args, { windowsHide: true, shell: false, stdio: ['ignore','pipe','pipe'] }); control.child = child;
   const start = performance.now(); let errors = '', failure = null, stderr = '';
-  const timer = setTimeout(() => { failure = Error('Experimental FFmpeg deadline reached'); child.kill(); }, 60000);
+  const timer = setTimeout(() => { failure = Error('Experimental media command deadline reached'); child.kill(); }, timeoutMs);
   const closed = new Promise(resolve => { child.once('error', e => { failure = e; resolve(-1); }); child.once('close', resolve); });
   child.stderr.on('data', chunk => { try { stderr += chunk.toString('utf8'); let at;
     while ((at = stderr.indexOf('\n')) >= 0) { const line = stderr.slice(0,at); stderr = stderr.slice(at+1); if (onErrorLine) onErrorLine(line); errors = (errors + line + '\n').slice(-8192); }
@@ -86,11 +86,11 @@ function monitor(control) {
     return { samples, nodePeak, ffmpegPeak, observerPeak, issue, intervalMs:1000, stopped,
       limitation:'Polling can miss peaks and short FFmpeg processes. Node backend is not the Eagle renderer/GPU.' }; } };
 }
-async function run(selection, heights, formats=['jpeg','png'], capture=false, full=false) {
+async function run(selection, heights, formats=['jpeg','png'], capture=false, full=false, runtime={}) {
   if(!formats.length||formats.some(f=>!['jpeg','png','webp'].includes(f)))throw Error('Unapproved candidate format');
-  const config = JSON.parse(fs.readFileSync(path.join(__dirname,'config.local.json'))), records=store(), results=[];
+  const config = runtime.config || JSON.parse(fs.readFileSync(path.join(__dirname,'config.local.json'))), records=runtime.records || store(), results=[];
   const execution={node:process.version,scriptSha256:hashFile(__filename),ffmpegSha256:hashFile(config.ffmpeg),formats,heights,selection,capture,full};
-  const control={child:null,failure:null}, observer=monitor(control);
+  const control=runtime.control || {child:null,failure:null}, observer=monitor(control);
   try {
     for(const key of selection) {
       const source=config.sources.find(s=>s.key===key); if(!source)throw Error('Unregistered source');
@@ -145,10 +145,10 @@ async function run(selection, heights, formats=['jpeg','png'], capture=false, fu
             else work.remove([name],records);
           }
           if(capture){
-            const probe=cp.spawnSync(config.ffprobe,['-v','error','-select_streams','v:0','-show_frames','-show_entries','frame=best_effort_timestamp,pkt_duration,duration','-of','json',source.file],
-              {windowsHide:true,encoding:'utf8',timeout:15000,maxBuffer:2*1024**2});
-            if(probe.error||probe.status!==0)throw Error('Independent frame duration probe failed');
-            const probed=JSON.parse(probe.stdout).frames;
+            const probeChunks=[];let probeBytes=0;
+            await command(config.ffprobe,['-v','error','-select_streams','v:0','-read_intervals',`${Math.max(0,start)}%${usedTimes[count-1].time+1}`,'-show_frames','-show_entries','frame=best_effort_timestamp,pkt_duration,duration','-of','json',source.file],
+              b=>{probeBytes+=b.length;if(probeBytes>2*1024**2)throw Error('Independent probe output exceeds boundary');probeChunks.push(b);},null,control,15000);
+            const probed=JSON.parse(Buffer.concat(probeChunks).toString('utf8')).frames;
             if(usedTimes.some(t=>!probed.some(f=>String(f.best_effort_timestamp)===t.pts)))throw Error('Source PTS differs from independent probe');
             const frame=probed.find(f=>String(f.best_effort_timestamp)===usedTimes[count-1].pts),duration=frame&&(frame.duration||frame.pkt_duration);
             if(!duration||BigInt(duration)<=0n)throw Error('Explicit final source-frame duration missing');
@@ -158,8 +158,10 @@ async function run(selection, heights, formats=['jpeg','png'], capture=false, fu
               scope:'One-second isolated source clip; no original audio or library operations. Not full-video preparation/latency acceptance.'};
             const meta=work.create('display-index.json');work.write(meta,Buffer.from(JSON.stringify(data)));work.seal(meta);
             records.save('display-ready',{directory:path.relative(REPO,work.root),files:work.names().filter(n=>n!==raw).map(n=>({name:n,identity:identity(work.path(n)),sha256:hashFile(work.path(n))})),exitCondition:'Retain for the single pending user/Eagle quality check; retire using this receipt after acceptance.'});
-            const location=path.join(__dirname,'display.local.json');if(fs.existsSync(location))throw Error('Pending visual comparison exists; retained');
-            fs.writeFileSync(location,JSON.stringify({root:work.root,meta:work.path(meta),sha256:hashFile(work.path(meta))}),{flag:'wx'});
+            const location={root:work.root,meta:work.path(meta),sha256:hashFile(work.path(meta))};
+            if(runtime.onCapture)runtime.onCapture({location,data,work});
+            else {const pointer=path.join(__dirname,'display.local.json');if(fs.existsSync(pointer))throw Error('Pending visual comparison exists; retained');
+              fs.writeFileSync(pointer,JSON.stringify(location),{flag:'wx'});}
           }
           work.remove([raw],records);work.finish();roundRecord.close();
         }catch(e){for(const name of work.names())work.seal(name);roundRecord.append({failure:true,source:key,height,message:String(e.message).replace(/[A-Za-z]:[^\n]*/g,'[local path]'),scratch:path.relative(REPO,work.root)});roundRecord.close();work.remove(work.names(),records);throw e;}

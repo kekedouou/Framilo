@@ -1,80 +1,111 @@
-/* Experimental host controls only; formal app.js and Player remain unchanged. */
+/* Experimental controls. Formal plugin code and released packages stay unchanged. */
 (function(){'use strict';
-  const path=require('path');let toolRoot=null,observation=null,clip=null,qualityToken=0;
-  const bar=document.createElement('div');bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:999;background:#303030;padding:6px;color:white;font:13px sans-serif;display:flex;gap:8px;align-items:center';
-  bar.innerHTML='<strong>演进验证</strong><button id="evObserve">开始本机观察</button><button id="evStop" disabled>停止并保存</button><button id="evQuality">1080p画质／逐帧对照</button><span id="evStatus">观察默认关闭；原视频与标注只读验收</span>';
-  document.body.prepend(bar);document.body.style.paddingTop='42px';
-  const start=bar.querySelector('#evObserve'),stop=bar.querySelector('#evStop'),status=bar.querySelector('#evStatus');
+  const path=require('path');
+  let toolRoot=null,observation=null,clip=null,qualityToken=0,opening=false,currentClose=null;
+  const bar=document.createElement('div');
+  bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:999;background:#303030;padding:6px;color:white;font:13px sans-serif;display:flex;flex-wrap:wrap;gap:8px;align-items:center';
+  bar.innerHTML='<strong>演进验证</strong><button id="evObserve">开始内存记录</button><button id="evStop" disabled>停止并保存</button><button id="evQuality">所选视频1080p JPEG／PNG对照</button><span id="evStatus">普通播放仍是720p JPEG；记录默认关闭</span><span id="evResources" style="width:100%" title="受管RAM是当前播放器缓存账目；进程内存还包含程序本身，不含共享Eagle/GPU，二者不能相加。">内存记录未开启</span>';
+  document.body.prepend(bar);document.body.style.paddingTop='72px';
+  const start=bar.querySelector('#evObserve'),stop=bar.querySelector('#evStop'),status=bar.querySelector('#evStatus'),resources=bar.querySelector('#evResources'),qualityButton=bar.querySelector('#evQuality');
   if(typeof eagle==='object'&&typeof eagle.onPluginCreate==='function')eagle.onPluginCreate(plugin=>{toolRoot=path.dirname(path.dirname(plugin.path));});
+  const mib=value=>typeof value==='number'?(value/1024**2).toFixed(1)+'MiB':'—';
   function message(text){status.textContent=text;}
-  async function stopObservation(){if(observation){const value=observation;observation=null;await value.stop();}start.disabled=false;stop.disabled=true;}
+  async function stopObservation(){if(observation){const value=observation;observation=null;await value.stop();}start.disabled=!!currentClose;stop.disabled=true;}
   start.onclick=()=>{try{
-    if(!toolRoot||!window.EVADiagnostics)throw Error('插件尚未就绪');
-    const {start:begin}=require(path.join(toolRoot,'observation.cjs'));
+    if(!toolRoot||!window.EVADiagnostics||currentClose)throw Error('请在普通720p播放器中开启内存记录');
+    const {start:begin}=require(path.join(toolRoot,'observation.cjs'));let latest=null,system=null;
+    function update(){resources.textContent='当前视频缓存：'+mib(latest&&latest.managedBytes)+' / '+mib(latest&&latest.managedLimit)+'；插件所属进程：'+mib(system&&system.pluginBytes)+'；媒体处理：'+mib(system&&system.preprocessingBytes)+'；记录工具：'+mib(system&&system.observerBytes)+'（每秒更新）';}
     observation=begin({snapshot:()=>window.EVADiagnostics.snapshot(),onStatus:value=>{
-      if(value.state==='recording')message('本机观察中：每秒一次；可正常使用、换片、关闭');
-      if(value.issue)message('观察已停止：'+value.issue+'；播放不受影响');
-      else if(value.state==='saved')message('观察已保存；不代表长期验收通过');
+      if(value.state==='recording')message('每秒记录一次内存到本机；正常使用即可，无固定陪测时长');
+      if(value.state==='sample'){latest=value.sample;update();}
+      if(value.state==='resources'){system=value;update();}
+      if(value.issue)message('记录停止：'+value.issue+'；播放不受影响');
+      else if(value.state==='saved')message('内存记录已保存，交由Codex分析；不是长期验收结论');
     }});start.disabled=true;stop.disabled=false;
-    observation.done.finally(()=>{start.disabled=false;stop.disabled=true;});
+    observation.done.finally(()=>{start.disabled=!!currentClose;stop.disabled=true;});
   }catch(e){message(e.message);}};
   stop.onclick=()=>stopObservation().catch(e=>message(e.message));
-  window.addEventListener('pagehide',()=>{if(observation)observation.stop();if(clip)clip.dispose();});
-  bar.querySelector('#evQuality').onclick=()=>openQuality().catch(e=>message(e.message));
+  window.addEventListener('pagehide',()=>{if(observation)observation.stop();if(currentClose)currentClose();});
+  qualityButton.onclick=()=>openQuality().catch(e=>message(e.message));
   async function openQuality(){
-    if(!toolRoot)throw Error('插件尚未就绪');await stopObservation();
-    if(typeof window.EVAEvolutionClose!=='function')throw Error('验证入口版本不匹配');
-    const released=await window.EVAEvolutionClose();if(released&&released.status==='error')throw Error('普通播放器资源未释放');
-    if(document.getElementById('evPanel'))return;
-    const fs=require('fs'),{sha,hashFile,identity,store}=require(path.join(toolRoot,'workspace.cjs')),index=require(path.join(toolRoot,'../../plugin/frame-index.cjs'));
-    const local=JSON.parse(fs.readFileSync(path.join(toolRoot,'display.local.json')));identity(local.meta);if(sha(fs.readFileSync(local.meta))!==local.sha256)throw Error('对照数据已改变');
-    const data=JSON.parse(fs.readFileSync(local.meta)),panel=document.createElement('div');panel.id='evPanel';
-    panel.style.cssText='position:fixed;inset:42px 0 0;z-index:998;background:#181818;color:#eee;padding:16px;overflow:auto;font:14px sans-serif';
-    panel.innerHTML='<div style="display:flex;gap:10px;align-items:center"><strong>原生1080p样本 · 1秒无声片段</strong><select id="evFormat"><option value="jpeg">JPEG轻量</option><option value="png">PNG无损</option></select><button id="evClose">返回播放器</button><button id="evCheck">核对30帧并保存</button><button id="evSize">原尺寸／适应窗口</button></div><p>两种格式来自相同源帧。画质对照不代表整段视频已接入无损模式。观察在此面板开启时已停止。</p><div style="overflow:auto;max-height:65vh"><canvas id="evCanvas" style="display:block;max-width:100%;height:auto"></canvas></div><input id="evRange" type="range" min="0" max="1" step="any" value="0" style="width:100%"><p><button id="evPrev">上一帧【</button> <button id="evNext">下一帧】</button> <span id="evFrame"></span></p><p id="evMessage">载入中</p>';
-    document.body.append(panel);start.disabled=true;stop.disabled=true;
-    const canvas=panel.querySelector('#evCanvas'),range=panel.querySelector('#evRange'),state=panel.querySelector('#evMessage'),formatSelect=panel.querySelector('#evFormat');
-    let currentFormat=null,checking=false,dragging=false,seekSerial=0,closingQuality=null,qualityObserver=null;
-    function closeQuality(){if(closingQuality)return closingQuality;++qualityToken;const current=clip;clip=null;
-      closingQuality=(async()=>{if(current)await current.dispose();if(qualityObserver)await qualityObserver.stop();panel.remove();window.EVAEvolutionBeforeRun=null;start.disabled=false;message('画质对照已结束；在Eagle再次调用此入口可载入选中视频。');})();return closingQuality;}
-    window.EVAEvolutionBeforeRun=closeQuality;
-    qualityObserver=require(path.join(toolRoot,'observation.cjs')).start({scope:'quality',snapshot:()=>({state:'paused',epoch:qualityToken,playback:clip?clip.snapshot():null}),onStatus:value=>{if(value.issue){message('画质观察停止：'+value.issue);closeQuality().catch(e=>message(e.message));}}});
-    const fail=e=>{state.textContent=e.message;};
-    async function load(format){
-      const token=++qualityToken;formatSelect.disabled=true;range.disabled=true;dragging=false;if(clip){await clip.dispose();clip=null;}
-      if(token!==qualityToken)return;
-      const display=data.displays.find(d=>d.format===format),file=path.resolve(local.root,display.file);identity(file);
-      if(path.dirname(file)!==local.root||hashFile(file)!==display.sha256)throw Error('图片包核对失败');
-      const rows=data.times.map((t,i)=>({id:i,file:String(i),bytes:display.index[i].bytes,ptsTicks:t.pts,timeBase:data.timeBase}));
-      const built=index.buildIndex(rows,{timeBase:data.timeBase,lastFrameEndTicks:data.lastFrameEndTicks});
-      const info={width:data.width,height:data.height,duration:built.videoDuration,frames:built.frames,source:{sha256:data.sourceSha256},audio:null};
-      const player=new window.EVAPlayer.Player({canvas,frameIndex:index,ramBytes:1024**3,compressedRamBytes:128*1024**2,experimentMode:'compressed-ram',
-        readAsset:async(_info,name)=>{const part=display.index[Number(name)];if(!part)throw Error('无效帧');const fd=await fs.promises.open(file,'r'),buffer=Buffer.alloc(part.bytes);
-          try{let total=0;while(total<part.bytes){const r=await fd.read(buffer,total,part.bytes-total,part.offset+total);if(!r.bytesRead)throw Error('图片包不完整');total+=r.bytesRead;}}finally{await fd.close();}
-          if(sha(buffer)!==part.sha256)throw Error('帧摘要错误');return buffer;},
-        env:{decodeImage:bytes=>createImageBitmap(new Blob([bytes],{type:format==='png'?'image/png':'image/jpeg'}))},
-        onChange:s=>{if(token!==qualityToken)return;panel.querySelector('#evFrame').textContent=`第${s.frameOrdinal===null?'—':s.frameOrdinal+1} / ${data.times.length}帧；受管RAM ${(s.cacheBytes/1024**2).toFixed(1)}MiB`;if(!dragging)range.value=s.time||0;}
-      });
-      clip=player;currentFormat=format;await player.load(info);if(token!==qualityToken){await player.dispose();return;}range.max=info.duration;range.disabled=false;formatSelect.disabled=false;state.textContent='可以拖动、逐帧；切换格式观察同片段细节';
-    }
-    panel.querySelector('#evClose').onclick=()=>closeQuality().catch(fail);
-    panel.querySelector('#evSize').onclick=()=>{canvas.style.maxWidth=canvas.style.maxWidth==='none'?'100%':'none';};
-    formatSelect.onchange=()=>load(formatSelect.value).catch(fail);
-    range.oninput=()=>{if(clip&&!checking){dragging=true;seekSerial++;clip.seek(Number(range.value),{kind:'drag',final:false}).catch(fail);}};
-    range.onchange=()=>{if(clip&&!checking){const serial=++seekSerial;clip.seek(Number(range.value),{kind:'release',final:true}).then(()=>{if(serial===seekSerial){dragging=false;if(clip)range.value=clip.snapshot().time;}}).catch(fail);}};
-    range.onpointercancel=()=>{dragging=false;};
-    const step=n=>{if(clip&&!checking)clip.step(n).catch(fail);};panel.querySelector('#evPrev').onclick=()=>step(-1);panel.querySelector('#evNext').onclick=()=>step(1);
-    panel.addEventListener('keydown',e=>{if(e.target.tagName==='SELECT')return;if(['[','【',']','】'].includes(e.key)){e.preventDefault();e.stopPropagation();step(['[','【'].includes(e.key)?-1:1);}});
-    panel.querySelector('#evCheck').onclick=async()=>{if(!clip||checking)return;checking=true;formatSelect.disabled=true;const player=clip,token=qualityToken,results=[];
-      try{for(let n=0;n<data.times.length;n++){if(token!==qualityToken)throw Error('核对已取消');const t=performance.now(),r=await player.seek(player.info.frames[n].time,{kind:'accuracy-check',final:true}),elapsedMs=performance.now()-t;
-        if(r.status!=='drawn')throw Error('目标帧未显示');const pixels=canvas.getContext('2d').getImageData(0,0,data.width,data.height).data,rgb=Buffer.alloc(data.width*data.height*3);
-        for(let i=0,j=0;i<pixels.length;i+=4){rgb[j++]=pixels[i];rgb[j++]=pixels[i+1];rgb[j++]=pixels[i+2];}
-        results.push({ordinal:n,elapsedMs,displayOrdinal:player.snapshot().frameOrdinal,rgbSha256:sha(rgb),referenceEqual:sha(rgb)===data.referenceHashes[n]});
+    if(opening)return;opening=true;qualityButton.disabled=true;
+    try{
+      if(!toolRoot)throw Error('插件尚未就绪');
+      const adapter=require(path.join(toolRoot,'../../plugin/eagle.cjs'));
+      // Capture the current Eagle selection before any close/wait can change it.
+      const selected=await adapter.captureSelected(eagle),snapshot=window.EVADiagnostics&&window.EVADiagnostics.snapshot();
+      const time=snapshot&&snapshot.source&&snapshot.source.id===selected.id&&snapshot.playback?snapshot.playback.time:0;
+      await stopObservation();if(currentClose)await currentClose();
+      if(typeof window.EVAEvolutionClose!=='function')throw Error('验证入口版本不匹配');
+      const released=await window.EVAEvolutionClose();if(released&&released.status==='error')throw Error('普通播放器资源未释放');
+      const fs=require('fs'),{sha,hashFile,identity,store}=require(path.join(toolRoot,'workspace.cjs')),index=require(path.join(toolRoot,'../../plugin/frame-index.cjs'));
+      const panel=document.createElement('div');panel.id='evPanel';
+      panel.style.cssText='position:fixed;inset:72px 0 0;z-index:998;background:#181818;color:#eee;padding:16px;overflow:auto;font:14px sans-serif';
+      panel.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center"><strong id="evSource"></strong><select id="evFormat" disabled><option value="jpeg">JPEG轻量</option><option value="png">PNG无损</option></select><button id="evReadSelected">读取Eagle当前选中视频</button><button id="evClose">返回普通播放器</button><button id="evCheck" disabled>核对本片段并保存</button><button id="evSize">原尺寸／适应窗口</button></div><p id="evScope">准备当前所选视频的1080p短片段；JPEG与PNG使用完全相同的源帧。准备中也可以返回或关闭。</p><div style="overflow:auto;max-height:60vh"><canvas id="evCanvas" style="display:block;max-width:100%;height:auto"></canvas></div><input id="evRange" type="range" min="0" max="1" step="any" value="0" disabled style="width:100%"><p><button id="evPrev" disabled>上一帧【</button> <button id="evNext" disabled>下一帧】</button> <span id="evFrame"></span></p><p id="evMessage">正在生成JPEG／PNG，请稍候……</p>';
+      document.body.append(panel);start.disabled=true;stop.disabled=true;resources.textContent='对照面板只显示本片段缓存RAM；普通播放器已释放，内存记录已暂停';
+      panel.querySelector('#evSource').textContent=selected.name;
+      const canvas=panel.querySelector('#evCanvas'),range=panel.querySelector('#evRange'),state=panel.querySelector('#evMessage'),formatSelect=panel.querySelector('#evFormat');
+      let data=null,local=null,currentFormat=null,checking=false,dragging=false,seekSerial=0,closingQuality=null,generator=null,dead=false;
+      const fail=e=>{if(!dead)state.textContent=e.message;};
+      function closeQuality(){if(closingQuality)return closingQuality;dead=true;++qualityToken;const current=clip;clip=null;
+        closingQuality=(async()=>{if(current)await current.dispose();if(generator){const result=await generator.stop();if(result.failure)message('对照停止：'+result.failure.message);}panel.remove();
+          if(currentClose===closeQuality)currentClose=null;if(window.EVAEvolutionBeforeRun===closeQuality)window.EVAEvolutionBeforeRun=null;start.disabled=false;
+          message('对照已结束；普通播放仍是720p JPEG');resources.textContent='内存记录未开启';})();return closingQuality;
       }
-      const saved=store().save('eagle-canvas-check',{format:currentFormat,node:process.versions.node,chrome:process.versions.chrome,results,
-        allOrdinalsMatch:results.every(r=>r.ordinal===r.displayOrdinal),allReferencePixelsEqual:results.every(r=>r.referenceEqual),scope:'One-second sequential actualCanvas check; no full preparation, physical display or formal P01/P02 result.'});
-      state.textContent='核对已保存：'+saved.file;
-      }catch(e){fail(e);}finally{checking=false;if(token===qualityToken)formatSelect.disabled=false;}
-    };
-    await load('jpeg');
+      currentClose=closeQuality;window.EVAEvolutionBeforeRun=closeQuality;
+      panel.querySelector('#evClose').onclick=async()=>{try{await closeQuality();if(window.EVAEvolutionRun)await window.EVAEvolutionRun();}catch(e){message(e.message);}};
+      panel.querySelector('#evReadSelected').onclick=async()=>{if(opening){message('请等待本次准备结束，或先点击返回取消');return;}await openQuality().catch(e=>message(e.message));};
+      panel.querySelector('#evSize').onclick=()=>{canvas.style.maxWidth=canvas.style.maxWidth==='none'?'100%':'none';};
+      generator=require(path.join(toolRoot,'selected-display-client.cjs')).start(selected,time,value=>{
+        if(!dead&&value.state==='preparing')state.textContent='正在为所选视频生成1080p JPEG／PNG，取样起点'+value.start.toFixed(3)+'秒';
+      });
+      let ready;
+      try{ready=await generator.ready;}catch(e){fail(e);return;}
+      if(dead)return;
+      local=ready.location;identity(local.meta);if(sha(fs.readFileSync(local.meta))!==local.sha256)throw Error('对照数据已改变');
+      data=JSON.parse(fs.readFileSync(local.meta));
+      if(data.sourceSha256===undefined||data.times.length!==ready.frames)throw Error('对照样本身份不完整');
+      const native=ready.width===data.width&&ready.height===data.height;
+      panel.querySelector('#evScope').textContent=`本次所选：${selected.name}；源尺寸${ready.width}×${ready.height}；预览${data.width}×${data.height}${native?'（原始尺寸，JPEG仍有损压缩）':'（经过缩放及必要留边）'}；原片${data.times[0].time.toFixed(3)}～${(Number(data.lastFrameEndTicks)*data.timeBase[0]/data.timeBase[1]).toFixed(3)}秒，${data.times.length}帧，无声。这里只对照短片段，不是整段无损播放器。`;
+      async function load(format){
+        if(dead)return;const retained=clip&&clip.snapshot().frameOrdinal||0,token=++qualityToken;
+        formatSelect.disabled=true;range.disabled=true;dragging=false;if(clip){await clip.dispose();clip=null;}if(dead||token!==qualityToken)return;
+        const display=data.displays.find(d=>d.format===format),file=path.resolve(local.root,display.file);identity(file);
+        if(path.dirname(file)!==local.root||hashFile(file)!==display.sha256)throw Error('图片包核对失败');
+        const rows=data.times.map((t,i)=>({id:i,file:String(i),bytes:display.index[i].bytes,ptsTicks:t.pts,timeBase:data.timeBase}));
+        const built=index.buildIndex(rows,{timeBase:data.timeBase,lastFrameEndTicks:data.lastFrameEndTicks});
+        const info={width:data.width,height:data.height,duration:built.videoDuration,frames:built.frames,source:{sha256:data.sourceSha256},audio:null};
+        const player=new window.EVAPlayer.Player({canvas,frameIndex:index,ramBytes:1024**3,compressedRamBytes:128*1024**2,experimentMode:'compressed-ram',
+          readAsset:async(_info,name)=>{const part=display.index[Number(name)];if(!part)throw Error('无效帧');const fd=await fs.promises.open(file,'r'),buffer=Buffer.alloc(part.bytes);
+            try{let total=0;while(total<part.bytes){const r=await fd.read(buffer,total,part.bytes-total,part.offset+total);if(!r.bytesRead)throw Error('图片包不完整');total+=r.bytesRead;}}finally{await fd.close();}
+            if(sha(buffer)!==part.sha256)throw Error('帧摘要错误');return buffer;},
+          env:{decodeImage:bytes=>createImageBitmap(new Blob([bytes],{type:format==='png'?'image/png':'image/jpeg'}))},
+          onChange:s=>{if(dead||token!==qualityToken)return;panel.querySelector('#evFrame').textContent=`片段第${s.frameOrdinal===null?'—':s.frameOrdinal+1} / ${data.times.length}帧；本片段缓存RAM ${mib(s.cacheBytes)}（上限1GiB）`;if(!dragging)range.value=s.time||0;}
+        });
+        clip=player;currentFormat=format;await player.load(info);if(dead||token!==qualityToken){await player.dispose();return;}
+        if(retained)await player.seek(info.frames[Math.min(retained,info.frames.length-1)].time,{kind:'release',final:true});
+        if(dead||token!==qualityToken)return;range.max=info.duration;range.disabled=false;formatSelect.disabled=false;
+        for(const id of ['evPrev','evNext','evCheck'])panel.querySelector('#'+id).disabled=false;
+        state.textContent='切换JPEG／PNG会尽量保持同一帧；比较细节、拖动、连续逐帧即可';
+      }
+      formatSelect.onchange=()=>load(formatSelect.value).catch(fail);
+      range.oninput=()=>{if(clip&&!checking){dragging=true;seekSerial++;clip.seek(Number(range.value),{kind:'drag',final:false}).catch(fail);}};
+      range.onchange=()=>{if(clip&&!checking){const serial=++seekSerial;clip.seek(Number(range.value),{kind:'release',final:true}).then(()=>{if(serial===seekSerial){dragging=false;if(clip)range.value=clip.snapshot().time;}}).catch(fail);}};
+      range.onpointercancel=()=>{dragging=false;};
+      const step=n=>{if(clip&&!checking)clip.step(n).catch(fail);};panel.querySelector('#evPrev').onclick=()=>step(-1);panel.querySelector('#evNext').onclick=()=>step(1);
+      panel.addEventListener('keydown',e=>{if(e.target.tagName==='SELECT')return;if(['[','【',']','】'].includes(e.key)){e.preventDefault();e.stopPropagation();step(['[','【'].includes(e.key)?-1:1);}});
+      panel.querySelector('#evCheck').onclick=async()=>{if(!clip||checking)return;checking=true;formatSelect.disabled=true;const player=clip,token=qualityToken,results=[];
+        try{for(let n=0;n<data.times.length;n++){if(dead||token!==qualityToken)throw Error('核对已取消');const t=performance.now(),r=await player.seek(player.info.frames[n].time,{kind:'accuracy-check',final:true}),elapsedMs=performance.now()-t;
+          if(r.status!=='drawn')throw Error('目标帧未显示');const pixels=canvas.getContext('2d').getImageData(0,0,data.width,data.height).data,rgb=Buffer.alloc(data.width*data.height*3);
+          for(let i=0,j=0;i<pixels.length;i+=4){rgb[j++]=pixels[i];rgb[j++]=pixels[i+1];rgb[j++]=pixels[i+2];}
+          const hash=sha(rgb);results.push({ordinal:n,elapsedMs,displayOrdinal:player.snapshot().frameOrdinal,rgbSha256:hash,referenceEqual:hash===data.referenceHashes[n]});
+        }
+        const saved=store().save('eagle-canvas-check',{format:currentFormat,sourceSha256:data.sourceSha256,node:process.versions.node,chrome:process.versions.chrome,results,
+          allOrdinalsMatch:results.every(r=>r.ordinal===r.displayOrdinal),allReferencePixelsEqual:results.every(r=>r.referenceEqual),scope:'Selected source short sequential Canvas check; not full preparation or formal P01/P02.'});
+        state.textContent='核对已保存，交由Codex分析：'+saved.file;
+        }catch(e){fail(e);}finally{checking=false;if(!dead&&token===qualityToken)formatSelect.disabled=false;}
+      };
+      try{await load('jpeg');}catch(e){fail(e);}
+    }finally{opening=false;qualityButton.disabled=false;}
   }
 })();

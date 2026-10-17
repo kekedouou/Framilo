@@ -54,7 +54,7 @@ function harness(settings = {}) {
   };
   const win = { EVAUI: { createUI: () => ui }, EVAPlayer: { Player: function (options) { this.options = options; } },
     close: requestClose, addEventListener(type, fn) { hooks[type] = fn; } };
-  vm.runInNewContext(code, { window: win, eagle, performance: { now: () => 100 }, require(name) {
+  vm.runInNewContext(settings.code || code, { window: win, eagle, performance: { now: () => 100 }, require(name) {
     if (name === 'path') return path; if (name === 'fs') return { realpathSync: file => file };
     assert.strictEqual(path.dirname(name), root); assert(modules[path.basename(name)], name); return modules[path.basename(name)];
   }, Promise, setTimeout: schedule });
@@ -226,4 +226,5 @@ async function main() {
     console.log('T1 app: real session closes while SDK discovery never returns passed; Eagle not executed');
   }
 }
-main().catch(error => { console.error(error.stack); process.exitCode = 1; });
+if (require.main === module) main().catch(error => { console.error(error.stack); process.exitCode = 1; });
+module.exports = { harness, bounded };

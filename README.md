@@ -72,6 +72,6 @@
 
 [产品规格](docs/product.md) · [产品路线图](docs/roadmap.md) · [技术架构](docs/architecture.md) · [验证规范](docs/verification.md) · [进度](docs/progress.md) · [更新记录](CHANGELOG.md) · [Beta2发布记录](docs/releases/v0.1.0-beta.2.md)
 
-2026-10-17：E-01稳定性观察与E-02有损/无损、1080p对照已获授权并完成后端实验；用户已允许载入“视频分析 · 演进验证”，真实窗口体验待反馈，见[实验记录](docs/experiments/Evolution/report.md)。当前发行版仍固定720p有损预览，正式接入E-03尚未授权。
+2026-10-17：E-01/E-02后端实验完成。用户实际打开唯一演进验证入口后指出流程问题，已据此修正为当前所选MP4的1080p短片段JPEG/PNG对照及可见内存记录；新流程真实体验待反馈，见[实验记录](docs/experiments/Evolution/report.md)。当前发行版仍固定720p有损预览，正式接入E-03尚未授权。
 
 项目开源许可证尚未指定，本次未新增LICENSE或授权声明。Eagle及外部工具的权利归各自作者，插件包不分发其程序。
