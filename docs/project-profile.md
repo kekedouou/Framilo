@@ -2,6 +2,8 @@
 
 ## 身份与入口
 
+- 2026-10-17记录工具最新：原16MiB/最多128文件授权不变，初版63份预留造成提前耗尽已修正为126×128KiB记录＋owner/policy控制文件；原件完整保留、Canvas结果同窗口批处理，记录未保存与播放错误分开。Node16真实文件/并发检查通过，GUI新保存待用户反馈；细节见Evolution记录。不是正式缓存/RAM容量变更。
+
 - 2026-10-17最新：E-01＋E-02已获授权，用户实际打开唯一演进验证入口并反馈样本固定/流程不清，确认关闭后已更新同一入口为所选MP4短片段1080p JPEG/PNG对照、显式内存记录数值；普通整段仍720p。后端/模型通过与新GUI待验、旧无renderer记录的局限见docs/experiments/Evolution/report.md。prototypes/preview-quality仅实验，E-03未授权。先读progress最新段。
 
 - 2026-10-17早前完成路线整合文档，随后用户批准E-01/02；方向见roadmap、执行范围见development-plan当前段，旧MVP历史不能自动授权新工作。

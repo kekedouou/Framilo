@@ -1,7 +1,7 @@
 /* Experimental controls. Formal plugin code and released packages stay unchanged. */
 (function(){'use strict';
   const path=require('path');
-  let toolRoot=null,observation=null,clip=null,qualityToken=0,opening=false,currentClose=null;
+  let toolRoot=null,observation=null,clip=null,qualityToken=0,opening=false,currentClose=null,checkRecorder=null;
   const bar=document.createElement('div');
   bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:999;background:#303030;padding:6px;color:white;font:13px sans-serif;display:flex;flex-wrap:wrap;gap:8px;align-items:center';
   bar.innerHTML='<strong>演进验证</strong><button id="evObserve">开始内存记录</button><button id="evStop" disabled>停止并保存</button><button id="evQuality">所选视频1080p JPEG／PNG对照</button><span id="evStatus">普通播放仍是720p JPEG；记录默认关闭</span><span id="evResources" style="width:100%" title="受管RAM是当前播放器缓存账目；进程内存还包含程序本身，不含共享Eagle/GPU，二者不能相加。">内存记录未开启</span>';
@@ -25,7 +25,7 @@
     observation.done.finally(()=>{start.disabled=!!currentClose;stop.disabled=true;});
   }catch(e){message(e.message);}};
   stop.onclick=()=>stopObservation().catch(e=>message(e.message));
-  window.addEventListener('pagehide',()=>{if(observation)observation.stop();if(currentClose)currentClose();});
+  window.addEventListener('pagehide',()=>{if(observation)observation.stop();if(currentClose)currentClose();if(checkRecorder)try{checkRecorder.close();}catch(_){};});
   qualityButton.onclick=()=>openQuality().catch(e=>message(e.message));
   async function openQuality(){
     if(opening)return;opening=true;qualityButton.disabled=true;
@@ -94,15 +94,20 @@
       range.onpointercancel=()=>{dragging=false;};
       const step=n=>{if(clip&&!checking)clip.step(n).catch(fail);};panel.querySelector('#evPrev').onclick=()=>step(-1);panel.querySelector('#evNext').onclick=()=>step(1);
       panel.addEventListener('keydown',e=>{if(e.target.tagName==='SELECT')return;if(['[','【',']','】'].includes(e.key)){e.preventDefault();e.stopPropagation();step(['[','【'].includes(e.key)?-1:1);}});
-      panel.querySelector('#evCheck').onclick=async()=>{if(!clip||checking)return;checking=true;formatSelect.disabled=true;const player=clip,token=qualityToken,results=[];
+      panel.querySelector('#evCheck').onclick=async()=>{if(!clip||checking)return;
+        if(checkRecorder&&checkRecorder.pending){try{const saved=checkRecorder.retry();state.textContent='上次核对结果已保存：'+saved.file;panel.querySelector('#evCheck').textContent='核对本片段并保存';}
+          catch(e){state.textContent=(checkRecorder.uncertain?'保存结果尚未确认，未重复写入：':'上次画面核对已完成，记录仍未保存：')+e.message+'；可以继续预览。';}return;}
+        checking=true;formatSelect.disabled=true;const player=clip,token=qualityToken,results=[];
         try{for(let n=0;n<data.times.length;n++){if(dead||token!==qualityToken)throw Error('核对已取消');const t=performance.now(),r=await player.seek(player.info.frames[n].time,{kind:'accuracy-check',final:true}),elapsedMs=performance.now()-t;
           if(r.status!=='drawn')throw Error('目标帧未显示');const pixels=canvas.getContext('2d').getImageData(0,0,data.width,data.height).data,rgb=Buffer.alloc(data.width*data.height*3);
           for(let i=0,j=0;i<pixels.length;i+=4){rgb[j++]=pixels[i];rgb[j++]=pixels[i+1];rgb[j++]=pixels[i+2];}
           const hash=sha(rgb);results.push({ordinal:n,elapsedMs,displayOrdinal:player.snapshot().frameOrdinal,rgbSha256:hash,referenceEqual:hash===data.referenceHashes[n]});
         }
-        const saved=store().save('eagle-canvas-check',{format:currentFormat,sourceSha256:data.sourceSha256,node:process.versions.node,chrome:process.versions.chrome,results,
+        if(!checkRecorder)checkRecorder=require(path.join(toolRoot,'check-recorder.cjs')).create();
+        try{const saved=checkRecorder.save({format:currentFormat,sourceSha256:data.sourceSha256,node:process.versions.node,chrome:process.versions.chrome,results,capturedAt:new Date().toISOString(),
           allOrdinalsMatch:results.every(r=>r.ordinal===r.displayOrdinal),allReferencePixelsEqual:results.every(r=>r.referenceEqual),scope:'Selected source short sequential Canvas check; not full preparation or formal P01/P02.'});
-        state.textContent='核对已保存，交由Codex分析：'+saved.file;
+          state.textContent='画面核对完成，记录已保存，交由Codex分析：'+saved.file;
+        }catch(e){state.textContent=(checkRecorder.uncertain?'画面核对已完成，但保存结果尚未确认：':'画面核对已完成，但记录未保存：')+e.message+'；不影响继续预览。';panel.querySelector('#evCheck').textContent=checkRecorder.uncertain?'保存待Codex核对':'重试保存上次核对';}
         }catch(e){fail(e);}finally{checking=false;if(!dead&&token===qualityToken)formatSelect.disabled=false;}
       };
       try{await load('jpeg');}catch(e){fail(e);}

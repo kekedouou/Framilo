@@ -8,12 +8,12 @@ function journal(writer){
   return {writer:kind=>({append:value=>writer.append({kind,value}),flush:()=>writer.flush(),close:()=>{writer.flush();return null;}}),
     save:(kind,value)=>{writer.append({kind,value});writer.flush();return null;}};
 }
-function resumeJournal(receipt){
-  const root=store().root,file=path.resolve(REPO,receipt.file);
+function resumeJournal(receipt,records=store()){
+  const root=records.root,file=path.resolve(REPO,receipt.file);
   if(path.dirname(file)!==root||!/^slot-\d{3}\.jsonl$/.test(path.basename(file)))throw Error('Selected journal path invalid');
   const original=identity(file);
   if(original.bytes!==receipt.bytes||hashFile(file)!==receipt.sha256)throw Error('Selected journal changed; retained');
-  if(original.bytes>LIMITS.slot-65536)throw Error('本轮对照记录将满，未开始新样本；请先交由Codex整理记录');
+  if(original.bytes>LIMITS.slot-65536){const e=Error('Current selected journal needs rotation');e.code='EVIDENCE_ROTATE';throw e;}
   const first=JSON.parse(fs.readFileSync(file,'utf8').split('\n')[0]);
   if(first.schema!=='eva-evolution-record-v1'||first.kind!=='selected-display-session')throw Error('Not a selected-display journal');
   const fd=fs.openSync(file,'a');let bytes=original.bytes,closed=false;
@@ -23,6 +23,10 @@ function resumeJournal(receipt){
     const now=identity(file);if(now.dev!==original.dev||now.ino!==original.ino||now.bytes!==bytes)throw Error('Selected journal identity changed');
     let offset=0;while(offset<buffer.length)offset+=fs.writeSync(fd,buffer,offset,buffer.length-offset);bytes+=buffer.length;
   },flush(){if(!closed)fs.fsyncSync(fd);},close(){if(!closed){fs.fsyncSync(fd);fs.closeSync(fd);closed=true;}return {file:receipt.file,bytes,sha256:hashFile(file)};}};
+}
+function openJournal(receipt,records=store()){
+  try{return receipt?resumeJournal(receipt,records):records.writer('selected-display-session');}
+  catch(e){if(e.code!=='EVIDENCE_ROTATE')throw e;const writer=records.writer('selected-display-session');writer.append({previousJournal:receipt});writer.flush();return writer;}
 }
 async function inspect(request,tools,control={child:null,failure:null}){
   const source=require('../../plugin/eagle.cjs').validateSnapshot(request.source);
@@ -47,7 +51,8 @@ async function main(){
         if(value.type!=='prepare')throw Error('Invalid request');request=value;resolveInput(value);}catch(_){cancel();}}
   });
   const value=await input;if(!value||closing){process.stdin.destroy();return;}
-  const writer=value.journal?resumeJournal(value.journal):store().writer('selected-display-session'),records=journal(writer);
+  const writer=openJournal(value.journal);
+  const records=journal(writer);
   const send=value=>{if(!finished)process.stdout.write(JSON.stringify(value)+'\n');};
   try{
     if(closing)throw Error('对照准备已取消');
@@ -67,4 +72,4 @@ async function main(){
   }
 }
 if(require.main===module)main().catch(e=>{process.stdout.write(JSON.stringify({state:'failed',message:'对照工具停止：'+String(e.message).replace(/[A-Za-z]:[^\n]*/g,'[本机路径]')})+'\n');process.stdin.destroy();process.exitCode=1;});
-module.exports={windowStart,journal,resumeJournal,inspect};
+module.exports={windowStart,journal,resumeJournal,openJournal,inspect};
