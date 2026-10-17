@@ -1,12 +1,12 @@
 /* Experimental controls; release packages stay frozen. Runtime copies follow the documented source revision. */
 (function(){'use strict';
   const path=require('path');
-  let toolRoot=null,observation=null,clip=null,qualityToken=0,opening=false,currentClose=null,checkRecorder=null;
+  let toolRoot=null,observation=null,clip=null,qualityToken=0,opening=false,currentClose=null,checkRecorder=null,pageClosed=false;
   const bar=document.createElement('div');
   bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:999;background:#303030;padding:6px;color:white;font:13px sans-serif;display:flex;flex-wrap:wrap;gap:8px;align-items:center';
-  bar.innerHTML='<strong>演进验证</strong><button id="evObserve">开始内存记录</button><button id="evStop" disabled>停止并保存</button><button id="evQuality">所选视频颜色对照</button><span id="evStatus">普通播放仍是720p JPEG；记录默认关闭</span><span id="evResources" style="width:100%" title="受管RAM是当前播放器缓存账目；进程内存还包含程序本身，不含共享Eagle/GPU，二者不能相加。">内存记录未开启</span>';
+  bar.innerHTML='<strong>演进验证</strong><button id="evObserve">开始内存记录</button><button id="evStop" disabled>停止并保存</button><button id="evQuality">所选视频颜色对照</button><button id="evDirect">原视频／画布验证（无缓存）</button><span id="evStatus">普通播放仍是720p JPEG；记录默认关闭</span><span id="evResources" style="width:100%" title="受管RAM是当前播放器缓存账目；进程内存还包含程序本身，不含共享Eagle/GPU，二者不能相加。">内存记录未开启</span>';
   document.body.prepend(bar);document.body.style.paddingTop='72px';
-  const start=bar.querySelector('#evObserve'),stop=bar.querySelector('#evStop'),status=bar.querySelector('#evStatus'),resources=bar.querySelector('#evResources'),qualityButton=bar.querySelector('#evQuality');
+  const start=bar.querySelector('#evObserve'),stop=bar.querySelector('#evStop'),status=bar.querySelector('#evStatus'),resources=bar.querySelector('#evResources'),qualityButton=bar.querySelector('#evQuality'),directButton=bar.querySelector('#evDirect');
   if(typeof eagle==='object'&&typeof eagle.onPluginCreate==='function')eagle.onPluginCreate(plugin=>{toolRoot=path.dirname(path.dirname(plugin.path));});
   const mib=value=>typeof value==='number'?(value/1024**2).toFixed(1)+'MiB':'—';
   function message(text){status.textContent=text;}
@@ -25,17 +25,57 @@
     observation.done.finally(()=>{start.disabled=!!currentClose;stop.disabled=true;});
   }catch(e){message(e.message);}};
   stop.onclick=()=>stopObservation().catch(e=>message(e.message));
-  window.addEventListener('pagehide',()=>{if(observation)observation.stop();if(currentClose)currentClose();if(checkRecorder)try{checkRecorder.close();}catch(_){};});
+  window.addEventListener('pagehide',()=>{pageClosed=true;if(observation)observation.stop();if(currentClose)currentClose();if(checkRecorder)try{checkRecorder.close();}catch(_){};});
   qualityButton.onclick=()=>openQuality().catch(e=>message(e.message));
-  async function openQuality(){
-    if(opening)return;opening=true;qualityButton.disabled=true;
+  directButton.onclick=()=>openDirect().catch(e=>message(e.message));
+  async function openDirect(){
+    if(opening||pageClosed)return;opening=true;qualityButton.disabled=directButton.disabled=true;
     try{
       if(!toolRoot)throw Error('插件尚未就绪');
-      const selected=await require(path.join(toolRoot,'../../plugin/eagle.cjs')).captureSelected(eagle),snapshot=window.EVADiagnostics&&window.EVADiagnostics.snapshot();
-      const time=snapshot&&snapshot.source&&snapshot.source.id===selected.id&&snapshot.playback?snapshot.playback.time:0;
-      await stopObservation();if(currentClose)await currentClose();
+      const selected=await require(path.join(toolRoot,'../../plugin/eagle.cjs')).captureSelected(eagle);
+      if(pageClosed)return;await stopObservation();if(pageClosed)return;if(currentClose)await currentClose();if(pageClosed)return;
       if(typeof window.EVAEvolutionClose!=='function')throw Error('验证入口版本不匹配');
-      const released=await window.EVAEvolutionClose();if(released&&released.status==='error')throw Error('普通播放器资源未释放');
+      const released=await window.EVAEvolutionClose();if(pageClosed)return;if(released&&released.status==='error')throw Error('普通播放器资源未释放');
+      const workspace=require(path.join(toolRoot,'workspace.cjs')),before=workspace.identity(selected.filePath);
+      const panel=document.createElement('div');panel.id='evDirectPanel';panel.style.cssText='position:fixed;inset:72px 0 0;z-index:998;background:#181818;color:#eee;padding:16px;overflow:auto;font:14px sans-serif';
+      panel.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center"><strong id="evDirectName"></strong><button id="evDirectSelect">读取Eagle当前选中视频</button><button id="evDirectReturn">返回普通播放器</button></div><p>只比较原视频的首个画面：右侧直接复制左侧视频的像素，不经过FFmpeg、JPEG／PNG或预缓存。优先使用之前的1080p山景视频。</p><p id="evDirectInfo">正在读取原视频首帧……</p><div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start"><div style="min-width:0"><p>左：原视频直接显示</p><video id="evDirectVideo" muted playsinline style="display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:black;filter:none;opacity:1"></video></div><div style="min-width:0"><p>右：同一帧直接画入画布（无图片压缩）</p><canvas id="evDirectCanvas" width="1" height="1" style="display:block;width:100%;height:auto;aspect-ratio:16/9;background:black;filter:none;opacity:1;visibility:hidden"></canvas></div></div><p id="evDirectMessage">同一视频对象保持暂停，只需观察两侧饱和度；这不是性能或完整播放器验收。</p>';
+      document.body.append(panel);panel.querySelector('#evDirectName').textContent=selected.name;
+      const video=panel.querySelector('#evDirectVideo'),canvas=panel.querySelector('#evDirectCanvas'),info=panel.querySelector('#evDirectInfo'),state=panel.querySelector('#evDirectMessage');
+      let closed=false,closing=null;start.disabled=true;stop.disabled=true;resources.textContent='无缓存显示验证；普通播放器和内存记录已暂停';
+      const job=require(path.join(toolRoot,'direct-display.cjs')).firstFrame(video,canvas,{valid:()=>!closed&&!pageClosed});
+      function release(){job.cancel();video.pause();video.removeAttribute('src');video.load();canvas.width=canvas.height=1;canvas.style.visibility='hidden';}
+      function closeDirect(){if(closing)return closing;closed=true;release();panel.remove();
+        if(currentClose===closeDirect)currentClose=null;if(window.EVAEvolutionBeforeRun===closeDirect)window.EVAEvolutionBeforeRun=null;
+        start.disabled=false;message('显示对照已释放；普通播放仍720p JPEG');resources.textContent='内存记录未开启';closing=Promise.resolve();return closing;}
+      currentClose=closeDirect;window.EVAEvolutionBeforeRun=closeDirect;
+      panel.querySelector('#evDirectReturn').onclick=async()=>{try{await closeDirect();if(window.EVAEvolutionRun)await window.EVAEvolutionRun();}catch(e){message(e.message);}};
+      panel.querySelector('#evDirectSelect').onclick=()=>{if(opening){message('正在读取首帧，可返回取消');return;}openDirect().catch(e=>message(e.message));};
+      video.muted=true;video.preload='auto';
+      try{
+        video.src=require('url').pathToFileURL(selected.filePath).href;video.load();
+        const result=await job.ready;if(closed||pageClosed||result.cancelled)return;
+        const sourceSha256=workspace.hashFile(selected.filePath);if(JSON.stringify(before)!==JSON.stringify(workspace.identity(selected.filePath)))throw Error('原视频读取期间发生变化，请重新选择');
+        const aspect=result.width+'/'+result.height;video.style.aspectRatio=canvas.style.aspectRatio=aspect;canvas.style.visibility='visible';
+        info.textContent='源 '+result.sourceWidth+'×'+result.sourceHeight+'；画布 '+result.width+'×'+result.height+'；首帧实际时间 '+result.actualMediaTime.toFixed(6)+' 秒。'+(result.scaled?'本视频发生缩小，仅作辅助；请用原生1080p山景排除缩放影响。':'没有缩小或放大，也没有图片编码。');
+        try{
+          if(!checkRecorder)checkRecorder=require(path.join(toolRoot,'check-recorder.cjs')).create();
+          checkRecorder.save({kind:'native-direct-canvas-v1',sourceSha256,...result,node:process.versions.node,chrome:process.versions.chrome,
+            scope:'Same paused video object -> visible sRGB Canvas; no cache encoding/readback or screen capture. User visual comparison pending; not proof of hardware overlay/driver enhancement.'});
+          state.textContent='对照条件已记录。请直接判断：左侧更鲜艳、两边接近，还是无法判断；不用运行任何命令。';
+        }catch(e){state.textContent='画面可比较，但条件记录未保存：'+e.message+'；请将情况告诉Codex。';}
+      }catch(e){if(!closed){release();info.textContent='本次对照未成立：'+e.message;state.textContent='请重新选择视频或返回；未将失败写成颜色结论。';}}
+    }finally{opening=false;qualityButton.disabled=directButton.disabled=false;}
+  }
+  async function openQuality(){
+    if(opening||pageClosed)return;opening=true;qualityButton.disabled=directButton.disabled=true;
+    try{
+      if(!toolRoot)throw Error('插件尚未就绪');
+      const selected=await require(path.join(toolRoot,'../../plugin/eagle.cjs')).captureSelected(eagle);if(pageClosed)return;
+      const snapshot=window.EVADiagnostics&&window.EVADiagnostics.snapshot();
+      const time=snapshot&&snapshot.source&&snapshot.source.id===selected.id&&snapshot.playback?snapshot.playback.time:0;
+      await stopObservation();if(pageClosed)return;if(currentClose)await currentClose();if(pageClosed)return;
+      if(typeof window.EVAEvolutionClose!=='function')throw Error('验证入口版本不匹配');
+      const released=await window.EVAEvolutionClose();if(pageClosed)return;if(released&&released.status==='error')throw Error('普通播放器资源未释放');
       const fs=require('fs'),{sha,hashFile,identity}=require(path.join(toolRoot,'workspace.cjs')),index=require(path.join(toolRoot,'../../plugin/frame-index.cjs'));
       const profiles=require(path.join(toolRoot,'image-profiles.cjs')),nativeTool=require(path.join(toolRoot,'native-reference.cjs'));
       const panel=document.createElement('div');panel.id='evPanel';panel.style.cssText='position:fixed;inset:72px 0 0;z-index:998;background:#181818;color:#eee;padding:16px;overflow:auto;font:14px sans-serif';
@@ -134,6 +174,6 @@
       panel.addEventListener('keydown',e=>{if(e.target.tagName==='SELECT')return;if(['[','【',']','】'].includes(e.key)){e.preventDefault();e.stopPropagation();step(['[','【'].includes(e.key)?-1:1);}});
       panel.querySelector('#evCheck').onclick=()=>runProbe().catch(fail);
       try{await load('jpeg-fine');if(!dead){nativeToggle.checked=true;toggleReference();await runProbe();}}catch(e){fail(e);}
-    }finally{opening=false;qualityButton.disabled=false;}
+    }finally{opening=false;qualityButton.disabled=directButton.disabled=false;}
   }
 })();

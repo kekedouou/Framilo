@@ -1,6 +1,6 @@
 # Eagle Video Analysis · 视频分析
 
-开发中：最后颜色优化已准备优化JPEG候选及同帧原视频/PNG诊断，等待一次集中颜色人工验收，通过并记录后接续画质/设置。普通播放仍720p，正式JPEG默认及已发布Beta2包不变；不开发整段无损。见[当前记录](docs/experiments/Evolution/report.md#最后颜色优化与jpeg候选2026-10-17)。
+开发中：用户反馈优化JPEG仍有偏淡，颜色尚未通过；当前验证原视频直接显示与同一帧直接画入画布的区别，跳过缓存编码。颜色确认后才接续画质/设置。普通播放仍720p，正式默认及已发布Beta2包不变。见[当前记录](docs/experiments/Evolution/report.md#原视频直显与画布验证2026-10-17)。
 
 与Eagle素材库关联的短视频分析插件：自动准备720p预览，在独立窗口播放、快速拖动、逐帧观察，并添加Eagle时间点文字标注。保留原视频，不需要替换素材。
 
@@ -74,6 +74,6 @@
 
 [产品规格](docs/product.md) · [产品路线图](docs/roadmap.md) · [技术架构](docs/architecture.md) · [验证规范](docs/verification.md) · [进度](docs/progress.md) · [更新记录](CHANGELOG.md) · [Beta2发布记录](docs/releases/v0.1.0-beta.2.md)
 
-2026-10-17：E-01/E-02后端实验与颜色修复已有记录；最新同一演进验证入口提供当前所选MP4的1080p短片段原JPEG／优化JPEG／PNG及同帧原视频。颜色人工验收待完成并记录，之后接续E-03画质/设置；本轮未实施E-03。长期证据缺口保留，见[实验记录](docs/experiments/Evolution/report.md)。当前发行版仍固定720p有损预览。
+2026-10-17：JPEG候选未解决用户所见偏淡，当前同一演进验证入口新增无缓存的原视频／直接画布首帧对照，Node16模型和默认检查通过，实际观感待用户反馈。此前JPEG/PNG数值与成本保留；颜色确认后才接续E-03，长期证据缺口不变，见[实验记录](docs/experiments/Evolution/report.md)。当前发行版仍固定720p有损预览。
 
 项目开源许可证尚未指定，本次未新增LICENSE或授权声明。Eagle及外部工具的权利归各自作者，插件包不分发其程序。

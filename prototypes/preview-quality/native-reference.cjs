@@ -36,13 +36,20 @@ function create(video, options){
   function dispose(){if(closed)return;closed=true;cancel();last=null;video.pause();video.removeAttribute('src');video.load();video.style.visibility='hidden';}
   return {seek,dispose};
 }
-function render(video,ref,width,height){
+function draw(video,ref,width,height){
+  if(!Number.isInteger(width)||!Number.isInteger(height)||width<=0||height<=0||
+    !Number.isFinite(video.videoWidth)||!Number.isFinite(video.videoHeight)||video.videoWidth<=0||video.videoHeight<=0)
+    throw Error('视频或画布尺寸无效，暂时无法绘制');
   if(ref.width!==width)ref.width=width;if(ref.height!==height)ref.height=height;
   const ctx=ref.getContext('2d',{alpha:false,colorSpace:'srgb'});
+  if(!ctx)throw Error('无法创建sRGB画布');
   ctx.fillStyle='black';ctx.fillRect(0,0,width,height);
   const scale=Math.min(width/video.videoWidth,height/video.videoHeight),w=video.videoWidth*scale,h=video.videoHeight*scale;
   ctx.drawImage(video,(width-w)/2,(height-h)/2,w,h);
-  return ctx.getImageData(0,0,width,height).data;
+  return ctx;
+}
+function render(video,ref,width,height){
+  return draw(video,ref,width,height).getImageData(0,0,width,height).data;
 }
 function compare(video,canvas,document){
   const ref=document.createElement('canvas'),width=canvas.width,height=canvas.height;
@@ -55,4 +62,4 @@ function compare(video,canvas,document){
   return {width,height,mae:sum/(width*height*3),p95,meanDelta:delta.map(x=>x/(width*height)),canvasColorSpace:canvas.getContext('2d').getContextAttributes?.().colorSpace||'unreported',
     scope:'Same reported mediaTime; native video drawn to sRGB Canvas vs cached Canvas. Scaling/chroma/JPEG differ; no raw pixels saved, not monitor calibration or HDR validation.'};
 }
-module.exports={create,compare,render};
+module.exports={create,compare,draw,render};
