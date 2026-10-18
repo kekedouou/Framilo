@@ -3,7 +3,8 @@
   'use strict';
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  if (root && root.document) root.EVALoopSelection = api;
+  if (typeof window === 'object' && window) window.EVALoopSelection = api;
+  else if (root && root.document) root.EVALoopSelection = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   function createSelection(options) {

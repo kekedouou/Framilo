@@ -1,9 +1,12 @@
 /* UI sends operations only to the session; it never reads Eagle or files. */
 (function (root, factory) {
   'use strict';
-  const api = factory(typeof module === 'object' && module.exports ? require('./loop-selection.js') : root.EVALoopSelection);
+  // Eagle exposes CommonJS in a Window, but its require is rooted in the host.
+  // Page scripts must use the helper already loaded by index.html instead.
+  const view = typeof window === 'object' && window ? window : root && root.document ? root : null;
+  const api = factory(view ? view.EVALoopSelection : require('./loop-selection.js'));
   if (typeof module === 'object' && module.exports) module.exports = api;
-  if (root && root.document) root.EVAUI = api;
+  if (view) view.EVAUI = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (selectionAPI) {
   'use strict';
   const clamp = value => Math.max(0, Math.min(1, value));
