@@ -1,6 +1,6 @@
 # 技术架构：阶段 3B 已批准
 
-2026-10-17 EV-09局部颜色缺陷修复：仍由media负责源转图、cache负责文件、player负责显示，不更换播放/缓存架构。颜色字段缺失时沿用Chromium108的SDR推断，显式字段优先；先形成RGB，再按JPEG601全范围编码；sRGB画布明确声明。manifest新增colorVersion，不改owner/recipe/锁格式；当前素材旧版本在核对清单/指纹/占用后使用现有事务清理重建，未知/在用保留，新原因obsolete-color-cache沿全部清理恢复入口读取。详情与限制见[Evolution结果](experiments/Evolution/report.md#颜色缺陷修复2026-10-17)。用户停止整段无损开发，E-03画质选择仍待颜色验收，不修改已发Beta。
+2026-10-17 EV-09局部颜色缺陷修复，2026-10-18限定验收收尾：仍由media负责源转图、cache负责文件、player负责显示，不更换播放/缓存架构。颜色字段缺失时沿用Chromium108的SDR推断，显式字段优先；先形成RGB，再按JPEG601全范围编码；sRGB画布明确声明。manifest新增colorVersion，不改owner/recipe/锁格式；当前素材旧版本在核对清单/指纹/占用后使用现有事务清理重建，未知/在用保留，新原因obsolete-color-cache沿全部清理恢复入口读取。详情与限制见[Evolution收尾](experiments/Evolution/report.md#颜色专项最终收尾2026-10-18)。保留JPEG q3/420及Canvas；不采用实验captureStream输出、调色/锐化或精细JPEG默认。颜色前置关卡已解除，E-03具体规格待确认，不修改已发Beta。
 
 ## 发布后重评边界（2026-10-17）
 
