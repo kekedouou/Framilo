@@ -9,6 +9,8 @@ async function main() {
   assert(Object.isFrozen(range) && Object.isFrozen(range[0]));
   assert.deepEqual(decodedRanges(rows,[0,1,3,4],.8),[{start:0,end:.8}]);
   assert.deepEqual(decodedRanges(rows,[],.8),[]);
+  const all=decodedRanges(rows,[0,1,2,3,4],.8);assert.equal(all[0].start,0);assert.equal(all[all.length-1].end,.8);
+  assert.deepEqual(decodedRanges(rows,[0,4],.8),[{start:0,end:.04},{start:.3,end:.8}],'Do not bridge actual uncached frames to hide geometry gaps.');
   const h = harness({forwardPredecode:true,experimentMode:'compressed-ram',compressedRamBytes:1000,ramBytes:2000000});
   await h.load(sample('coverage',null,80));for(let i=0;i<100;i++)await h.frame();
   const first=h.player.cacheCoverageSnapshot(),again=h.player.cacheCoverageSnapshot();

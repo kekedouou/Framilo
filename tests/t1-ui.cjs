@@ -211,8 +211,8 @@ test('Identical observations do not rewrite static material text or ARIA attribu
 });
 test('Video RAM is current, distinct from process memory, and its timer ends on destroy', () => {
   const h = harness(); let tick, cleared = 0, budget = null;
-  h.win.setInterval = (fn, ms) => { assert([500,250].includes(ms)); if(ms===500)tick=fn; return ms; };
-  h.win.clearInterval = id => { assert([500,250].includes(id)); cleared++; };
+  h.win.setInterval = (fn, ms) => { assert([500,50].includes(ms)); if(ms===500)tick=fn; return ms; };
+  h.win.clearInterval = id => { assert([500,50].includes(id)); cleared++; };
   h.ui.bindSession({ memorySnapshot: () => budget });
   assert.equal(h.el('memoryUsage').textContent, '视频缓存 RAM：—');
   budget = { used: 128.5 * 1048576, limit: 512 * 1048576 }; tick();
@@ -239,13 +239,13 @@ test('E05 strip is sampled separately; unchanged residency and frame updates do 
   const strip=h.el('decodedCache'),paints=strip.paints.length,initialScans=scans;
   for(let i=0;i<120;i++)h.ui.update({...h.state,playback:{time:i/60}});
   assert.equal(scans,initialScans);assert.equal(strip.paints.length,paints);
-  timers.get(250)();assert.equal(strip.paints.length,paints);
+  timers.get(50)();assert.equal(strip.paints.length,paints);
   assert.deepEqual(strip.paints.filter(p=>p[0]==='fill').slice(-2).map(p=>p.map(v=>typeof v==='number'?+v.toFixed(4):v)),
     [['fill',0,0,20,3],['fill',160,0,40,3]]);
-  coverage={...coverage,enabled:false};timers.get(250)();assert(h.el('cacheStatus').textContent.includes('按需缓存'));assert.equal(strip.paints.length,paints);
-  coverage={...coverage,revision:2,decodedFrames:9,ranges:[{start:8,end:10}]};timers.get(250)();assert(strip.paints.length>paints);
+  coverage={...coverage,enabled:false};timers.get(50)();assert(h.el('cacheStatus').textContent.includes('按需缓存'));assert.equal(strip.paints.length,paints);
+  coverage={...coverage,revision:2,decodedFrames:9,ranges:[{start:8,end:10}]};timers.get(50)();assert(strip.paints.length>paints);
   h.ui.update({...h.state,epoch:2});assert.equal(h.el('cacheStatus').textContent,'');const cleared=strip.paints.length;
-  timers.get(250)();assert.equal(strip.paints.length,cleared,'Stale source coverage cannot reappear.');
+  timers.get(50)();assert.equal(strip.paints.length,cleared,'Stale source coverage cannot reappear.');
   h.ui.destroy();assert.equal(timers.size,0);
 });
 test('E04 switch keeps pending edits across frame updates and applies with unified settings',()=>{
@@ -255,5 +255,21 @@ test('E04 switch keeps pending edits across frame updates and applies with unifi
   h.ui.update(settings);assert.equal(h.el('forwardPredecode').checked,true);
   h.el('forwardPredecode').checked=false;h.ui.update({...settings,playback:{time:3}});assert.equal(h.el('forwardPredecode').checked,false);
   h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:false});h.ui.destroy();
+});
+test('E05 fractional scaling fills the full rail; changing residency avoids repeated layout queries',()=>{
+  const fs=require('fs'),path=require('path'),css=fs.readFileSync(path.join(__dirname,'../plugin/styles.css'),'utf8');
+  const stripRule=css.match(/\.cache-strip\s*\{([^}]+)\}/)[1];assert(/object-fit:\s*fill/.test(stripRule));assert(/pointer-events:\s*none/.test(stripRule));
+  for(const scale of [1,1.25,1.5,1.75,2,2.25]){
+    const h=harness(),timers=new Map();let revision=1,layout=0;
+    h.win.devicePixelRatio=scale;h.win.setInterval=(fn,ms)=>{timers.set(ms,fn);return ms;};h.win.clearInterval=id=>timers.delete(id);
+    h.el('timeline').getBoundingClientRect=()=>{layout++;return {left:100,width:200};};
+    h.ui.bindSession({cacheCoverageSnapshot:()=>({sessionEpoch:1,epoch:1,revision,duration:10,decodedFrames:100,totalFrames:100,ranges:[{start:0,end:10}],enabled:true,phase:'complete'})});
+    const strip=h.el('decodedCache');assert.equal(strip.width,Math.round(200*scale));assert.equal(strip.height,Math.round(3*scale));
+    assert.deepEqual(strip.paints.filter(p=>p[0]==='fill').pop(),['fill',0,0,strip.width,strip.height]);assert.equal(layout,1);
+    for(let n=0;n<20;n++){revision++;timers.get(50)();}assert.equal(layout,1);
+    h.win.fire('resize');assert.equal(layout,2);h.ui.destroy();assert.equal(timers.size,0);
+  }
+  const previousContainWidth=Math.min(200/250,3/4)*250;
+  assert.equal(previousContainWidth,187.5,'At 125% the old contain rule created 6.25% total blank width.');
 });
 console.log('T1 UI: ' + checks + ' in-memory checks passed; real layout/input experience not tested.');

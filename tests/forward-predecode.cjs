@@ -2,9 +2,16 @@
 // Actual Player with deterministic image/RAF models; no host/performance claim.
 const assert = require('assert');
 const { harness, sample, flush, deferred } = require('./player.cjs');
+const { preparationWindow } = require('../plugin/player.js');
 async function frames(h, n) { for (let i=0;i<n;i++) await h.frame(); }
 async function main() {
   const opts={forwardPredecode:true,experimentMode:'compressed-ram',compressedRamBytes:1000,ramBytes:2000000};
+  {
+    const rows=[0,.01,.02,1,1.1,1.2].map(time=>({time}));
+    assert.deepEqual(preparationWindow(rows,3,3).order,[3,4,5],'Real time proximity, not average FPS or ordinal distance.');
+    assert.deepEqual(preparationWindow(rows,0,3).order,[0,1,2]);assert.deepEqual(preparationWindow(rows,5,3).order,[5,4,3]);
+    assert.equal(preparationWindow(rows,3,100).order.length,rows.length);
+  }
   {
     const gate=deferred();gate.file='f15.jpg'; const h=harness({...opts,readGate:gate});
     try { await h.load(sample('first',null,60)); assert.equal(h.player.snapshot().state,'paused');
@@ -63,6 +70,46 @@ async function main() {
     const pool=h.player.compressedCapacity;assert(pool>0);h.player.setForwardPredecode(true);await frames(h,10);
     assert.equal(h.player.compressedCapacity,pool);assert(h.player.compressedBytes<=pool);await h.close();
   }
-  console.log('E04 forward preparation: first usable frame, finite idle fill, no eviction loop, cached/cold input priority, two slots, toggle/cancel, JPEG race budget and release passed; models only.');
+  {
+    const h=harness(opts);await h.load(sample('recenter',null,80));await frames(h,110);
+    const assertWindow=center=>{
+      const plan=h.player.preparePlan,keys=[...h.player.cache.keys()].sort((a,b)=>a-b);
+      assert.equal(plan.center,center);assert.equal(keys.length,plan.capacity);
+      assert.deepEqual(keys,Array.from({length:plan.capacity},(_,i)=>plan.start+i));
+      assert(keys.includes(center));assert(h.player.snapshot().cachePeakBytes<=opts.ramBytes);
+    };
+    assertWindow(0);
+    for(const center of [40,79,0,60,20]){
+      await h.settle(h.player.seek(center/10,{kind:'release',final:true}));await frames(h,110);assertWindow(center);
+      const work=h.events.filter(e=>e.phase==='image-work-start').length,evicted=h.events.filter(e=>e.phase==='evict').length;
+      await frames(h,70);assert.equal(h.events.filter(e=>e.phase==='image-work-start').length,work);assert.equal(h.events.filter(e=>e.phase==='evict').length,evicted);
+    }
+    assert(h.closed.includes(0),'Remote old frames are actually released, not just hidden from the strip.');await h.close();
+  }
+  {
+    const h=harness(opts);await h.load(sample('held',null,80));await frames(h,100);
+    await h.settle(h.player.seek(4,{kind:'drag',final:false}));const work=h.events.filter(e=>e.phase==='image-work-start').length;
+    await frames(h,2);assert.equal(h.events.filter(e=>e.phase==='image-work-start').length,work,'Quiet delay protects busy dragging.');
+    await frames(h,100);assert.equal(h.player.preparePlan.center,40);assert(h.player.cache.has(39)&&h.player.cache.has(41),'A stationary held cursor fills both sides without requiring release.');
+    await h.close();
+  }
+  {
+    const h=harness({...opts,ramBytes:300000});await h.load(sample('small',null,80));await frames(h,100);
+    assert.equal(h.player.preparePlan.capacity,1);assert.equal(h.player.cache.size,1);await h.settle(h.player.seek(4,{kind:'release',final:true}));await frames(h,100);
+    assert.equal(h.player.cache.size,1);assert(h.player.cache.has(40));assert(h.player.snapshot().cachePeakBytes<=300000);await h.close();
+  }
+  {
+    const h=harness({...opts,forwardPredecode:false});await h.load(sample('islands',null,80));
+    for(const n of [10,70,25,50,79,20,60,40])await h.settle(h.player.seek(n/10,{kind:'release',final:true}));
+    assert(h.player.cache.has(10)&&h.player.cache.has(79));h.player.setForwardPredecode(true);await frames(h,120);
+    const plan=h.player.preparePlan;assert.equal(plan.center,40);assert([...h.player.cache.keys()].every(n=>n>=plan.start&&n<=plan.end));
+    assert.equal(h.player.cache.size,plan.capacity);await h.close();
+  }
+  {
+    const h=harness({...opts,ramBytes:5000000});await h.load(sample('play-center',null,160,60));await frames(h,100);
+    await h.settle(h.player.play());await frames(h,90);assert.equal(h.player.snapshot().state,'playing');
+    assert(h.player.preparePlan.center>0);assert(!h.events.some(e=>e.code==='UNDERRUN'));assert(h.maxDecodes()<=2);await h.close();
+  }
+  console.log('E04 surrounding preparation: source-time window, middle/edge/reverse migration, finite replacement/no stationary churn, held-drag quiet fill, tiny budget, playback, first ready/priority/two slots, toggle/cancel and JPEG race ledger passed; models only.');
 }
 main().catch(e=>{console.error(e.stack);process.exitCode=1;});

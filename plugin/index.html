@@ -43,8 +43,8 @@
         <label for="qualitySelect">预览画质</label>
         <select id="qualitySelect" aria-label="预览画质" disabled><option value="720p">720p</option><option value="1080p">1080p</option></select>
         <p class="muted">保持比例，不放大小视频。JPEG轻量预览。</p>
-        <label class="predecode-option"><input id="forwardPredecode" type="checkbox" checked disabled> 提前解压后续画面</label>
-        <p class="muted">后台准备优先让出操作。绿条表示已解压；未覆盖处首次拖动可能等待。</p>
+        <label class="predecode-option"><input id="forwardPredecode" type="checkbox" checked disabled> 提前解压周围画面</label>
+        <p class="muted">优先准备光标附近，自动替换远处画面。绿条表示已解压；未覆盖处首次拖动可能等待。</p>
         <label for="memoryMiB">视频缓存内存上限</label>
         <div class="memory-controls"><select id="memoryMiB" aria-label="视频缓存内存上限" disabled>
           <option value="512">512 MB</option><option value="1024">1 GB</option><option value="2048">2 GB</option>

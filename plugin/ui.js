@@ -44,7 +44,7 @@
     const attributes = new Map();
     const set = (node, key, value) => { if (node[key] !== value) node[key] = value; };
     let memoryTimer = null;
-    let coverageTimer = null, coverageKey = null, coverageEpoch = null;
+    let coverageTimer = null, coverageKey = null, coverageEpoch = null, coverageSize = null;
     const coverageContext = typeof el.decodedCache.getContext === 'function' ? el.decodedCache.getContext('2d') : null;
     function clearCoverage() {
       if (coverageKey !== 'empty' && coverageContext) coverageContext.clearRect(0, 0, el.decodedCache.width || 1, el.decodedCache.height || 3);
@@ -54,14 +54,17 @@
       const value = session && typeof session.cacheCoverageSnapshot === 'function' ? session.cacheCoverageSnapshot() : null;
       if (!value || value.sessionEpoch !== state.epoch || !(value.duration > 0)) { clearCoverage(); return; }
       const text = value.issue ? '后台准备暂停，请重开视频重试' : value.decodedFrames === value.totalFrames ? '整段已解压' :
-        (value.enabled ? value.phase === 'budget' ? '已保留操作余量' : value.phase === 'complete' ? '后续准备完成' : '后台准备' : '按需缓存') + ' · ' + value.decodedFrames + ' / ' + value.totalFrames + ' 帧';
+        (value.enabled ? value.phase === 'budget' ? '已保留操作余量' : '后台准备附近画面' : '按需缓存') + ' · ' + value.decodedFrames + ' / ' + value.totalFrames + ' 帧';
       set(el.cacheStatus, 'textContent', text);
       const key = [value.sessionEpoch, value.epoch, value.revision, value.duration].join(':');
       if (key === coverageKey) return;
       coverageKey = key;
       if (!coverageContext) return;
-      const scale = Number(win.devicePixelRatio) || 1;
-      const width = Math.max(1, Math.round(el.timeline.getBoundingClientRect().width * scale)), height = Math.max(1, Math.round(3 * scale));
+      if (!coverageSize) {
+        const scale = Number(win.devicePixelRatio) || 1;
+        coverageSize = { width: Math.max(1, Math.round(el.timeline.getBoundingClientRect().width * scale)), height: Math.max(1, Math.round(3 * scale)) };
+      }
+      const { width, height } = coverageSize;
       set(el.decodedCache, 'width', width); set(el.decodedCache, 'height', height);
       coverageContext.clearRect(0, 0, width, height); coverageContext.fillStyle = '#68ab79';
       for (const range of value.ranges) {
@@ -130,7 +133,7 @@
       } catch (failure) { if (session === active) set(el.cacheClearStatus, 'textContent', String(failure.message || failure)); }
       finally { cleaning = false; if (session === active) updateMemorySettings(); }
     });
-    on(win, 'resize', () => { coverageKey = null; refreshCoverage(); });
+    on(win, 'resize', () => { coverageKey = null; coverageSize = null; refreshCoverage(); });
     const interactive = () => !!session && !state.comments?.draft && ['paused', 'playing', 'seeking'].includes(state.state);
     const invoke = fn => {
       try { Promise.resolve(fn()).catch(() => {}); } catch (_) { /* session publishes operation errors */ }
@@ -295,7 +298,7 @@
     return { canvas: el.picture, bindSession(value) {
       session = value; update(state); refreshMemory(); refreshCoverage();
       if (memoryTimer === null && typeof win.setInterval === 'function') memoryTimer = win.setInterval(refreshMemory, 500);
-      if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 250);
+      if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
     }, update,
       destroy() {
         if (memoryTimer !== null) { win.clearInterval(memoryTimer); memoryTimer = null; }

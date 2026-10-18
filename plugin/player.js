@@ -9,6 +9,15 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const RAM_LIMIT = 1024 * 1024 * 1024;
+  function preparationWindow(frames, center, capacity) {
+    const count = Math.max(1, Math.min(frames.length, capacity)), order = [center], time = frames[center].time;
+    let left = center - 1, right = center + 1;
+    while (order.length < count) {
+      if (right >= frames.length || left >= 0 && time - frames[left].time < frames[right].time - time) order.push(left--);
+      else order.push(right++);
+    }
+    return { center, capacity: count, start: left + 1, end: right - 1, order };
+  }
   function decodedRanges(frames, ordinals, duration = 0) {
     const ranges = [];
     for (const ordinal of [...ordinals].sort((a, b) => a - b)) {
@@ -92,7 +101,7 @@
       this.compressedLimit = options.compressedRamBytes === undefined ? Math.floor(ledgerLimit / 8) : options.compressedRamBytes;
       if (!Number.isSafeInteger(this.compressedLimit) || this.compressedLimit < 0 || this.compressedLimit > Math.floor(ledgerLimit / 8)) throw new Error('压缩图像池不得超过总RAM额度的1/8。');
       if (options.forwardPredecode !== undefined && typeof options.forwardPredecode !== 'boolean') throw new Error('提前解压设置必须为开或关。');
-      this.forwardPredecode = !!options.forwardPredecode; this.forwardToken = 0; this.forwardCursor = 1;
+      this.forwardPredecode = !!options.forwardPredecode; this.forwardToken = 0; this.preparePlan = null;
       this.forwardStatus = 'idle'; this.forwardIssue = null; this.warmPlan = null; this.warmCursor = 0;
       this.coverageVersion = 0; this.coverageMemo = null; this.loadTimings = null;
       this.observeCanvas = !!options.observeCanvas;
@@ -136,7 +145,7 @@
     }
     setForwardPredecode(enabled) {
       if (typeof enabled !== 'boolean') throw new Error('提前解压设置必须为开或关。');
-      this.forwardPredecode = enabled; ++this.forwardToken; this.forwardCursor = (this.currentIndex === null ? 0 : this.currentIndex) + 1;
+      this.forwardPredecode = enabled; ++this.forwardToken; this.preparePlan = null;
       this.forwardStatus = enabled ? 'idle' : 'disabled'; this.forwardIssue = null; this._change();
     }
     setDecodeDelay(ms) {
@@ -172,7 +181,7 @@
       this.lastSubmission = null; this.observedSerial = this.submissionSerial; this.observedFrame = null;
       const oldContext = this.audioContext; this.audioContext = null; this.audioBuffer = null;
       this.budget.release(this.audioBudget); this.audioBudget = null; this.info = null;
-      ++this.forwardToken; this.forwardCursor = 1; this.forwardStatus = this.forwardPredecode ? 'waiting' : 'disabled';
+      ++this.forwardToken; this.preparePlan = null; this.forwardStatus = this.forwardPredecode ? 'waiting' : 'disabled';
       this.forwardIssue = null; this.warmPlan = null; this.warmCursor = 0; this.loadTimings = null;
       this.currentIndex = null; this.time = 0; this.targetTime = 0; this.lastIssue = null; this.lastErrorCode = null; this.prefetchFailed.clear(); this.ended = false;
       this._change('loading');
@@ -259,7 +268,7 @@
         } else target.dragSamples = [previous.targetTime, targetTime];
       }
       target.cacheStateAtInput = this.cache.has(ordinal) ? 'decoded' : this.tasks.has(epoch + ':' + ordinal) ? 'inflight' : this.compressed.has(ordinal) ? 'jpeg-ram' : 'disk';
-      if (!['load', 'play', 'ended'].includes(options.kind)) { ++this.forwardToken; this.forwardCursor = ordinal + 1; }
+      if (!['load', 'play', 'ended'].includes(options.kind)) ++this.forwardToken;
       this.target = target;
       this._emit('request', { epoch, phase: 'input', requestId: target.requestId, kind: target.kind, frameId: frame.id,
         frameOrdinal: ordinal, targetTime, inputAt: target.inputAt, final: target.final, cacheStateAtInput: target.cacheStateAtInput,
@@ -376,17 +385,32 @@
       this.budget.release(entry.budget);
     }
     _evict() {
-      let victim = null;
+      let victim = null, farthest = -1;
+      const center = this.target ? this.target.index : this.currentIndex;
       for (const entry of this.cache.values()) {
         if (entry.index === this.currentIndex || (this.target && entry.index === this.target.index)) continue;
-        if (!victim || entry.usedAt < victim.usedAt) victim = entry;
+        const distance = this.forwardPredecode && this.info && center !== null ? Math.abs(this.info.frames[entry.index].time - this.info.frames[center].time) : 0;
+        if (!victim || distance > farthest || distance === farthest && entry.usedAt < victim.usedAt) { victim = entry; farthest = distance; }
       }
       if (!victim) {
         const compressed = this.compressed.entries().next(); if (compressed.done) return false;
         this._dropCompressed(compressed.value[0]); return true;
       }
+      return this._dropDecoded(victim);
+    }
+    _dropDecoded(victim) {
       this.cache.delete(victim.index); ++this.coverageVersion; this._closeEntry(victim);
       this._emit('cache', { phase: 'evict', frameId: victim.id, budgetBytes: this.budget.used }); return true;
+    }
+    _evictOutsideWindow(plan) {
+      let victim = null, farthest = -1;
+      for (const entry of this.cache.values()) {
+        if (entry.index >= plan.start && entry.index <= plan.end || entry.index === this.currentIndex || this.target && entry.index === this.target.index) continue;
+        const delta = this.info.frames[entry.index].time - this.info.frames[plan.center].time;
+        if (this.state === 'playing' && delta > 0 && delta <= .3) continue;
+        if (Math.abs(delta) > farthest) { victim = entry; farthest = Math.abs(delta); }
+      }
+      return victim ? this._dropDecoded(victim) : false;
     }
     _clearCache() { for (const entry of this.cache.values()) this._closeEntry(entry); this.cache.clear(); ++this.coverageVersion; }
     _dropCompressed(ordinal) {
@@ -673,19 +697,31 @@
     }
     _startBackground() {
       if (!this.forwardPredecode || this.forwardIssue || !this.info || this.disposed || !['paused', 'playing'].includes(this.state) || this.tasks.size ||
-          this.target && (this.target.resolve || !this.target.final && ['drag', 'rapid'].includes(this.target.kind))) return;
+          this.target && (this.target.resolve || !this.target.final && ['drag', 'rapid'].includes(this.target.kind) && this.env.now() - this.target.inputAt < 80)) return;
       const info = this.info;
       if (!this.warmPlan) this.warmPlan = this.experimentMode === 'compressed-ram' ? this._planCompressed(info) :
         { ordinals: [], batching: false, batchBytes: 1024 ** 2, transient: 0, largest: info.frames.reduce((n, f) => Math.max(n, f.bytes), 0) };
       const plan = this.warmPlan, rgba = info.width * info.height * 4;
       const headroom = 2 * (rgba + plan.largest * 2) + plan.transient;
       const unfilledCompressed = Math.max(0, this.compressedCapacity - this.compressedBytes);
-      while (this.forwardCursor < info.frames.length && (this.cache.has(this.forwardCursor) || this.prefetchFailed.has(this.forwardCursor))) ++this.forwardCursor;
-      const next = info.frames[this.forwardCursor];
-      if (next && this.budget.limit - this.budget.used >= rgba + next.bytes * 2 + headroom + unfilledCompressed) {
-        this.forwardStatus = 'preparing'; this._decode(this.forwardCursor++, 'forward-fill', null); return;
-      }
-      this.forwardStatus = next ? 'budget' : 'complete';
+      const center = this.target ? this.target.index : this.currentIndex;
+      if (center === null) return;
+      const fixed = this.budget.used - this.cache.size * rgba;
+      const capacity = Math.max(1, Math.min(info.frames.length, Math.floor((this.budget.limit - fixed - headroom - unfilledCompressed - plan.largest * 2) / rgba)));
+      if (!this.preparePlan || this.preparePlan.center !== center || this.preparePlan.capacity !== capacity)
+        this.preparePlan = preparationWindow(info.frames, center, capacity);
+      const window = this.preparePlan;
+      const ordinal = window.order.find(n => !this.cache.has(n) && !this.prefetchFailed.has(n)), next = info.frames[ordinal];
+      if (next) {
+        const needed = rgba + next.bytes * 2 + headroom + unfilledCompressed;
+        // Move only one remote frame per idle boundary, never a frame belonging
+        // to this same window. A stationary cursor converges instead of churning.
+        if (this.budget.limit - this.budget.used < needed) this._evictOutsideWindow(window);
+        if (this.budget.limit - this.budget.used >= needed) {
+          this.forwardStatus = 'preparing'; this._decode(ordinal, 'forward-fill', null); return;
+        }
+      } else this._evictOutsideWindow(window);
+      this.forwardStatus = this.cache.size === info.frames.length ? 'complete' : 'budget';
       // Fill the reserved JPEG space only at idle boundaries, one bounded read
       // at a time. Foreground reads may race it; publication deduplicates tokens.
       const group = []; let size = 0, end = null;
@@ -717,11 +753,12 @@
         else this._startTargetWork();
       }
       if (!this.info || this.state === 'loading' || this.state === 'error' || this.disposed) return;
-      // During drag only the latest target and its one motion prediction use
-      // slots; unrelated sequential neighbours wait until final release.
+      // Busy dragging reserves slots for the latest target and its prediction;
+      // surrounding fill resumes after the quiet threshold, even while held.
       if (this.target && this.target.resolve) return;
-      if (this.state !== 'playing' && this.target && !this.target.final && ['drag', 'rapid'].includes(this.target.kind)) return;
+      if (this.state !== 'playing' && this.target && !this.target.final && ['drag', 'rapid'].includes(this.target.kind)) { this._startBackground(); return; }
       const base = this.currentIndex, playing = this.state === 'playing';
+      if (this.forwardPredecode && !playing) { this._startBackground(); return; }
       const maximumTasks = playing ? 2 : 1, direction = this.target && this.target.stepDirection || 1;
       // Reserve the spare task slot for new input. Paused inspection prepares
       // both sides, prioritising the most recent stepping direction.
@@ -731,7 +768,6 @@
         const ordinal = base + offset;
         if (ordinal < 0 || ordinal >= this.info.frames.length) continue;
         if (playing && this.info.frames[ordinal].time - this.info.frames[base].time > 0.3) break;
-        if (this.forwardPredecode && !playing && this.budget.used + this.info.width * this.info.height * 4 + this.info.frames[ordinal].bytes * 2 > this.budget.limit) break;
         if (!this.cache.has(ordinal) && !this.tasks.has(this.epoch + ':' + ordinal) && !this.prefetchFailed.has(ordinal)) this._decode(ordinal, playing ? 'play-ahead' : 'neighbour', null);
       }
       this._startBackground();
@@ -798,5 +834,5 @@
       return this.disposePromise;
     }
   }
-  return { Player, Budget, ManagedBudget: Budget, readBarcode, decodedRanges };
+  return { Player, Budget, ManagedBudget: Budget, readBarcode, decodedRanges, preparationWindow };
 });
