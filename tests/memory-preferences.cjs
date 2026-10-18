@@ -55,6 +55,14 @@ for (const kind of ['link', 'links', 'large', 'foreign', 'broken']) {
 {
   const m=model();m.put(file,JSON.stringify({owner:OWNER,percent:2.5}));const before=Buffer.from(m.files.get(file).data);
   assert.equal(m.create(42551783424).snapshot().ramMiB,1024);assert(m.create().snapshot().legacyConverted);assert(m.files.get(file).data.equals(before));
-  const p=m.create();p.save(1024);assert.deepEqual(JSON.parse(m.files.get(file).data),{owner:OWNER,ramMiB:1024});assert(!m.create().snapshot().legacyConverted);
+  const p=m.create();p.save(1024);assert.deepEqual(JSON.parse(m.files.get(file).data),{owner:OWNER,ramMiB:1024,previewQuality:'720p'});assert(!m.create().snapshot().legacyConverted);
+}
+{
+  const m=model(); m.put(file,JSON.stringify({owner:OWNER,ramMiB:2048}));
+  const before=Buffer.from(m.files.get(file).data), p=m.create(); assert.equal(p.quality(),'720p'); assert(m.files.get(file).data.equals(before));
+  p.save(2048,'1080p'); assert.equal(m.create().quality(),'1080p'); p.save(1024); assert.equal(m.create().quality(),'1080p');
+  assert.throws(()=>p.save(1024,'4K')); const saved=Buffer.from(m.files.get(file).data);
+  m.io.failRename=true; assert.throws(()=>p.save(2048,'720p')); assert.equal(p.quality(),'1080p'); assert(m.files.get(file).data.equals(saved));
+  m.io.failRename=false; m.put(temp,'interrupted write'); assert.throws(()=>m.create().save(1024,'720p')); assert.equal(m.create().quality(),'1080p');
 }
 console.log('Memory preference models: fixed tiers/limits/proportion, legacy read-only conversion, persistence/machine change, atomic failure/concurrent change, unsafe file and active-writer protection passed; no actual files written.');

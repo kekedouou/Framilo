@@ -52,7 +52,7 @@ async function execute(message, controller) {
   if (stopping) throw Object.assign(new Error('视频任务正在关闭。'), { code: 'MEDIA_CANCELLED' });
   if (message.method === 'prepare') {
     const media = require('./media.cjs').createMedia({ tools: message.tools, cache });
-    const info = await media.prepare(message.snapshot, { signal: controller.signal,
+    const info = await media.prepare(message.snapshot, { signal: controller.signal, previewQuality: message.previewQuality,
       onProgress: value => send({ type: 'progress', id: message.id, value }) });
     handles.set(info.leaseId, info); return info;
   }

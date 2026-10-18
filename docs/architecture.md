@@ -1,6 +1,19 @@
 # 技术架构：阶段 3B 已批准
 
-2026-10-17 EV-09局部颜色缺陷修复，2026-10-18限定验收收尾：仍由media负责源转图、cache负责文件、player负责显示，不更换播放/缓存架构。颜色字段缺失时沿用Chromium108的SDR推断，显式字段优先；先形成RGB，再按JPEG601全范围编码；sRGB画布明确声明。manifest新增colorVersion，不改owner/recipe/锁格式；当前素材旧版本在核对清单/指纹/占用后使用现有事务清理重建，未知/在用保留，新原因obsolete-color-cache沿全部清理恢复入口读取。详情与限制见[Evolution收尾](experiments/Evolution/report.md#颜色专项最终收尾2026-10-18)。保留JPEG q3/420及Canvas；不采用实验captureStream输出、调色/锐化或精细JPEG默认。颜色前置关卡已解除，E-03具体规格待确认，不修改已发Beta。
+## E-03 批准行为的实现约束（2026-10-18）
+
+EV-10～12接入沿用现有模块、JPEG和停止交接架构：尺寸计算为纯规则，preferences持久化设置，session负责暂停/释放/恢复源帧，media生成对应尺寸，cache统一负责双档身份、5GiB计量、占用/清理/恢复，UI只提交设置。配置格式需兼容旧RAM/百分比记录；缓存新变体必须与旧720p隔离且仍可安全识别、盘点及清理，不能建独立预算或第二个任务负责人。具体实现与验证见[E-03记录](experiments/E03/report.md)；不改已发Beta，不重新选择渲染架构。
+
+| 持久化内容 | 写入端与读取/恢复端 | 兼容与边界 |
+| --- | --- | --- |
+| memory-settings.json新增previewQuality | preferences单一原子写入/读取，app注入session | 旧百分比/ramMiB仍只读兼容；新格式旧代码不保证可读，代码回退不自动回退用户设置，外部冻结Beta不共享此文件 |
+| manifest.preview及变体目录 | media生成，cache提交/复用/盘点，task-client跨进程接入，session/UI读取尺寸 | 老recipe字符串保留为所有权命名空间；新的尺寸规则版本＋档位生成不同目录后缀，绝非两个独立5GiB预算 |
+| writer.previewQuality | cache.begin写入；recencyRepair/verifyReapRecord恢复最近使用事务 | 旧writer缺此字段按旧目录；新旧lease路径、清理计划/回执、根盘点均识别三种合法后缀，未知仍保护 |
+
+双档不同时驻留RAM；切换仍先释放旧Player，再按同一RAM设置建立当前档。回退实现时须保留新格式识别/安全清理，不能直接用旧程序打开混有新变体的开发缓存，或删整个缓存来掩盖兼容问题。
+
+
+2026-10-17 EV-09局部颜色缺陷修复，2026-10-18限定验收收尾：仍由media负责源转图、cache负责文件、player负责显示，不更换播放/缓存架构。颜色字段缺失时沿用Chromium108的SDR推断，显式字段优先；先形成RGB，再按JPEG601全范围编码；sRGB画布明确声明。manifest新增colorVersion，不改owner/recipe/锁格式；当前素材旧版本在核对清单/指纹/占用后使用现有事务清理重建，未知/在用保留，新原因obsolete-color-cache沿全部清理恢复入口读取。详情与限制见[Evolution收尾](experiments/Evolution/report.md#颜色专项最终收尾2026-10-18)。保留JPEG q3/420及Canvas；不采用实验captureStream输出、调色/锐化或精细JPEG默认。颜色前置关卡已解除，E-03具体规格已由EV-10～12确认，不修改已发Beta。
 
 ## 发布后重评边界（2026-10-17）
 

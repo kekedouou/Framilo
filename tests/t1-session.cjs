@@ -41,7 +41,8 @@ function harness(settings = {}) {
       async pause() { this.change({ state: 'paused' }); return { status: 'paused' }; },
       async seek(time, options) {
         this.change({ state: 'seeking' }); if (settings.seek) await settings.seek(this, time, options, h);
-        const index = Math.max(0, Math.min(2, Math.floor(time))); this.change({ state: 'paused', time: index, frameId: index, frameOrdinal: index });
+        const index = options.index === undefined ? Math.max(0, Math.min(2, Math.floor(time))) : options.index;
+        this.change({ state: 'paused', time: this.info.frames[index].time, frameId: this.info.frames[index].id, frameOrdinal: index });
         return { status: 'drawn', frameId: index };
       },
       async step(delta) { return this.seek(Math.max(0, Math.min(2, this.value.frameOrdinal + delta)), { final: true }); }
@@ -306,6 +307,36 @@ async function main() {
     const copy = h.session.memorySnapshot(); copy.used = 99; assert.equal(h.session.memorySnapshot().used, 32);
     gate.resolve(); await pending;
     const closing = h.session.close(); assert.equal(h.session.memorySnapshot(), null); await closing;
+  });
+  await test('E03 quality apply restores the same source frame, persists together and never rereads another selection', async () => {
+    let q='720p', ram=1024; const preferences={quality:()=>q,snapshot:()=>({ramMiB:ram}),preview(){},save(v,next){ram=v;if(next!==undefined)q=next;}};
+    const h=harness({memoryPreferences:preferences,prepare:async(value,settings,model)=>({...model.makeInfo(value),preview:{quality:settings.previewQuality,width:settings.previewQuality==='1080p'?1920:1280,height:settings.previewQuality==='1080p'?1080:720}})});
+    await h.session.loadSelected(); await h.session.seek(2); await h.session.play(); h.selection=selected('B');
+    assert.equal((await h.session.setPlaybackSettings({ramMiB:2048,previewQuality:'1080p'})).status,'ready');
+    assert.equal(h.calls,1);assert.equal(h.session.snapshot().source.id,'A');assert.equal(h.session.snapshot().playback.frameId,2);
+    assert.equal(h.session.snapshot().state,'paused');assert.equal(h.session.snapshot().previewQuality,'1080p');assert.equal(h.prepared[1].options.previewQuality,'1080p');
+    assert(h.events.indexOf('disposed-A')<h.events.lastIndexOf('prepare-A'));await h.session.close();
+  });
+  await test('E03 retains an ordinal frame even when two source frames have identical times',async()=>{
+    let q='720p';const prefs={quality:()=>q,snapshot:()=>({ramMiB:1024}),preview(){},save(_v,n){q=n;}};
+    const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>{const info=m.makeInfo(v);info.frames[1].time=0;return {...info,preview:{quality:o.previewQuality}};}});
+    await h.session.loadSelected();await h.session.seek(0,{index:1});assert.equal(h.session.snapshot().playback.frameId,1);
+    assert.equal((await h.session.setPlaybackSettings({ramMiB:1024,previewQuality:'1080p'})).status,'ready');
+    assert.equal(h.session.snapshot().playback.frameId,1);assert.equal(h.session.snapshot().playback.time,0);await h.session.close();
+  });
+  await test('E03 can recover initial preparation failure by applying settings without inventing a prior frame',async()=>{
+    let q='720p';const prefs={quality:()=>q,snapshot:()=>({ramMiB:1024}),preview(){},save(_v,n){q=n;}};
+    const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>{if(m.prepared.length===1)throw Error('initial failure');return {...m.makeInfo(v),preview:{quality:o.previewQuality}};}});
+    assert.equal((await h.session.loadSelected()).status,'error');assert.equal((await h.session.setPlaybackSettings({ramMiB:1024,previewQuality:'1080p'})).status,'ready');
+    assert.equal(h.session.snapshot().playback.frameId,0);await h.session.close();
+  });
+  await test('E03 rejects mismatched quality and close during settings prepare cannot publish stale readiness', async()=>{
+    let q='720p',hold=false;const gate=deferred(); const prefs={quality:()=>q,snapshot:()=>({ramMiB:1024}),preview(){},save(_v,next){q=next;}};
+    const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>{if(hold)await gate.promise;return {...m.makeInfo(v),preview:{quality:o.previewQuality}};}});
+    await h.session.loadSelected();hold=true;const pending=h.session.setPlaybackSettings({ramMiB:1024,previewQuality:'1080p'});await flush();
+    const closing=h.session.close();gate.resolve();assert.equal((await pending).status,'superseded');await closing;assert.equal(h.session.snapshot().state,'closed');
+    const bad=harness({memoryPreferences:prefs,prepare:async(v,_o,m)=>({...m.makeInfo(v),preview:{quality:'720p'}})});
+    assert.equal((await bad.session.loadSelected()).error.code,'PREVIEW_QUALITY_MISMATCH');await bad.session.close();
   });
   console.log('T1 session memory tests passed: ' + tests + '. Not real Eagle, media, Canvas or performance verification.');
 }

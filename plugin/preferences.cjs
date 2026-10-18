@@ -1,6 +1,7 @@
 'use strict';
-// Local RAM preference only. No Eagle/library access or media/cache deletion.
+// Local playback preferences. No Eagle/library access or media/cache deletion.
 const fs = require('fs'), path = require('path'), os = require('os');
+const { quality } = require('./preview-profile.cjs');
 const OWNER = 'eva-memory-preference-v1', DEFAULT_BYTES = 1024 ** 3, MAX_FILE = 4096;
 const OPTIONS = Object.freeze([512, ...Array.from({ length: 10 }, (_, i) => (i + 1) * 1024)]);
 function memoryValue(total, ramMiB, persisted = false) {
@@ -11,6 +12,7 @@ function memoryValue(total, ramMiB, persisted = false) {
   return Object.freeze({ ramMiB, ramBytes, compressedRamBytes: Math.floor(ramBytes / 8), totalRamBytes: total, persisted });
 }
 function createMemoryPreferences(options) {
+  let selectedQuality = '720p';
   const io = options.io || fs, root = path.resolve(options.pluginRoot), total = options.totalRamBytes === undefined ? os.totalmem() : options.totalRamBytes;
   const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
   function checkRoot() {
@@ -39,13 +41,17 @@ function createMemoryPreferences(options) {
       const tier = candidates.reduce((a, b) => Math.abs(b - oldMiB) < Math.abs(a - oldMiB) ? b : a, candidates[0]);
       return Object.freeze({ ...memoryValue(total, tier, true), legacyConverted: true });
     }
-    if (Object.keys(value).sort().join(',') !== 'owner,ramMiB') throw new Error('内存设置格式无法识别；原件已保留。');
+    const keys = Object.keys(value).sort().join(',');
+    if (!['owner,ramMiB', 'owner,previewQuality,ramMiB'].includes(keys)) throw new Error('播放器设置格式无法识别；原件已保留。');
+    selectedQuality = quality(value.previewQuality);
     return memoryValue(total, value.ramMiB, true);
   }
   let current = read() || memoryValue(total, DEFAULT_BYTES / 1024 ** 2);
-  return Object.freeze({ snapshot: () => current, preview: ramMiB => memoryValue(total, ramMiB), save(ramMiB) {
+  return Object.freeze({ snapshot: () => current, quality: () => selectedQuality,
+    preview: ramMiB => memoryValue(total, ramMiB), save(ramMiB, previewQuality = selectedQuality) {
+    quality(previewQuality);
     const next = memoryValue(total, ramMiB, true); checkRoot(); read(); const before = identity(stat(file));
-    const bytes = Buffer.from(JSON.stringify({ owner: OWNER, ramMiB }, null, 2));
+    const bytes = Buffer.from(JSON.stringify({ owner: OWNER, ramMiB, previewQuality }, null, 2));
     let fd = null, owned = null;
     try {
       fd = io.openSync(temp, 'wx'); owned = io.fstatSync(fd);
@@ -54,7 +60,7 @@ function createMemoryPreferences(options) {
       if (identity(stat(file)) !== before || !io.readFileSync(temp).equals(bytes)) throw new Error('内存设置保存期间改变，未覆盖原件。');
       const s = stat(temp);
       if (!s || s.dev !== owned.dev || s.ino !== owned.ino) throw new Error('内存设置临时文件身份改变。');
-      io.renameSync(temp, file); owned = null; current = next; return current;
+      io.renameSync(temp, file); owned = null; current = next; selectedQuality = previewQuality; return current;
     } finally {
       if (fd !== null) io.closeSync(fd);
       if (owned) { const s = stat(temp); if (s && s.dev === owned.dev && s.ino === owned.ino) io.unlinkSync(temp); }

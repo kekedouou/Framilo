@@ -94,7 +94,7 @@ function createTaskClient(options) {
   };
   const media = { async prepare(snapshot, settings = {}) {
     const tools = await options.discoverTools(settings.signal);
-    const info = await ask('prepare', { snapshot, tools }, settings);
+    const info = await ask('prepare', { snapshot, tools, previewQuality: settings.previewQuality }, settings);
     if (settings.signal && settings.signal.aborted) { await ask('release', { leaseId: info.leaseId }); throw issue('MEDIA_CANCELLED', '视频准备已取消。'); }
     try { local.adoptReadLease(info, taskOwner); } catch (error) { await ask('release', { leaseId: info.leaseId }); throw error; }
     leases.add(info); return info;

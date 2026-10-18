@@ -2,6 +2,7 @@
 
 // Coordinates one material at a time. No Eagle calls, filesystem or UI access.
 const path = require('path');
+const { quality } = require('./preview-profile.cjs');
 function issue(code, message) { const error = new Error(message); error.code = code; return error; }
 function createSession(options) {
   const { eagleAdapter, media, cache, createPlayer } = options || {};
@@ -29,6 +30,8 @@ function createSession(options) {
       playback: observed ? { ...observed, frame: observed.frameId, time: observed.time } : null,
       error: error ? { ...error } : null, progress: progress ? { ...progress } : null,
       loadMetrics: loadMetrics ? { ...loadMetrics } : null, comments,
+      preview: owner && owner.ready && owner.epoch === epoch && owner.info.preview ? owner.info.preview : null,
+      previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : '720p',
       memorySettings: options.memoryPreferences ? options.memoryPreferences.snapshot() : null });
   }
   function memorySnapshot() {
@@ -92,12 +95,14 @@ function createSession(options) {
       loadComments(request, selected); // Independent read; never add API work to the frame loop.
       owned = { epoch: request.epoch, info: null, player: null, dispose: null, released: false, ready: false }; owner = owned;
       const mediaStartedAt = now();
-      const info = await media.prepare(selected, { signal: request.controller.signal, onProgress: value => {
+      const info = await media.prepare(selected, { signal: request.controller.signal, previewQuality: request.previewQuality, onProgress: value => {
         if (current(request) && owner === owned) { progress = typeof value === 'object' && value ? { ...value } : { stage: 'media-prepare', message: String(value) }; notify(); }
       } });
       const mediaReturnedAt = now(); owned.info = info;
       if (!current(request)) { await releaseOwner(owned); return { status: 'superseded' }; }
       validatePrepared(info, selected);
+      if (request.previewQuality !== undefined && (!info.preview || info.preview.quality !== request.previewQuality))
+        throw issue('PREVIEW_QUALITY_MISMATCH', '准备结果的画质与本次选择不一致。');
       source = Object.freeze({ ...selected, sha256: info.source.sha256 }); duration = info.duration;
       progress = { stage: 'player-initialize', message: '正在初始化画面与声音' }; notify();
       if (!current(request)) { await releaseOwner(owned); return { status: 'superseded' }; }
@@ -124,11 +129,15 @@ function createSession(options) {
       if (ready.state !== 'paused' || ready.frameId !== info.frames[0].id || ready.frameOrdinal !== 0)
         throw issue('FIRST_FRAME_NOT_READY', '首帧尚未准确显示并暂停，未开放播放操作。');
       if (Number.isFinite(request.restoreTime)) {
-        const located = await player.seek(request.restoreTime, { kind: 'memory-settings', final: true, inputAt: now() });
+        const restoreIndex = request.restoreFrameId === undefined ? undefined : info.frames.findIndex(frame => frame.id === request.restoreFrameId);
+        if (restoreIndex === -1 || restoreIndex !== undefined && info.frames[restoreIndex].time !== request.restoreTime)
+          throw issue('SETTINGS_FRAME_MISMATCH', '应用设置前后的源帧时间不一致。');
+        const located = await player.seek(request.restoreTime, { kind: request.trigger, index: restoreIndex, final: true, inputAt: now() });
         if (!current(request)) { await releaseOwner(owned); return { status: 'superseded' }; }
         ready = player.snapshot();
-        if (!located || !['drawn', 'reused'].includes(located.status) || ready.state !== 'paused' || ready.frameId !== located.frameId)
-          throw issue('MEMORY_POSITION_NOT_READY', '内存设置后未能准确恢复当前位置。');
+        if (!located || !['drawn', 'reused'].includes(located.status) || ready.state !== 'paused' || ready.frameId !== located.frameId ||
+            request.restoreFrameId !== undefined && ready.frameId !== request.restoreFrameId)
+          throw issue('MEMORY_POSITION_NOT_READY', '应用设置后未能准确恢复当前源帧。');
       }
       owned.ready = true; playback = { ...ready }; state = 'paused'; progress = null; error = null;
       if (request.restoredWrite) restoreWrite(request.restoredWrite);
@@ -154,9 +163,11 @@ function createSession(options) {
   }
   function startLoad(settings = {}, retainedSource = null) {
     if (closed) return Promise.resolve({ status: 'ignored', reason: 'closed' });
-    if (settings.trigger !== 'memory-settings') memoryResume = null;
+    if (!['memory-settings', 'playback-settings'].includes(settings.trigger)) memoryResume = null;
     const startedAt = Number.isFinite(settings.startedAt) ? settings.startedAt : now();
-    const request = { epoch: invalidate(), controller: new AbortController(), captured: null, startedAt, trigger: settings.trigger || 'selected-load', restoreTime: settings.restoreTime };
+    const request = { epoch: invalidate(), controller: new AbortController(), captured: null, startedAt, trigger: settings.trigger || 'selected-load',
+      restoreTime: settings.restoreTime, restoreFrameId: settings.restoreFrameId,
+      previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : undefined };
     if (!current(request)) return Promise.resolve({ status: 'superseded' });
     controller = request.controller;
     // Start the single official API call now, before the disposal/preparation queue.
@@ -179,22 +190,26 @@ function createSession(options) {
     const result = await cache.clearOther({ sourceSha256: retained.sha256 });
     return closed || token !== epoch ? { status: 'superseded' } : { status: 'cleared', ...result };
   }
-  async function setMemoryMiB(ramMiB) {
+  async function setPlaybackSettings({ ramMiB, previewQuality } = {}, trigger = 'playback-settings') {
     const preferences = options.memoryPreferences;
     if (!preferences) throw issue('MEMORY_SETTINGS_UNAVAILABLE', '当前入口没有内存设置接口。');
+    if (previewQuality !== undefined) quality(previewQuality);
     preferences.preview(ramMiB);
     if (closed || state === 'preparing' || comments.draft) throw issue('MEMORY_SETTINGS_BUSY', '请等待准备完成，并先保存或取消标注。');
     const token = epoch, retained = source;
     if (owner && owner.ready) await control('pause', [], ['paused', 'playing', 'seeking']);
     if (closed || token !== epoch) return { status: 'superseded' };
     const retainedTime = memoryResume && retained && memoryResume.id === retained.id && memoryResume.filePath === retained.filePath ? memoryResume.time : 0;
-    const time = owner && owner.player ? owner.player.snapshot().time : retainedTime;
-    preferences.save(ramMiB);
-    memoryResume = retained ? { id: retained.id, filePath: retained.filePath, time } : null;
+    const actual = owner && owner.player ? owner.player.snapshot() : null;
+    const time = actual ? actual.time : retainedTime;
+    const frameId = actual ? actual.frameId : memoryResume ? memoryResume.frameId : undefined;
+    preferences.save(ramMiB, previewQuality);
+    memoryResume = retained ? { id: retained.id, filePath: retained.filePath, time, frameId } : null;
     notify();
     if (closed || token !== epoch) return { status: 'superseded' };
-    return retained ? startLoad({ trigger: 'memory-settings', restoreTime: time }, retained) : { status: 'applied' };
+    return retained ? startLoad({ trigger, restoreTime: time, restoreFrameId: frameId }, retained) : { status: 'applied' };
   }
+  function setMemoryMiB(ramMiB) { return setPlaybackSettings({ ramMiB }, 'memory-settings'); }
   function control(method, args, allowed) {
     const owned = owner, token = epoch;
     if (comments.draft) return Promise.reject(issue('COMMENT_FRAME_FIXED', '标注时间已固定，请先保存或取消标注。'));
@@ -348,7 +363,7 @@ function createSession(options) {
       const item = comments.items.find(value => value.id === id);
       return item && item.time <= duration ? control('seek', [item.time, { kind: 'annotation', final: true, inputAt: now() }], ['paused', 'playing', 'seeking']) : Promise.resolve({ status: 'ignored' });
     },
-    annotationHistory: () => Object.freeze(annotationReceipts.slice()), setMemoryMiB, clearOtherCaches,
+    annotationHistory: () => Object.freeze(annotationReceipts.slice()), setMemoryMiB, setPlaybackSettings, clearOtherCaches,
     libraryChanged: () => clear('library-changed'), close: () => clear('closed'), snapshot, memorySnapshot });
 }
 module.exports = { createSession };

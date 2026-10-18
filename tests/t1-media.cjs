@@ -154,6 +154,7 @@ function harness(settings = {}) {
       if (name === 'crypto') return crypto;
       if (name === 'child_process') return { spawn };
       if (name === './frame-index.cjs') return frameIndex;
+      if (name === './preview-profile.cjs') return require('../plugin/preview-profile.cjs');
       if (name === './cache.cjs') return { OWNER: 'eagle-video-analysis-plugin-v1', RECIPE: 'jpeg-q3-720p-pcm-f32-48000-v1' };
       throw new Error('unexpected require: ' + name);
     } };

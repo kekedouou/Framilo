@@ -219,4 +219,15 @@ test('Video RAM is current, distinct from process memory, and its timer ends on 
   budget = null; tick(); assert.equal(h.el('memoryUsage').textContent, '视频缓存 RAM：—');
   h.ui.destroy(); assert.equal(cleared, 1); tick(); assert.equal(h.el('memoryUsage').textContent, '视频缓存 RAM：—');
 });
+test('E03 quality selection remains pending until unified apply, label uses actual source size', () => {
+  const h=harness(), memory={ramMiB:1024,ramBytes:1024**3};let applied=null;
+  const session={setPlaybackSettings(value){applied=value;return Promise.resolve({status:'applied'});}};
+  h.el('qualitySelect').options=[{value:'720p'},{value:'1080p'}];h.ui.bindSession(session);
+  h.ui.update({epoch:1,state:'paused',memorySettings:memory,previewQuality:'720p',preview:{quality:'720p',width:1280,height:720,
+    sourceWidth:1920,sourceHeight:1080,sampleAspectRatio:'1:1',originalResolution:false}});
+  assert.equal(h.el('qualitySelect').options[1].textContent,'1080p（原始分辨率）');
+  h.el('qualitySelect').value='1080p';h.el('qualitySelect').fire('change');assert.equal(applied,null);
+  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'1080p'});
+  assert.equal(h.el('qualitySelect').disabled,true);h.ui.destroy();
+});
 console.log('T1 UI: ' + checks + ' in-memory checks passed; real layout/input experience not tested.');

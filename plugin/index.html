@@ -34,10 +34,13 @@
     <aside class="sidebar" aria-label="素材信息">
       <h1>素材</h1>
       <p id="sourceName" class="source-name">未载入视频</p>
-      <p class="preview-quality">720p 预览</p>
+      <p id="previewQuality" class="preview-quality">720p 预览</p>
       <p id="memoryUsage" class="muted" title="当前视频由播放器管理的JPEG、解码图像、音频与在途预留；不包含浏览器、GPU或FFmpeg额外占用。">视频缓存 RAM：—</p>
       <details class="memory-settings">
-        <summary>内存设置</summary>
+        <summary>设置</summary>
+        <label for="qualitySelect">预览画质</label>
+        <select id="qualitySelect" aria-label="预览画质" disabled><option value="720p">720p</option><option value="1080p">1080p</option></select>
+        <p class="muted">保持比例，不放大小视频。JPEG轻量预览。</p>
         <label for="memoryMiB">视频缓存内存上限</label>
         <div class="memory-controls"><select id="memoryMiB" aria-label="视频缓存内存上限" disabled>
           <option value="512">512 MB</option><option value="1024">1 GB</option><option value="2048">2 GB</option>
@@ -47,9 +50,7 @@
         </select><button id="memoryApply" type="button" disabled>应用</button></div>
         <p id="memoryAllowance" class="muted"></p>
         <p id="memoryStatus" class="muted" role="status"></p>
-      </details>
-      <details class="memory-settings">
-        <summary>缓存管理</summary>
+        <h2 class="settings-heading">缓存管理</h2>
         <p class="muted">1天未使用的缓存在下次载入时清理；磁盘上限5GB。</p>
         <button id="cacheClearOther" type="button" disabled>清除其他视频缓存</button>
         <p id="cacheClearStatus" class="muted" role="status"></p>

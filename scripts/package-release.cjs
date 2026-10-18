@@ -6,7 +6,7 @@ const VERSION = '0.1.0-beta.2', NAME = 'eagle-video-analysis-' + VERSION + '-win
 const ID = 'EVAVIDEOANALYSISBETA20261014', ROOT = path.resolve(__dirname, '..'), LIMIT = 2 * 1024 ** 2;
 const RUNTIME = Object.freeze(['manifest.json', 'index.html', 'styles.css', 'logo.png', 'app.js', 'ui.js', 'player.js',
   'session.cjs', 'eagle.cjs', 'media.cjs', 'cache.cjs', 'process-identity.cjs', 'frame-index.cjs', 'frame-pack.cjs',
-  'diagnostics.cjs', 'preferences.cjs', 'task-client.cjs', 'task-worker.cjs',
+  'diagnostics.cjs', 'preferences.cjs', 'preview-profile.cjs', 'task-client.cjs', 'task-worker.cjs',
   'native/task-host.cs', 'native/task-host.local.exe', 'native/task-host.local.json']);
 const NAMES = [...RUNTIME, 'README.md', 'CHANGELOG.md', 'BUILD-INFO.json'].sort();
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');

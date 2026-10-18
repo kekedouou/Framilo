@@ -14,12 +14,22 @@ const crypto = require('crypto');
 const { validateIndex } = require('./frame-index.cjs');
 const { createIdentity } = require('./process-identity.cjs');
 const framePack = require('./frame-pack.cjs');
+const previewProfile = require('./preview-profile.cjs');
 const OWNER = 'eagle-video-analysis-plugin-v1';
+// Retained ownership namespace for legacy roots and recovery receipts.
+// New preview dimensions/version belong to manifest.preview and variantIds.
 const RECIPE = 'jpeg-q3-720p-pcm-f32-48000-v1';
 const MIB = 1024 ** 2;
 const LIMITS = Object.freeze({ cacheBytes: 5 * 1024 * MIB, metadataBytes: 8 * MIB,
   assetBytes: 256 * MIB, duration: 30, prefixBytes: 4096 });
 const recipeId = crypto.createHash('sha256').update(RECIPE).digest('hex').slice(0, 12);
+// Preserve legacy identifiers/receipts; new variants share this same root and budget.
+const variantIds = new Map(previewProfile.QUALITIES.map(q => [q, crypto.createHash('sha256').update(RECIPE + ':' + previewProfile.VERSION + ':' + q).digest('hex').slice(0, 12)]));
+const knownIds = new Set([recipeId, ...variantIds.values()]);
+const cachePattern = new RegExp('^media-([0-9a-f]{64})-(' + [...knownIds].join('|') + ')$');
+function variantId(selected) { return selected === undefined ? recipeId : variantIds.get(previewProfile.quality(selected)); }
+function cacheLeaf(sourceSha256, selected) { return 'media-' + sourceSha256 + '-' + variantId(selected); }
+function matchesSource(dir, sourceSha256) { const m = cachePattern.exec(path.basename(dir)); return !!m && m[1] === sourceSha256; }
 const activeRoots = new Set();
 const nonce = () => crypto.randomBytes(12).toString('hex');
 const sha = data => crypto.createHash('sha256').update(data).digest('hex');
@@ -82,10 +92,15 @@ function contentSource(source, expectedSha) {
   return { sha256: source.sha256, codec: source.codec, width: source.width, height: source.height, hasAudioStream: source.hasAudioStream };
 }
 function manifestAssets(info, expectedSha) {
-  if (!info || info.schema !== 1 || info.owner !== OWNER || info.recipe !== RECIPE || info.width !== 1280 || info.height !== 720 ||
+  if (!info || info.schema !== 1 || info.owner !== OWNER || info.recipe !== RECIPE ||
     !(info.duration > 0 && info.duration <= LIMITS.duration) || !Array.isArray(info.frames))
     fail('缓存清单格式或处理版本不符。');
-  contentSource(info.source, expectedSha); validateIndex(info);
+  contentSource(info.source, expectedSha);
+  if (info.preview) {
+    previewProfile.validate(info.preview, info.source);
+    if (info.width !== info.preview.width || info.height !== info.preview.height) fail('画质清单与预览尺寸不符。');
+  } else if (info.width !== 1280 || info.height !== 720) fail('旧缓存预览尺寸不符。');
+  validateIndex(info);
   const packed = framePack.validate(info, LIMITS.cacheBytes);
   if (packed) for (const item of info.frames) { safeName(item.file); if (item.bytes > LIMITS.assetBytes) fail('图片包单帧超过安全读取上限。'); }
   const start = Math.min(0, info.audio ? info.audio.start : 0);
@@ -177,6 +192,7 @@ function createCache(options = {}) {
   }
   function inspectDirectory(dir, kind, expectedSha, allowDamaged = false, ownedRecencyFile = null) {
     verifyOwner(dir, kind); const info = readJSON(path.join(dir, 'manifest.json'));
+    if (kind === 'cache' && path.basename(dir) !== cacheLeaf(expectedSha, info.preview && info.preview.quality)) fail('缓存目录与画质身份不一致。');
     const map = manifestAssets(info, expectedSha), expected = new Set(['owner.json', 'manifest.json', ...map.keys()]);
     const actual = fs.readdirSync(dir);
     if (ownedRecencyFile) expected.add(ownedRecencyFile);
@@ -230,7 +246,7 @@ function createCache(options = {}) {
           continue;
         }
         const match = /^media-([0-9a-f]{64})-([0-9a-f]{12})$/.exec(name);
-        if (!match || match[2] !== recipeId) fail('检测到未知或未完成缓存，已停止写入并保留文件。');
+        if (!match || !knownIds.has(match[2])) fail('检测到未知或未完成缓存，已停止写入并保留文件。');
         const inspected = inspectDirectory(file, 'cache', match[1], true);
         // No await separates inspection from accounting: reuse its verified
         // leaf sizes, including owner and manifest, rather than scan twice.
@@ -245,7 +261,7 @@ function createCache(options = {}) {
           if (value.owner !== OWNER || value.recipe !== RECIPE || value.root !== root || value.kind !== 'lease' ||
             !Number.isSafeInteger(value.pid) || value.pid <= 0 || value.token !== name.slice(6, -5) ||
             typeof value.cacheDir !== 'string' || !path.isAbsolute(value.cacheDir) || !samePath(path.dirname(value.cacheDir), root) ||
-            !new RegExp('^media-[0-9a-f]{64}-' + recipeId + '$').test(path.basename(value.cacheDir)) || !fs.existsSync(value.cacheDir)) fail('未知占用记录阻止写入。');
+            !cachePattern.test(path.basename(value.cacheDir)) || !fs.existsSync(value.cacheDir)) fail('未知占用记录阻止写入。');
           verifyOwner(value.cacheDir, 'cache');
         } else if (/^cleanup-[0-9a-f]{24}(?:\.result)?\.json$/.test(name)) {
           const value = verifyCleanupRecord(name);
@@ -282,7 +298,7 @@ function createCache(options = {}) {
       const ownedPartial = value.reason === 'owned-job-stopped-interrupted-output' && value.writerToken === value.cacheToken &&
         value.directory === path.join(root, 'partial-' + value.cacheToken) && /^[0-9a-f]{64}$/.test(value.taskKey || '');
       if (typeof value.directory !== 'string' || !path.isAbsolute(value.directory) || !samePath(path.dirname(value.directory), root) ||
-        !(new RegExp('^media-[0-9a-f]{64}-' + recipeId + '$').test(path.basename(value.directory)) ||
+        !(cachePattern.test(path.basename(value.directory)) ||
           /^partial-[0-9a-f]{24}$/.test(path.basename(value.directory)) && (value.reason === 'orphaned-incomplete-cache' || ownedPartial)) ||
         !Array.isArray(value.directoryIdentity) || value.directoryIdentity.length !== 2 ||
         (!value.directoryIdentity.every(preciseDirectoryId) && !completedLegacyPlan(name, value)) || !/^[0-9a-f]{24}$/.test(value.cacheToken) ||
@@ -350,7 +366,7 @@ function createCache(options = {}) {
       if (value.schema !== 1 || value.owner !== OWNER || value.recipe !== RECIPE || value.root !== root || value.kind !== 'lease' ||
         value.token !== name.slice(6, -5) || !Number.isSafeInteger(value.pid) || value.pid <= 0 ||
         typeof value.cacheDir !== 'string' || !samePath(path.dirname(value.cacheDir), root) ||
-        path.basename(value.cacheDir) !== 'media-' + value.sourceSha256 + '-' + recipeId) fail('占用身份不明，不能淘汰。');
+        !matchesSource(value.cacheDir, value.sourceSha256)) fail('占用身份不明，不能淘汰。');
       verifyOwner(value.cacheDir, 'cache'); protectedDirs.add(value.cacheDir.toLowerCase());
     }
     return protectedDirs;
@@ -468,7 +484,7 @@ function createCache(options = {}) {
     for (const name of fs.readdirSync(root)) {
       const match = /^media-([0-9a-f]{64})-([0-9a-f]{12})$/.exec(name); if (!match) continue;
       const dir = path.join(root, name), owner = verifyOwner(dir, 'cache');
-      if (samePath(dir, job.target) || occupied.has(dir.toLowerCase())) continue;
+      if (samePath(dir, job.target) || (all && match[1] === path.basename(job.target).slice(6, 70)) || occupied.has(dir.toLowerCase())) continue;
       // Missing/future recency never proves one day of non-use.
       if (!all && (!Number.isSafeInteger(owner.lastUsedAt) || at - owner.lastUsedAt < 86400000)) continue;
       const checked = inspectDirectory(dir, 'cache', match[1]);
@@ -491,7 +507,7 @@ function createCache(options = {}) {
   function touch(job, dir) {
     assertWriter(job); const old = verifyOwner(dir, 'cache'), markerPath = path.join(dir, 'owner.json');
     const before = leafSnapshot(markerPath); let sequence = 0;
-    for (const name of fs.readdirSync(root)) if (new RegExp('^media-[0-9a-f]{64}-' + recipeId + '$').test(name)) {
+    for (const name of fs.readdirSync(root)) if (cachePattern.test(name)) {
       const value = verifyOwner(path.join(root, name), 'cache');
       if (value.useSequence !== undefined && (!Number.isSafeInteger(value.useSequence) || value.useSequence < 1)) fail('最近使用记录损坏。');
       sequence = Math.max(sequence, value.useSequence || 0);
@@ -536,7 +552,7 @@ function createCache(options = {}) {
         const parent = value.records.find(record => record.ownerRecord.kind === 'writer' && record.ownerRecord.token === item.writerToken);
         return !parent || parent.file.file !== 'writer.lock' || parent.ownerRecord.schema !== 1 || parent.ownerRecord.owner !== OWNER ||
           parent.ownerRecord.recipe !== RECIPE || !/^[0-9a-f]{24}$/.test(item.writerToken || '') || !/^[0-9a-f]{64}$/.test(parent.ownerRecord.sourceSha256 || '') ||
-          item.directory !== path.join(root, 'media-' + parent.ownerRecord.sourceSha256 + '-' + recipeId) ||
+          item.directory !== path.join(root, cacheLeaf(parent.ownerRecord.sourceSha256, parent.ownerRecord.previewQuality)) ||
           !Array.isArray(item.directoryIdentity) || item.directoryIdentity.length !== 2 || !item.directoryIdentity.every(preciseDirectoryId) ||
           !/^[0-9a-f]{24}$/.test(item.cacheToken) || !/^[0-9a-f]{64}$/.test(item.ownerSha256) || !/^[0-9a-f]{64}$/.test(item.manifestSha256) ||
           !item.file || !['owner.next.json', 'owner.next-' + item.writerToken + '.json'].includes(item.file.file) ||
@@ -558,7 +574,7 @@ function createCache(options = {}) {
     return true;
   }
   function recencyRepair(writer) {
-    const dir = path.join(root, 'media-' + writer.sourceSha256 + '-' + recipeId);
+    const dir = path.join(root, cacheLeaf(writer.sourceSha256, writer.previewQuality));
     if (!fs.existsSync(dir)) return null;
     directory(dir);
     const candidates = fs.readdirSync(dir).filter(name => /^owner\.next(?:-.*)?\.json$/.test(name));
@@ -656,7 +672,7 @@ function createCache(options = {}) {
         value.kind !== (name === 'writer.lock' ? 'writer' : 'lease') || !/^[0-9a-f]{24}$/.test(value.token)) continue;
       if (name === 'writer.lock' && !/^[0-9a-f]{64}$/.test(value.sourceSha256 || '')) continue;
       if (name !== 'writer.lock' && (value.token !== name.slice(6, -5) ||
-        value.cacheDir !== path.join(root, 'media-' + value.sourceSha256 + '-' + recipeId))) continue;
+        !matchesSource(value.cacheDir, value.sourceSha256))) continue;
       if (!processIdentity.inspect(value).safe) continue;
       records.push({ file: leafSnapshot(file), ownerRecord: value });
       if (name === 'writer.lock') { const item = recencyRepair(value); if (item) recency.push(item); }
@@ -709,7 +725,7 @@ function createCache(options = {}) {
       for (const name of fs.readdirSync(root)) {
         const file = path.join(root, name), stat = fs.lstatSync(file);
         if (stat.isDirectory()) {
-          if (!new RegExp('^media-[0-9a-f]{64}-' + recipeId + '$').test(name) && !partialPlans.some(plan => plan.directory === file) &&
+          if (!cachePattern.test(name) && !partialPlans.some(plan => plan.directory === file) &&
             !fs.readdirSync(root).some(leaf => /^cleanup-[0-9a-f]{24}\.json$/.test(leaf) && verifyCleanupRecord(leaf).directory === file)) fail('恢复根含未知目录。');
           directory(file);
           if (name.startsWith('media-') && !interruptedCleanup.has(file)) inspectDirectory(file, 'cache', name.slice(6, 70), false, recencyByDirectory.get(file));
@@ -786,8 +802,9 @@ function createCache(options = {}) {
     if (job.closed) return false;
     assertWriter(job, true); fs.unlinkSync(path.join(root, 'writer.lock')); job.closed = true; activeRoots.delete(root); return true;
   }
-  function begin({ sourceSha256, signal, clearOthers = false } = {}) {
+  function begin({ sourceSha256, signal, clearOthers = false, previewQuality } = {}) {
     cancelled(signal);
+    if (previewQuality !== undefined) previewProfile.quality(previewQuality);
     if (typeof sourceSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sourceSha256)) fail('源内容指纹不正确。');
     if (activeRoots.has(root)) fail('同一缓存已有准备事务。');
     ensureRoot();
@@ -795,11 +812,11 @@ function createCache(options = {}) {
     // Process discovery can block or fail. Do it before creating a lock so
     // interruption there cannot strand an empty file without ownership data.
     const token = nonce();
-    const writer = ownerValue('writer', { token, pid: process.pid, sourceSha256, processIdentity: processIdentity.self(), children: [] });
+    const writer = ownerValue('writer', { token, pid: process.pid, sourceSha256, ...(previewQuality === undefined ? {} : { previewQuality }), processIdentity: processIdentity.self(), children: [] });
     const lockData = jsonBytes(writer);
     cancelled(signal);
     const job = { token, signal, closed: false, partial: null, published: false, disk: 0, initializing: true,
-      target: path.join(root, 'media-' + sourceSha256 + '-' + recipeId),
+      target: path.join(root, cacheLeaf(sourceSha256, previewQuality)),
       files: new Map(), streams: new Set(), closingStreams: new Set(), lockIdentity: null, lockSha: sha(lockData) };
     const lockPath = path.join(root, 'writer.lock'); let fd, recoveredEmpty = null;
     try { fd = fs.openSync(lockPath, 'wx'); }
@@ -837,7 +854,7 @@ function createCache(options = {}) {
       } catch (cleanupError) { error.cleanupError = cleanupError.message; }
       throw error;
     }
-    const target = path.join(root, 'media-' + sourceSha256 + '-' + recipeId);
+    const target = path.join(root, cacheLeaf(sourceSha256, previewQuality));
     let candidate = null, candidatePinned = null, finished = null;
     function updateWriter() {
       if (options.taskOwner) return; // Child ownership is atomic in the OS group; keep this record immutable.
@@ -1046,6 +1063,8 @@ function createCache(options = {}) {
         fail('缓存清单不能改变所有权或处理版本。');
       const persistent = JSON.parse(jsonBytes({ ...manifest, schema: 1, owner: OWNER, recipe: RECIPE,
         source: contentSource(manifest.source, sourceSha256) }).toString('utf8'));
+      if ((persistent.preview && persistent.preview.quality) !== previewQuality)
+        fail('输出画质与缓存事务身份不一致，未提交。');
       delete persistent.cacheDir; delete persistent.leaseId;
       const map = manifestAssets(persistent, sourceSha256);
       if (persistent.framePack) {
@@ -1118,7 +1137,7 @@ function createCache(options = {}) {
   // Frame bytes never cross the control pipe. Detaching cannot delete a lease.
   function adoptReadLease(info, expectedTaskOwner) {
     if (!info || live.has(info) || !/^[0-9a-f]{24}$/.test(info.leaseId || '') || !/^[0-9a-f]{64}$/.test(info.source && info.source.sha256 || '')) fail('远端缓存句柄无效。');
-    const target = path.join(root, 'media-' + info.source.sha256 + '-' + recipeId);
+    const target = path.join(root, cacheLeaf(info.source.sha256, info.preview && info.preview.quality));
     if (info.cacheDir !== target) fail('远端缓存目录不符。');
     verifyRoot(); const inspected = inspectDirectory(target, 'cache', info.source.sha256);
     function content(value) { const copy = { ...value }; for (const key of ['source', 'metrics', 'cacheDir', 'leaseId']) delete copy[key]; return JSON.stringify(copy); }
@@ -1217,7 +1236,7 @@ function createCache(options = {}) {
       const file = path.join(root, name), stat = fs.lstatSync(file);
       if (stat.isDirectory()) {
         const match = /^media-([0-9a-f]{64})-([0-9a-f]{12})$/.exec(name);
-        if (!match || match[2] !== recipeId) fail('未知或未完成目录阻止盘点，原件保留。');
+        if (!match || !knownIds.has(match[2])) fail('未知或未完成目录阻止盘点，原件保留。');
         directory(file); capture(path.join(file, 'owner.json')); capture(path.join(file, 'manifest.json'));
         const checked = inspectDirectory(file, 'cache', match[1]);
         for (const leaf of checked.names) if (!stamps.has(path.join(file, leaf))) capture(path.join(file, leaf));

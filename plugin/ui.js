@@ -36,7 +36,7 @@
     const doc = options.document || document, win = options.window || window, now = options.now || (() => performance.now());
     const ids = ['picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
       'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentText', 'commentSave', 'commentCancel',
-      'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus'];
+      'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality'];
     const el = Object.fromEntries(ids.map(id => [id, doc.getElementById(id)]));
     if (ids.some(id => !el[id])) throw new Error('播放器界面缺少必要元素。');
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
@@ -54,11 +54,11 @@
     }
     const listeners = [];
     const on = (target, type, handler) => { target.addEventListener(type, handler); listeners.push([target, type, handler]); };
-    let memoryBusy = false, cleaning = false, shownMemory = null, shownTier = '';
+    let memoryBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null;
     function updateMemorySettings() {
       const memory = state.memorySettings;
       const disabled = !session || !memory || memoryBusy || cleaning || state.state === 'preparing' || state.state === 'closed' || !!state.comments?.draft;
-      set(el.memoryApply, 'disabled', disabled); set(el.memoryMiB, 'disabled', disabled);
+      set(el.memoryApply, 'disabled', disabled); set(el.memoryMiB, 'disabled', disabled); set(el.qualitySelect, 'disabled', disabled);
       set(el.cacheClearOther, 'disabled', disabled || !['paused', 'playing', 'seeking'].includes(state.state));
       if (memory && memory !== shownMemory) {
         shownMemory = memory; shownTier = String(memory.ramMiB);
@@ -66,17 +66,30 @@
         set(el.memoryAllowance, 'textContent', '缓存上限 ' + (memory.ramBytes / 1048576).toFixed(0) + ' MB（不含程序额外占用）' +
           (memory.legacyConverted ? '；旧百分比已换算，应用后保存。' : ''));
       }
+      if (shownQuality !== (state.previewQuality || '720p')) {
+        shownQuality = state.previewQuality || '720p'; set(el.qualitySelect, 'value', shownQuality);
+      }
+      const preview = state.preview;
+      for (const option of Array.from(el.qualitySelect.options || [])) {
+        const long = option.value === '1080p' ? 1920 : 1280, short = option.value === '1080p' ? 1080 : 720;
+        const original = preview && preview.sampleAspectRatio === '1:1' &&
+          Math.max(preview.sourceWidth, preview.sourceHeight) <= long && Math.min(preview.sourceWidth, preview.sourceHeight) <= short;
+        set(option, 'textContent', option.value + (original ? '（原始分辨率）' : ''));
+      }
+      set(el.previewQuality, 'textContent', preview ? preview.quality + ' 预览 · ' + preview.width + ' × ' + preview.height +
+        (preview.originalResolution ? '（原始分辨率）' : '') : (state.previewQuality || '720p') + ' 预览');
     }
     on(el.memoryApply, 'click', async () => {
-      if (el.memoryApply.disabled || !session || typeof session.setMemoryMiB !== 'function') return;
+      if (el.memoryApply.disabled || !session || typeof session.setPlaybackSettings !== 'function' && typeof session.setMemoryMiB !== 'function') return;
       const active = session, ramMiB = Number(el.memoryMiB.value);
       memoryBusy = true; set(el.memoryStatus, 'textContent', '正在应用，完成后保持暂停…'); updateMemorySettings();
-      try { const result = await active.setMemoryMiB(ramMiB);
+      try { const result = typeof active.setPlaybackSettings === 'function'
+          ? await active.setPlaybackSettings({ ramMiB, previewQuality: el.qualitySelect.value }) : await active.setMemoryMiB(ramMiB);
         if (session !== active) return;
-        set(el.memoryStatus, 'textContent', result.status === 'error' ? '设置已保存，视频准备失败；可提高额度后重试。' :
+        set(el.memoryStatus, 'textContent', result.status === 'error' ? '设置已保存，视频准备失败；可调整画质或内存后重试。' :
           result.status === 'superseded' ? '操作已被素材切换或关闭替代。' : '设置已保存。');
       } catch (failure) { if (session === active) set(el.memoryStatus, 'textContent', String(failure.message || failure)); }
-      finally { memoryBusy = false; if (session === active) { shownMemory = null; updateMemorySettings(); } }
+      finally { memoryBusy = false; if (session === active) { shownMemory = null; shownQuality = null; updateMemorySettings(); } }
     });
     on(el.cacheClearOther, 'click', async () => {
       if (el.cacheClearOther.disabled || !session || typeof session.clearOtherCaches !== 'function') return;

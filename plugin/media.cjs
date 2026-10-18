@@ -6,6 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const defaultIndex = require('./frame-index.cjs');
+const previewProfile = require('./preview-profile.cjs');
 const { OWNER, RECIPE } = require('./cache.cjs');
 const MIB = 1024 * 1024;
 const LIMITS = Object.freeze({ metadataBytes: 8 * MIB, jpegBytes: 8 * MIB,
@@ -236,12 +237,16 @@ function previewRgbFilter(video, width, height) {
   // source YUV matrix, but browser JPEG decoders use the JPEG/Rec601 matrix.
   return `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=bilinear+accurate_rnd+full_chroma_int:in_color_matrix=${color.matrix}:in_range=${color.range}:out_range=pc,format=rgb24,setsar=1,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`;
 }
-function ffmpegArgs(source, hasAudio, codecName, video = {}) {
+function ffmpegArgs(source, hasAudio, codecName, video = {}, preview = null) {
+  const rgbFilter = previewRgbFilter(video, preview ? preview.width : 1280, preview ? preview.height : 720);
+  // The profile already fits display aspect, sample aspect and orientation.
+  // Exact sizing avoids applying encoded-pixel aspect a second time.
+  const fittedRgb = preview ? rgbFilter.replace(':force_original_aspect_ratio=decrease', '') : rgbFilter;
   // Bound H.264/HEVC input decoding separately from JPEG output encoding. One video
   // job remains active; resolution/q3/audio/RAM remain unchanged. Color revision
   // separately invalidates old pixels without changing ownership record layout.
   const args = ['-hide_banner', '-loglevel', 'info', '-nostdin', '-copyts', '-threads', ['hevc', 'h264'].includes(codecName) ? '8' : '2', '-i', source,
-    '-map', '0:v:0', '-an', '-sn', '-dn', '-vf', 'showinfo@v=checksum=0,' + previewRgbFilter(video, 1280, 720) + ',scale=in_range=pc:out_range=pc:out_color_matrix=bt601:flags=bilinear+accurate_rnd+full_chroma_int,format=yuvj420p',
+    '-map', '0:v:0', '-an', '-sn', '-dn', '-vf', 'showinfo@v=checksum=0,' + fittedRgb + ',scale=in_range=pc:out_range=pc:out_color_matrix=bt601:flags=bilinear+accurate_rnd+full_chroma_int,format=yuvj420p',
     '-filter_threads', codecName === 'h264' ? '2' : codecName === 'hevc' ? '4' : '1', '-fps_mode', 'passthrough', '-c:v', 'mjpeg', '-threads', '2', '-q:v', '3', '-f', 'image2pipe', 'pipe:1'];
   if (hasAudio) args.push('-map', '0:a:0', '-vn', '-sn', '-dn', '-af', 'aresample=48000,ashowinfo@a', '-c:a', 'pcm_f32le', '-f', 'wav', 'pipe:3');
   return args;
@@ -321,7 +326,8 @@ async function captureProbe(job, tools, source) {
 }
 async function build(job, tools, tx, source, probe, frameIndex) {
   const end = videoEnd(probe), hasAudio = probe.streams.some(value => value.codec_type === 'audio'),
-    args = ffmpegArgs(source.filePath, hasAudio, probe.streams.find(value => value.codec_type === 'video').codec_name, end.stream);
+    preview = job.previewQuality === undefined ? null : previewProfile.dimensions(end.stream, job.previewQuality),
+    args = ffmpegArgs(source.filePath, hasAudio, probe.streams.find(value => value.codec_type === 'video').codec_name, end.stream, preview);
   const { child, finish } = childProcess(job, tools.ffmpeg, args, ['ignore', 'pipe', 'pipe', hasAudio ? 'pipe' : 'ignore'], true);
   const parser = new JpegParser(), files = [], pts = []; let timeBase = null, lastDurationTicks = null, audioFirst = null, stderrBytes = 0, pending = '', tail = '';
   function line(value) {
@@ -383,7 +389,7 @@ async function build(job, tools, tx, source, probe, frameIndex) {
   const duration = Math.max(indexed.videoDuration, mediaAudio ? mediaAudio.start + mediaAudio.duration : 0);
   const info = { schema: 1, owner: OWNER, recipe: RECIPE, colorVersion: COLOR_VERSION, color: previewColor(end.stream),
     source: { sha256: source.sha256, codec: end.stream.codec_name, width: end.stream.width, height: end.stream.height, hasAudioStream: hasAudio },
-    width: 1280, height: 720, duration, frames: indexed.frames, audio: mediaAudio, ...(packedFrames ? { framePack: packedFrames } : {}),
+    ...(preview ? { preview } : {}), width: preview ? preview.width : 1280, height: preview ? preview.height : 720, duration, frames: indexed.frames, audio: mediaAudio, ...(packedFrames ? { framePack: packedFrames } : {}),
     metrics: { reused: false, generationMs: exit.metrics.totalMs, tool: exit.metrics, singleVideoDecode: true, args,
       sourceVideoOrigin: ratioSeconds(ratio(indexed.originPtsTicks, timeBase)),
       lastFrameEnd: resolvedEnd.method, declaredVideoEndTicks: end.lastFrameEndTicks, declaredVideoTimeBase: end.timeBase,
@@ -408,9 +414,10 @@ function createMedia(options) {
   async function prepare(value, settings = {}) {
     // Everything captured here is independent of later UI/Eagle changes.
     const snapshot = snapshotCopy(value), signal = settings.signal, onProgress = settings.onProgress;
+    const previewQuality = settings.previewQuality === undefined ? undefined : previewProfile.quality(settings.previewQuality);
     if (active) fail('已有视频准备任务，需先等待它停止。', 'MEDIA_BUSY');
     active = true;
-    const started = process.hrtime.bigint(), job = { signal, onProgress, children: new Set(), operations: new Set(), failure: null, observerError: null };
+    const started = process.hrtime.bigint(), job = { signal, onProgress, previewQuality, children: new Set(), operations: new Set(), failure: null, observerError: null };
     const abort = () => stopChildren(job); if (signal) signal.addEventListener('abort', abort, { once: true });
     let tx = null, returned = null, primaryError = null;
     const phases = {}, elapsed = start => Number(process.hrtime.bigint() - start) / 1e6;
@@ -418,7 +425,7 @@ function createMedia(options) {
       check(job); notify(job, { stage: 'hash' });
       let phaseStart = process.hrtime.bigint();
       const fingerprint = await hashSource(snapshot.filePath, job); check(job); phases.sourceFingerprintMs = elapsed(phaseStart);
-      phaseStart = process.hrtime.bigint(); tx = await cache.begin({ sourceSha256: fingerprint.sha256, signal }); job.tx = tx; check(job); phases.writerAcquireMs = elapsed(phaseStart);
+      phaseStart = process.hrtime.bigint(); tx = await cache.begin({ sourceSha256: fingerprint.sha256, signal, previewQuality }); job.tx = tx; check(job); phases.writerAcquireMs = elapsed(phaseStart);
       notify(job, { stage: 'analyze' }); phaseStart = process.hrtime.bigint();
       const analyzed = await captureProbe(job, tools, snapshot.filePath); check(job); phases.probeMs = elapsed(phaseStart);
       const selectedMetadata = validateProbe(analyzed.probe);
