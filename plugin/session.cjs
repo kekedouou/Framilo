@@ -384,6 +384,9 @@ function createSession(options) {
     setLoopPoint: point => control('setLoopPoint', [point], ['paused', 'playing']),
     setLoopEnabled: enabled => control('setLoopEnabled', [enabled], ['paused', 'playing']),
     clearLoop: () => control('clearLoop', [], ['paused', 'playing']),
+    applyLoopRange: range => control('applyLoopRange', [range], ['paused', 'playing', 'seeking']),
+    loopFrameAt: (time, bounds) => !closed && owner && owner.ready && owner.epoch === epoch && !comments.draft &&
+      ['paused', 'playing', 'seeking'].includes(state) && typeof owner.player.loopFrameAt === 'function' ? owner.player.loopFrameAt(time, bounds) : null,
     beginComment, setCommentText, saveComment, cancelComment, checkComment,
     seekComment: id => {
       const item = comments.items.find(value => value.id === id);

@@ -2,7 +2,7 @@
 
 ## 当前执行：E-06（2026-10-18）
 
-E-04/E-05初步收尾见be9832f。E-06按已选三项完成同一plugin的循环与三档有声慢放，本地默认/Node16检查通过，集中Eagle音画体验待验；输入范围、直接播放控制与统一应用设置分开，具体见product/architecture及[E-06记录](experiments/E06/report.md)。不扩大画质/保音调/长期计量，不改冻结Beta或发布。以下待选/旧待体验为历史。
+E-04/E-05初步收尾见be9832f。E-06首版21f62d6获“功能已实现、操作不便”反馈，批准的R选择/清除/长按调整、L循环与可拖动端点已完成；仍在同一plugin，规格/结果见product/architecture及[E-06记录](experiments/E06/report.md)。草稿在UI层loop-selection.js，不进磁盘/偏好，正式双端提交由Player决定。最终默认及Node16十三组本地检查通过，新真实体验待验；不扩大画质/保音调/长期计量，不改冻结Beta或发布。以下待选/旧待体验为历史。
 
 7f19828的光标周围准备/绿条已获用户初步认可；核对统一应用约定后保留内存/画质/主动解压三项点击“应用”才生效，本轮局部功能初步收尾。无代码/新测试，用户反馈不冒充Codex亲测或全部性能通过。下一优先E-06片段循环＋慢放正在确认少量产品行为，未开始实现。长期/1080p全指标缺口保留，仍用plugin，不改冻结Beta或发布。证据见[E-04](experiments/E04/report.md)、[E-05](experiments/E05/report.md)；下方此前状态为历史。
 
@@ -104,6 +104,7 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 | plugin/manifest.json、index.html | Eagle Window 与页面入口 |
 | plugin/app.js | 宿主生命周期、依赖装配和事件接线，不承载媒体、缓存、标注业务 |
 | plugin/ui.js、styles.css | 极简主画面与侧栏、状态及实际帧时间提示、带输入焦点保护的空格操作；只向会话发出操作，不直接访问文件或 Eagle 素材/标注 API；正式页面无测试控制 |
+| plugin/loop-selection.js | UI层短/长按与端点草稿，只通过Session预览/确认；无文件、缓存或Eagle API访问 |
 | plugin/session.cjs | 素材/库快照、状态与任务所有权，协调适配、准备、缓存和播放 |
 | plugin/eagle.cjs | 唯一素材/标注 API 边界；独立读回，不直接写 metadata.json |
 | plugin/media.cjs | 只读源媒体、分析和 FFmpeg；通过缓存句柄受限写入，不自行淘汰目录 |

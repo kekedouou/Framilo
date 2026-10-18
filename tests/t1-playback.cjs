@@ -23,8 +23,10 @@ function element(id) {
 }
 function harness() {
   let clock = 0, serial = 0, selectedId = 'A', selectionCalls = 0;
-  const rafs = new Map(), gates = new Map(), contexts = [], players = [], playerChanges = [], bitmaps = [], drawings = [], events = [], released = [], leases = new Set();
+  const rafs = new Map(), timers = new Map(), gates = new Map(), contexts = [], players = [], playerChanges = [], bitmaps = [], drawings = [], events = [], released = [], leases = new Set();
   const elements = new Map(), win = element('window'), doc = { getElementById(id) { if (!elements.has(id)) elements.set(id, element(id)); return elements.get(id); } };
+  win.setTimeout = (fn, ms) => { const id = ++serial; timers.set(id, { fn, at: clock + ms }); return id; };
+  win.clearTimeout = id => timers.delete(id);
   const el = id => doc.getElementById(id), canvas = el('picture');
   canvas.getContext = () => ({ drawImage(bitmap) { drawings.push({ material: bitmap.material, ordinal: bitmap.ordinal }); } });
   const env = { now: () => clock, raf(callback) { const id = ++serial; rafs.set(id, callback); return id; }, caf: id => rafs.delete(id),
@@ -71,11 +73,12 @@ function harness() {
     createPlayer(options) { playerChanges.push(options.onChange); const player = new Player({ ...options, canvas, env, frameIndex, emit: event => events.push(event) }); players.push(player); return player; },
     onChange: value => ui.update(value) });
   ui.bindSession(session);
-  async function frame() { clock += 16; const pending = Array.from(rafs.values()); rafs.clear(); pending.forEach(fn => fn(clock)); await flush(); }
+  async function frame() { clock += 16; for (const [id, timer] of [...timers]) if (timer.at <= clock) { timers.delete(id); timer.fn(); }
+    const pending = Array.from(rafs.values()); rafs.clear(); pending.forEach(fn => fn(clock)); await flush(); }
   async function until(check) { await flush(); for (let n = 0; !check() && n < 100; n++) await frame(); assert(check(), 'Deterministic integration did not reach expected state.'); }
   async function settle(promise) { let done = false, value, error; promise.then(result => { done = true; value = result; }, failure => { done = true; error = failure; }); await until(() => done); if (error) throw error; return value; }
   function space(values = {}) { return win.fire('keydown', { code: 'Space', key: ' ', target: doc.activeElement || win, ...values }); }
-  async function close() { await settle(session.close()); ui.destroy(); assert.strictEqual(rafs.size, 0); assert.strictEqual(leases.size, 0);
+  async function close() { await settle(session.close()); ui.destroy(); assert.strictEqual(rafs.size, 0); assert.strictEqual(timers.size, 0); assert.strictEqual(leases.size, 0);
     assert(players.every(player => player.snapshot().cacheBytes === 0)); assert(contexts.every(context => context.state === 'closed'));
     assert(contexts.every(context => context.sources.every(source => source.stopped))); assert(bitmaps.every(bitmap => bitmap.closed)); }
   return { session, ui, el, win, players, playerChanges, contexts, drawings, events, bitmaps, released, frame, until, settle, space, close,
@@ -121,14 +124,47 @@ async function run() {
   await check('E06 actual UI/session/Player: direct speed and loop actions, inclusive wrap, pause and clear',async()=>{
     const h=harness();await h.settle(h.session.loadSelected());h.el('playbackRate').value='0.5';h.el('playbackRate').fire('change');
     await h.until(()=>h.session.snapshot().playback.transport.rate===.5);
-    h.el('loopStart').fire('click');await h.until(()=>h.session.snapshot().playback.transport.loop.startOrdinal===0);
-    await h.settle(h.session.seek(.8,{final:true}));h.el('loopEnd').fire('click');await h.until(()=>h.session.snapshot().playback.transport.loop.endOrdinal===8);
-    assert(h.el('loopRange').textContent.includes('第9帧'));h.el('loopEnabled').checked=true;h.el('loopEnabled').fire('change');await h.until(()=>h.session.snapshot().playback.transport.loop.enabled);
-    h.space();await h.until(()=>h.session.snapshot().state==='playing');for(let n=0;n<150;n++)await h.frame();
+    h.el('loopSelect').fire('click');await h.until(()=>h.el('timeline').attributes['data-selecting']==='true'&&!h.el('loopSelect').disabled);
+    assert(h.el('loopHandleStart').hidden&&h.el('loopHandleEnd').hidden);
+    h.el('timeline').fire('pointerdown',{clientX:100});h.win.fire('pointerup',{clientX:100,buttons:0});
+    await h.until(()=>h.session.snapshot().state==='paused');
+    h.el('timeline').fire('pointerdown',{clientX:160});h.win.fire('pointermove',{clientX:180});h.win.fire('pointerup',{clientX:180,buttons:0});
+    await h.until(()=>h.session.snapshot().state==='paused');
+    assert(h.el('loopRange').textContent.includes('第9帧'));h.el('loopSelect').fire('click');await h.until(()=>h.session.snapshot().state==='playing');
+    for(let n=0;n<150;n++)await h.frame();
     assert(h.drawings.some(d=>d.ordinal===0));assert(h.drawings.some(d=>d.ordinal===8));assert(h.drawings.every(d=>d.ordinal<=8));
     assert(h.contexts[0].sources[0].loop);assert.equal(h.contexts[0].sources[0].playbackRate.value,.5);
-    h.space();await h.until(()=>h.session.snapshot().state==='paused');h.el('loopClear').fire('click');await h.until(()=>h.session.snapshot().playback.transport.loop.startOrdinal===null);
-    assert.equal(h.el('loopRange').textContent,'未设置范围');await h.close();
+    h.space();await h.until(()=>h.session.snapshot().state==='paused');h.el('loopSelect').fire('click');await h.until(()=>h.session.snapshot().playback.transport.loop.startOrdinal===null);
+    assert.equal(h.el('loopRange').textContent,'未设置范围');assert(h.el('loopHandleStart').hidden&&h.el('loopHandleEnd').hidden);await h.close();
+  });
+  await check('R/L actual module wiring: hold adjustment, active endpoint stepping, cancel/blur and input guards',async()=>{
+    const h=harness();await h.settle(h.session.loadSelected());
+    const key=(type,letter,extra={})=>h.win.fire(type,{code:'Key'+letter,key:letter.toLowerCase(),...extra});
+    const tap=letter=>{key('keydown',letter);key('keyup',letter);};
+    const click=(x,handle)=>{h.el('timeline').fire('pointerdown',{clientX:x,target:handle||h.el('timeline')});h.win.fire('pointerup',{clientX:x,buttons:0});};
+    key('keydown','R',{target:{isContentEditable:true}});key('keyup','R');assert.equal(h.el('timeline').attributes['data-selecting'],'false');
+    for(const extra of [{isComposing:true},{ctrlKey:true},{altKey:true},{shiftKey:true},{repeat:true}]){key('keydown','R',extra);key('keyup','R');}
+    assert.equal(h.el('timeline').attributes['data-selecting'],'false');
+    tap('R');await h.until(()=>!h.el('loopSelect').disabled);click(120);await h.until(()=>h.session.snapshot().state==='paused');
+    click(180);await h.until(()=>h.session.snapshot().state==='paused');tap('R');await h.until(()=>h.session.snapshot().state==='playing');
+    assert.equal(h.session.snapshot().playback.transport.loop.startOrdinal,2);assert.equal(h.session.snapshot().playback.transport.loop.endOrdinal,8);
+    tap('L');await h.until(()=>!h.session.snapshot().playback.transport.loop.enabled&&!h.el('loopSelect').disabled);
+    assert.equal(h.session.snapshot().state,'playing');assert(!h.el('loopBand').hidden);assert.equal(h.el('timeline').attributes['data-loop-on'],'false');
+    h.space();await h.until(()=>h.session.snapshot().state==='paused');tap('L');await h.until(()=>h.session.snapshot().state==='playing');
+    key('keydown','R');key('keydown','R',{repeat:true});for(let i=0;i<17;i++)await h.frame();
+    await h.until(()=>h.session.snapshot().state==='paused'&&!h.el('loopSelect').disabled);
+    assert.equal(h.el('timeline').attributes['data-selecting'],'true');assert(!h.el('loopHandleStart').hidden);
+    click(130,h.el('loopHandleStart'));await h.until(()=>h.session.snapshot().state==='paused');
+    h.win.fire('keydown',{code:'BracketRight',key:']'});await h.until(()=>h.session.snapshot().playback.frameOrdinal===4);
+    assert.equal(h.session.snapshot().playback.transport.loop.startOrdinal,2,'Draft must not mutate saved range.');
+    key('keyup','R');await h.until(()=>h.session.snapshot().state==='playing');assert.equal(h.session.snapshot().playback.transport.loop.startOrdinal,4);
+    key('keydown','R');for(let i=0;i<17;i++)await h.frame();await h.until(()=>h.session.snapshot().state==='paused'&&!h.el('loopSelect').disabled);
+    click(160,h.el('loopHandleStart'));h.win.fire('blur');await h.until(()=>h.el('timeline').attributes['data-selecting']==='false'&&h.session.snapshot().state==='paused');
+    key('keyup','R');assert.equal(h.session.snapshot().playback.transport.loop.startOrdinal,4);
+    tap('R');await h.until(()=>h.session.snapshot().playback.transport.loop.startOrdinal===null&&!h.el('loopSelect').disabled);
+    tap('R');await h.until(()=>!h.el('loopSelect').disabled);click(130);h.win.fire('keydown',{key:'Escape'});
+    await h.until(()=>h.el('timeline').attributes['data-selecting']==='false'&&h.session.snapshot().state==='paused');
+    assert(h.el('loopHandleStart').hidden&&h.el('loopHandleEnd').hidden);assert(!h.session.snapshot().playback.transport.loop.valid);await h.close();
   });
   console.log('T1 real-module playback integration: ' + passed.length + ' in-memory checks; no real Eagle/media/performance acceptance.');
   return { passed, count: passed.length };

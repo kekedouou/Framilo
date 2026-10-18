@@ -172,9 +172,10 @@
       if (!this._playValid(epoch, token) || this.state !== 'paused') return { status: 'superseded' };
       const result = await edit();
       if (!this._playValid(epoch, token)) return { status: 'superseded' };
+      if (resume === 'always' && result && result.status !== 'applied') return result;
       this._change();
       if (!this._playValid(epoch, token)) return { status: 'superseded' };
-      return playing && resume ? this.play() : result || { status: 'applied' };
+      return resume === 'always' || playing && resume ? this.play() : result || { status: 'applied' };
     }
     setPlaybackRate(rate) {
       if (![.25, .5, 1].includes(rate)) return Promise.reject(new Error('播放速度请选择0.25×、0.5×或1×。'));
@@ -190,6 +191,33 @@
       });
     }
     clearLoop() { return this._editTransport(() => { this.loopStart = this.loopEnd = null; this.loopEnabled = false; }, true); }
+    loopFrameAt(time, bounds = {}) {
+      if (!this._canSeek() || this.info.frames.length < 2 || !Number.isFinite(time)) return null;
+      const frames = this.info.frames, min = bounds.minOrdinal === undefined ? 0 : bounds.minOrdinal,
+        max = bounds.maxOrdinal === undefined ? frames.length - 1 : bounds.maxOrdinal;
+      if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min < 0 || max >= frames.length || min > max) return null;
+      const raw = bounds.ordinal === undefined ? this.index.frameAt(frames, time) : bounds.ordinal;
+      if (!Number.isSafeInteger(raw)) return null;
+      const ordinal = Math.max(min, Math.min(max, raw)), frame = frames[ordinal];
+      return { ordinal, frameId: frame.id, time: frame.time };
+    }
+    applyLoopRange(value) {
+      const first = value && value.startOrdinal, last = value && value.endOrdinal;
+      if (!this.info || !Number.isSafeInteger(first) || !Number.isSafeInteger(last) || first < 0 || last >= this.info.frames.length || first >= last)
+        return Promise.reject(new Error('请选择两个不同的源帧。'));
+      if (!((last === this.info.frames.length - 1 ? this.info.duration : this.info.frames[last].end) > this.info.frames[first].time))
+        return Promise.resolve({ status: 'ignored', reason: 'invalid-loop' });
+      return this._editTransport(async () => {
+        const epoch = this.epoch, token = this.playToken;
+        const located = await this._request(this.info.frames[first].time, { index: first, kind: 'loop-confirm', final: true, inputAt: this.env.now() });
+        // Nothing is committed before the starting image really settles. A newer
+        // seek/pause/dispose owns the token and leaves the previous range intact.
+        if (!this._playValid(epoch, token) || !['drawn', 'reused'].includes(located.status)) return located;
+        this.loopStart = first; this.loopEnd = last; this.loopEnabled = !!this._loopRange();
+        if (!this.loopEnabled) return { status: 'ignored', reason: 'invalid-loop' };
+        return { status: 'applied' };
+      }, 'always');
+    }
     setLoopEnabled(enabled) {
       if (typeof enabled !== 'boolean') return Promise.reject(new Error('循环状态必须为开或关。'));
       return this._editTransport(async () => {

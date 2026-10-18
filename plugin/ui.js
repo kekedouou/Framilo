@@ -1,10 +1,10 @@
 /* UI sends operations only to the session; it never reads Eagle or files. */
 (function (root, factory) {
   'use strict';
-  const api = factory();
+  const api = factory(typeof module === 'object' && module.exports ? require('./loop-selection.js') : root.EVALoopSelection);
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root && root.document) root.EVAUI = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (selectionAPI) {
   'use strict';
   const clamp = value => Math.max(0, Math.min(1, value));
   function formatTime(seconds) {
@@ -32,16 +32,31 @@
     if (event.code === 'BracketRight' || event.key === ']' || event.key === '】') return 1;
     return 0;
   }
+  function letterKey(event, code) {
+    if (event.defaultPrevented || event.repeat || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false;
+    const target = event.target;
+    if (target && (target.isContentEditable || typeof target.closest === 'function' && target.closest('textarea,select,[contenteditable],[role="textbox"]'))) return false;
+    const input = target && typeof target.closest === 'function' && target.closest('input');
+    if (input && !['checkbox', 'radio', 'button'].includes(input.type)) return false;
+    return event.code === 'Key' + code || String(event.key || '').toLowerCase() === code.toLowerCase();
+  }
   function createUI(options = {}) {
     const doc = options.document || document, win = options.window || window, now = options.now || (() => performance.now());
     const ids = ['picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
       'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentText', 'commentSave', 'commentCancel',
       'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality',
-      'forwardPredecode', 'decodedCache', 'cacheStatus', 'playbackRate', 'loopStart', 'loopEnd', 'loopEnabled', 'loopClear', 'loopRange'];
+      'forwardPredecode', 'decodedCache', 'cacheStatus', 'playbackRate', 'loopSelect', 'loopCancel', 'loopEnabled', 'loopRange',
+      'loopBand', 'loopHandleStart', 'loopHandleEnd', 'loopHelp'];
     const el = Object.fromEntries(ids.map(id => [id, doc.getElementById(id)]));
     if (ids.some(id => !el[id])) throw new Error('播放器界面缺少必要元素。');
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
     const attributes = new Map();
+    const loopAttributes = new WeakMap();
+    function loopAttribute(node, name, value) {
+      if (!loopAttributes.has(node)) loopAttributes.set(node, new Map());
+      const saved = loopAttributes.get(node);
+      if (saved.get(name) !== value) { node.setAttribute(name, value); saved.set(name, value); }
+    }
     const set = (node, key, value) => { if (node[key] !== value) node[key] = value; };
     let memoryTimer = null;
     let coverageTimer = null, coverageKey = null, coverageEpoch = null, coverageSize = null;
@@ -86,7 +101,7 @@
     let memoryBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null, shownPredecode = null;
     function updateMemorySettings() {
       const memory = state.memorySettings;
-      const disabled = !session || !memory || memoryBusy || cleaning || state.state === 'preparing' || state.state === 'closed' || !!state.comments?.draft;
+      const disabled = !session || !memory || memoryBusy || cleaning || state.state === 'preparing' || state.state === 'closed' || !!state.comments?.draft || selection.snapshot().editing;
       set(el.memoryApply, 'disabled', disabled); set(el.memoryMiB, 'disabled', disabled); set(el.qualitySelect, 'disabled', disabled);
       set(el.forwardPredecode, 'disabled', disabled);
       set(el.cacheClearOther, 'disabled', disabled || !['paused', 'playing', 'seeking'].includes(state.state));
@@ -138,9 +153,12 @@
     const invoke = fn => {
       try { Promise.resolve(fn()).catch(() => {}); } catch (_) { /* session publishes operation errors */ }
     };
+    const selection = selectionAPI.createSelection({ getSession: () => session, getState: () => state,
+      setTimeout: (fn, ms) => (win.setTimeout || setTimeout)(fn, ms), clearTimeout: id => (win.clearTimeout || clearTimeout)(id),
+      changed() { updateTransport(); updateMemorySettings(); updateComments(); } });
     let transportBusy = false;
     async function transportAction(method, value) {
-      if (!session || transportBusy || !interactive() || !['paused', 'playing'].includes(state.state) || gesture) return;
+      if (!session || transportBusy || selection.snapshot().editing || selection.snapshot().busy || !interactive() || !['paused', 'playing'].includes(state.state) || gesture) return;
       const active = session; transportBusy = true; updateTransport();
       try { await active[method](value); }
       catch (_) { /* Session publishes controlled failures. */ }
@@ -148,24 +166,39 @@
     }
     function updateTransport() {
       const transport = state.playback && state.playback.transport, loop = transport && transport.loop;
-      const disabled = transportBusy || !interactive() || !['paused', 'playing'].includes(state.state) || !!gesture;
-      for (const key of ['playbackRate', 'loopStart', 'loopEnd']) set(el[key], 'disabled', disabled);
-      set(el.loopEnabled, 'disabled', disabled || !loop || !loop.valid);
-      set(el.loopClear, 'disabled', disabled || !loop || loop.startOrdinal === null && loop.endOrdinal === null);
+      const editing = selection.snapshot(), disabled = transportBusy || editing.busy || !interactive() || !['paused', 'playing'].includes(state.state) || !!gesture;
+      set(el.playbackRate, 'disabled', disabled || editing.editing);
+      set(el.loopSelect, 'disabled', transportBusy || editing.busy || !interactive() || !!gesture);
+      set(el.loopEnabled, 'disabled', disabled || editing.editing || !loop || !loop.valid);
+      set(el.loopCancel, 'hidden', !editing.editing);
+      set(el.loopSelect, 'textContent', editing.editing ? '确认片段（R）' : loop && (loop.startOrdinal != null || loop.endOrdinal != null) ? '清除片段（R）' : '选择片段（R）');
+      set(el.play, 'disabled', !interactive() || editing.editing || editing.busy || !['paused', 'playing'].includes(state.state));
+      set(el.commentAdd, 'disabled', !interactive() || editing.editing || editing.busy || !!gesture || state.comments?.status !== 'ready');
       if (!transportBusy) {
         set(el.playbackRate, 'value', String(transport ? transport.rate : 1));
         set(el.loopEnabled, 'checked', !!(loop && loop.enabled));
       }
       const point = (time, ordinal) => Number.isFinite(time) && Number.isSafeInteger(ordinal) ? formatTime(time) + '（第' + (ordinal + 1) + '帧）' : '未设';
-      set(el.loopRange, 'textContent', !loop || loop.startOrdinal === null && loop.endOrdinal === null ? '未设置范围' :
-        point(loop.startTime, loop.startOrdinal) + ' → ' + point(loop.endTime, loop.endOrdinal) +
-        (loop.valid ? ' · 含结束帧' : loop.startOrdinal !== null && loop.endOrdinal !== null ? ' · 请调整为有效范围' : ''));
+      const start = editing.editing ? editing.start : loop?.startOrdinal != null ? { time: loop.startTime, ordinal: loop.startOrdinal } : null,
+        endPoint = editing.editing ? editing.end : loop?.endOrdinal != null ? { time: loop.endTime, ordinal: loop.endOrdinal } : null;
+      set(el.loopRange, 'textContent', !start && !endPoint ? '未设置范围' : point(start?.time, start?.ordinal) + ' → ' + point(endPoint?.time, endPoint?.ordinal) + (start && endPoint ? ' · 含结束帧' : ''));
+      loopAttribute(el.timeline, 'data-selecting', String(editing.editing)); loopAttribute(el.timeline, 'data-loop-on', String(!!loop?.enabled && !editing.editing));
+      for (const [node, value, name] of [[el.loopHandleStart, start, 'start'], [el.loopHandleEnd, endPoint, 'end']]) {
+        set(node, 'hidden', !value); set(node, 'disabled', !editing.editing || editing.busy);
+        loopAttribute(node, 'data-active', String(editing.editing && editing.active === name));
+        if (value) { set(node.style, 'left', clamp(value.time / state.duration) * 100 + '%'); loopAttribute(node, 'aria-label', (name === 'start' ? '循环起点 ' : '循环终点 ') + point(value.time, value.ordinal)); }
+      }
+      set(el.loopBand, 'hidden', !start || !endPoint);
+      if (start && endPoint && state.duration > 0) { set(el.loopBand.style, 'left', clamp(start.time / state.duration) * 100 + '%'); set(el.loopBand.style, 'width', Math.max(0, (endPoint.time - start.time) / state.duration) * 100 + '%'); }
+      const help = editing.message || (editing.editing ? editing.busy ? '正在固定画面…' :
+        (!start ? '点击并拖动起点，再点击并拖动终点。' : !endPoint ? '点击并拖动终点。' : '拖动端点调整，点击空白处浏览；【／】微调当前端点。') +
+        (editing.mode === 'hold' ? ' 松开 R 确认，Esc 取消。' : ' 再按 R 确认，Esc 取消。') : '');
+      set(el.loopHelp, 'textContent', help); set(el.loopHelp, 'hidden', !help);
     }
     on(el.playbackRate, 'change', () => { if (!el.playbackRate.disabled) transportAction('setPlaybackRate', Number(el.playbackRate.value)); });
-    on(el.loopStart, 'click', () => { if (!el.loopStart.disabled) transportAction('setLoopPoint', 'start'); });
-    on(el.loopEnd, 'click', () => { if (!el.loopEnd.disabled) transportAction('setLoopPoint', 'end'); });
-    on(el.loopEnabled, 'change', () => { if (!el.loopEnabled.disabled) transportAction('setLoopEnabled', !!el.loopEnabled.checked); });
-    on(el.loopClear, 'click', () => { if (!el.loopClear.disabled) transportAction('clearLoop'); });
+    on(el.loopSelect, 'click', () => { if (!el.loopSelect.disabled) selection.clearOrChoose(); });
+    on(el.loopCancel, 'click', () => { clearGesture(); selection.cancel(); });
+    on(el.loopEnabled, 'change', () => { if (!el.loopEnabled.disabled) selection.toggleLoop(); });
     function thumb(time) {
       const ratio = state.duration > 0 ? clamp(time / state.duration) : 0;
       set(el.thumb.style, 'left', ratio * 100 + '%'); set(el.progress.style, 'width', ratio * 100 + '%');
@@ -193,7 +226,8 @@
       const time = event && gesture ? pointerTime(event.clientX, gesture.rect, state.duration) : lastRequestedTime;
       if (time === null) return;
       lastRequestedTime = time; thumb(time);
-      invoke(() => session.seek(time, { kind: final ? 'release' : 'rapid', final: !!final, inputAt }));
+      if (gesture && gesture.point) selection.move(gesture.point, time, final, inputAt);
+      else invoke(() => session.seek(time, { kind: final ? 'release' : 'rapid', final: !!final, inputAt }));
     }
     function end(event) {
       const inputAt = now();
@@ -204,7 +238,11 @@
     on(el.timeline, 'pointerdown', event => {
       const inputAt = now();
       if (!interactive() || gesture || (event.button !== undefined && event.button !== 0)) return;
-      event.preventDefault(); gesture = { id: event.pointerId, rect: el.timeline.getBoundingClientRect(), epoch: state.epoch };
+      const editing = selection.snapshot(); if (editing.busy) return;
+      const handle = event.target === el.loopHandleStart ? 'start' : event.target === el.loopHandleEnd ? 'end' : null;
+      if (handle && !editing.editing) return;
+      event.preventDefault(); gesture = { id: event.pointerId, rect: el.timeline.getBoundingClientRect(), epoch: state.epoch,
+        point: editing.editing ? handle || selection.nextPoint() : null };
       el.timeline.focus(); try { el.timeline.setPointerCapture(event.pointerId); } catch (_) {}
       hintEpoch = state.epoch; set(el.timeHint, 'hidden', false);
       set(el.timeHint, 'textContent', formatTime(state.playback ? state.playback.time : 0));
@@ -218,41 +256,49 @@
       if (event.buttons !== undefined && !(event.buttons & 1)) return end(event);
       if (interactive()) requestAt(event, false, inputAt);
     });
-    on(win, 'pointerup', end); on(win, 'pointercancel', end); on(win, 'blur', () => end(null));
+    on(win, 'pointerup', end);
+    on(win, 'pointercancel', event => { if (selection.snapshot().editing) { clearGesture(); selection.cancel(); } else end(event); });
+    on(win, 'blur', () => { if (selection.snapshot().editing) { clearGesture(); selection.blur(); } else { end(null); selection.blur(); } });
     on(win, 'resize', () => {
       if (gesture) gesture.rect = el.timeline.getBoundingClientRect();
       if (hintEpoch !== null) { measureHint(gesture && gesture.rect); hint(state.playback ? state.playback.time : 0); }
     });
-    on(el.play, 'click', () => { if (session && !gesture) { clearHint(); invoke(() => session.toggle()); } });
-    on(el.previous, 'click', () => { if (interactive()) { clearHint(); invoke(() => session.step(-1)); } });
-    on(el.next, 'click', () => { if (interactive()) { clearHint(); invoke(() => session.step(1)); } });
+    on(el.play, 'click', () => { if (session && !gesture && !selection.snapshot().editing && !selection.snapshot().busy) { clearHint(); invoke(() => session.toggle()); } });
+    function step(delta) { if (interactive() && !gesture && !selection.snapshot().busy) { clearHint(); if (!selection.snapshot().editing || !selection.step(delta)) invoke(() => session.step(delta)); } }
+    on(el.previous, 'click', () => step(-1)); on(el.next, 'click', () => step(1));
     on(el.retry, 'click', () => { if (session) invoke(() => session.retry()); });
     on(win, 'keydown', event => {
+      if (event.key === 'Escape' && selection.snapshot().editing) { event.preventDefault(); clearGesture(); selection.cancel(); return; }
+      if (letterKey(event, 'R')) { if (interactive() && !gesture) { event.preventDefault(); selection.keyDown(); } return; }
+      if (letterKey(event, 'L')) { if (interactive() && !gesture) { event.preventDefault(); selection.toggleLoop(); } return; }
       const delta = frameStepKey(event);
       if (delta) {
-        if (interactive() && !gesture) { event.preventDefault(); clearHint(); invoke(() => session.step(delta)); }
+        if (interactive() && !gesture) { event.preventDefault(); step(delta); }
         return;
       }
       if (!spaceAllowed(event, el.timeline)) return;
-      event.preventDefault(); if (interactive() && !gesture && ['paused', 'playing'].includes(state.state)) { clearHint(); invoke(() => session.toggle()); }
+      event.preventDefault(); if (interactive() && !gesture && !selection.snapshot().editing && !selection.snapshot().busy && ['paused', 'playing'].includes(state.state)) { clearHint(); invoke(() => session.toggle()); }
+    });
+    on(win, 'keyup', event => {
+      if (event.code === 'KeyR' || String(event.key || '').toLowerCase() === 'r') { if (selection.snapshot().editing && gesture) end(null); selection.keyUp(); }
     });
     on(el.timeline, 'keydown', event => {
       if (!interactive() || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
-      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); clearHint(); invoke(() => session.step(event.key === 'ArrowLeft' ? -1 : 1)); }
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); step(event.key === 'ArrowLeft' ? -1 : 1); }
     });
     let renderedItems = null, renderedDuration = null, renderedComments = null, renderedInteractive = null, editorId = null;
     const commentButtons = [], markerButtons = [];
     function seekComment(event) {
       const button = event.target && event.target.closest && event.target.closest('button[data-comment-id]');
-      if (button && interactive()) { clearHint(); invoke(() => session.seekComment(button.dataset.commentId)); }
+      if (button && interactive() && !selection.snapshot().editing) { clearHint(); invoke(() => session.seekComment(button.dataset.commentId)); }
     }
     on(el.commentMarkers, 'click', seekComment); on(el.commentList, 'click', seekComment);
-    on(el.commentAdd, 'click', () => { if (interactive() && !gesture) invoke(() => session.beginComment()); });
+    on(el.commentAdd, 'click', () => { if (interactive() && !gesture && !selection.snapshot().editing) invoke(() => session.beginComment()); });
     on(el.commentText, 'input', () => { if (session) invoke(() => session.setCommentText(el.commentText.value)); });
     on(el.commentSave, 'click', () => { if (session) invoke(() => state.comments?.draft?.status === 'unknown' ? session.checkComment() : session.saveComment()); });
     on(el.commentCancel, 'click', () => { if (session) invoke(() => session.cancelComment()); });
     function updateComments() {
-      const value = state.comments, draft = value && value.draft, ready = interactive();
+      const value = state.comments, draft = value && value.draft, ready = interactive() && !selection.snapshot().editing && !selection.snapshot().busy && !gesture;
       const items = value && value.items;
       let rebuilt = false;
       // The immutable list changes only on loading/read-back, never per frame.
@@ -295,6 +341,7 @@
     }
     function update(snapshot) {
       state = snapshot;
+      selection.update();
       if (gesture && (gesture.epoch !== state.epoch || !interactive())) clearGesture();
       if (hintEpoch !== null && (hintEpoch !== state.epoch || !interactive() || state.state === 'playing')) clearHint();
       const ready = interactive(), time = state.playback && Number.isFinite(state.playback.time) ? state.playback.time : 0;
@@ -326,6 +373,7 @@
       coverageEpoch = state.epoch;
     }
     return { canvas: el.picture, bindSession(value) {
+      if (session !== value) selection.destroy();
       session = value; update(state); refreshMemory(); refreshCoverage();
       if (memoryTimer === null && typeof win.setInterval === 'function') memoryTimer = win.setInterval(refreshMemory, 500);
       if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
@@ -333,7 +381,7 @@
       destroy() {
         if (memoryTimer !== null) { win.clearInterval(memoryTimer); memoryTimer = null; }
         if (coverageTimer !== null) { win.clearInterval(coverageTimer); coverageTimer = null; }
-        clearGesture(); listeners.forEach(([target, type, fn]) => target.removeEventListener(type, fn)); session = null; refreshMemory(); clearCoverage();
+        selection.destroy(); clearGesture(); listeners.forEach(([target, type, fn]) => target.removeEventListener(type, fn)); session = null; refreshMemory(); clearCoverage();
       } };
   }
   return { createUI, formatTime, pointerTime, spaceAllowed };

@@ -9,6 +9,24 @@ async function mark(h,first,last){
   await h.settle(h.player.setLoopEnabled(true));
 }
 async function main(){
+  {
+    const h=harness();await h.load(sample('range-atomic',audio(0,2),20));
+    assert.deepEqual(h.player.loopFrameAt(.249,{maxOrdinal:18}),{ordinal:2,frameId:2,time:.2});
+    assert.equal(h.player.loopFrameAt(2,{maxOrdinal:18}).ordinal,18);
+    assert.equal(h.player.loopFrameAt(0,{minOrdinal:5}).ordinal,5);
+    assert.equal(h.player.loopFrameAt(.2,{ordinal:4}).ordinal,4);
+    assert.equal(h.player.loopFrameAt(0,{minOrdinal:5,maxOrdinal:4}),null);
+    await h.settle(h.player.setPlaybackRate(.5));await h.settle(h.player.applyLoopRange({startOrdinal:2,endOrdinal:8}));
+    assert.equal(h.player.snapshot().state,'playing');assert.equal(h.player.snapshot().frameOrdinal,2);
+    assert.equal(h.player.transportSnapshot().loop.enabled,true);assert.equal(h.player.playbackRate,.5);
+    assert.equal(h.contexts[0].sources[0].loopStart,.2);assert.equal(h.contexts[0].sources[0].loopEnd,.9);
+    await h.settle(h.player.pause());const saved=h.player.transportSnapshot();
+    const pending=h.player.applyLoopRange({startOrdinal:3,endOrdinal:9});
+    const seek=h.player.seek(1.5,{final:true});await h.settle(seek);assert.equal((await pending).status,'superseded');
+    assert.deepEqual(h.player.transportSnapshot(),saved);assert.equal(h.player.snapshot().state,'paused');
+    await assert.rejects(h.player.applyLoopRange({startOrdinal:3,endOrdinal:3}));
+    const closing=h.player.applyLoopRange({startOrdinal:4,endOrdinal:9});await h.close();assert.equal((await closing).status,'superseded');
+  }
   for(const sound of [false,true])for(const rate of [.25,.5,1]){
     const h=harness();await h.load(sample('rate',sound?audio(0,4):null,80));await h.settle(h.player.setPlaybackRate(rate));
     assert.equal(h.player.snapshot().state,'paused');await h.settle(h.player.play());await h.elapse(30);

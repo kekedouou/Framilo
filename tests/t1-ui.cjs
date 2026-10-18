@@ -274,8 +274,8 @@ test('E05 fractional scaling fills the full rail; changing residency avoids repe
 });
 test('E06 controls act directly, display actual frame endpoints and obey editing/seek gates',()=>{
   const transport={rate:.5,loop:{enabled:false,valid:true,startOrdinal:2,endOrdinal:8,startTime:.2,endTime:.8}};
-  for(const [id,event,value,method,argument]of [['playbackRate','change','0.25','setPlaybackRate',.25],['loopStart','click',null,'setLoopPoint','start'],
-    ['loopEnd','click',null,'setLoopPoint','end'],['loopEnabled','change',true,'setLoopEnabled',true],['loopClear','click',null,'clearLoop',undefined]]){
+  for(const [id,event,value,method,argument]of [['playbackRate','change','0.25','setPlaybackRate',.25],
+    ['loopEnabled','change',true,'setLoopEnabled',true],['loopSelect','click',null,'clearLoop',undefined]]){
     const h=harness(),calls=[];h.ui.bindSession({[method](arg){calls.push([method,arg]);return Promise.resolve({status:'applied'});}});
     h.ui.update({...h.state,playback:{time:.8,frameOrdinal:8,frameCount:100,transport}});
     assert(h.el('loopRange').textContent.includes('第3帧'));assert(h.el('loopRange').textContent.includes('第9帧'));assert.equal(h.el('playbackRate').value,'0.5');
@@ -283,9 +283,10 @@ test('E06 controls act directly, display actual frame endpoints and obey editing
     h.el(id).fire(event);assert.deepEqual(calls,[[method,argument]]);assert(h.el(id).disabled);h.ui.destroy();
   }
   const h=harness();h.ui.update({...h.state,playback:{time:.8,transport:{...transport,loop:{...transport.loop,valid:false,endOrdinal:null}}}});
-  assert(h.el('loopEnabled').disabled);assert(!h.el('loopClear').disabled);assert(h.el('loopRange').textContent.includes('未设'));
-  h.ui.update({...h.state,state:'seeking'});for(const id of ['playbackRate','loopStart','loopEnd','loopEnabled','loopClear'])assert(h.el(id).disabled);
-  h.ui.update({...h.state,comments:{draft:{id:'text',status:'editing',time:2,text:'a b'},items:[]}});assert(h.el('playbackRate').disabled);assert(h.el('loopStart').disabled);
+  assert(h.el('loopEnabled').disabled);assert(!h.el('loopSelect').disabled);assert(h.el('loopRange').textContent.includes('未设'));
+  assert(!h.el('loopHandleStart').hidden);assert(h.el('loopHandleEnd').hidden);
+  h.ui.update({...h.state,state:'seeking'});for(const id of ['playbackRate','loopEnabled'])assert(h.el(id).disabled);
+  h.ui.update({...h.state,comments:{draft:{id:'text',status:'editing',time:2,text:'a b'},items:[]}});assert(h.el('playbackRate').disabled);assert(h.el('loopSelect').disabled);
   h.ui.update({...h.state,epoch:2,state:'empty',playback:null});assert.equal(h.el('loopRange').textContent,'未设置范围');assert.equal(h.el('playbackRate').value,'1');h.ui.destroy();
 });
 console.log('T1 UI: ' + checks + ' in-memory checks passed; real layout/input experience not tested.');

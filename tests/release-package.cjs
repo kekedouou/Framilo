@@ -13,7 +13,7 @@ base['manifest.json'] = pack.packageManifest(base['manifest.json']);
 const copy = () => Object.fromEntries(Object.entries(base).map(([n, b]) => [n, Buffer.from(b)])); let count = 0;
 function test(name, f) { f(); count++; console.log('ok release package: ' + name); }
 test('complete latest runtime closes native, worker, frame-pack and UI dependencies', () => assert(pack.validateRuntime(copy()).dependenciesChecked));
-for (const name of ['frame-pack.cjs', 'task-client.cjs', 'task-worker.cjs', 'native/task-host.cs', 'native/task-host.local.exe', 'native/task-host.local.json'])
+for (const name of ['loop-selection.js', 'frame-pack.cjs', 'task-client.cjs', 'task-worker.cjs', 'native/task-host.cs', 'native/task-host.local.exe', 'native/task-host.local.json'])
   test('missing ' + name + ' is refused', () => { const files = copy(); delete files[name]; assert.throws(() => pack.validateRuntime(files)); });
 test('extra preference/media data cannot enter the allowlist', () => { const files = copy(); files['memory-settings.json'] = Buffer.from('{}'); assert.throws(() => pack.validateRuntime(files)); });
 test('guard metadata cannot validate substituted binary bytes', () => { const files = copy(); files['native/task-host.local.exe'][3] ^= 1; assert.throws(() => pack.validateRuntime(files)); });
