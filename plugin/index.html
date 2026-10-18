@@ -28,7 +28,13 @@
           <button id="play" type="button" title="播放 / 暂停（空格）" disabled>播放</button>
           <button id="previous" type="button" title="上一帧（【 / [）" disabled>上一帧</button>
           <button id="next" type="button" title="下一帧（】 / ]）" disabled>下一帧</button>
+          <label class="speed-control">速度 <select id="playbackRate" aria-label="播放速度" disabled><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option></select></label>
           <span class="time-readout"><output id="frameReadout" class="frame-readout">帧：—</output><span><output id="currentTime">0:00.000</output><span class="muted"> / </span><output id="duration">0:00.000</output></span></span>
+        </div>
+        <div class="loop-controls" aria-label="片段循环">
+          <button id="loopStart" type="button" disabled>设起点</button><button id="loopEnd" type="button" disabled>设终点</button>
+          <label><input id="loopEnabled" type="checkbox" disabled>循环</label><button id="loopClear" type="button" disabled>清除范围</button>
+          <output id="loopRange" class="muted">未设置范围</output>
         </div>
       </div>
     </section>

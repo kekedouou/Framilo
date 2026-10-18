@@ -1,0 +1,74 @@
+'use strict';
+const assert=require('assert');
+const {harness,sample,audio}=require('./player.cjs');
+const near=(a,b)=>assert(Math.abs(a-b)<1e-7,`${a} != ${b}`);
+const frames=async(h,n)=>{for(let i=0;i<n;i++)await h.frame();};
+async function mark(h,first,last){
+  await h.settle(h.player.seek(h.player.info.frames[first].time,{index:first,kind:'release',final:true}));await h.settle(h.player.setLoopPoint('start'));
+  await h.settle(h.player.seek(h.player.info.frames[last].time,{index:last,kind:'release',final:true}));await h.settle(h.player.setLoopPoint('end'));
+  await h.settle(h.player.setLoopEnabled(true));
+}
+async function main(){
+  for(const sound of [false,true])for(const rate of [.25,.5,1]){
+    const h=harness();await h.load(sample('rate',sound?audio(0,4):null,80));await h.settle(h.player.setPlaybackRate(rate));
+    assert.equal(h.player.snapshot().state,'paused');await h.settle(h.player.play());await h.elapse(30);
+    const before=h.player._clockTime();await h.elapse(1000);near(h.player._clockTime()-before,rate);
+    if(sound)assert.equal(h.contexts[0].sources[0].playbackRate.value,rate);await h.close();
+  }
+  {
+    const h=harness();await h.load(sample('delay',audio(.4,.6),80));await h.settle(h.player.setPlaybackRate(.25));await h.settle(h.player.play());
+    const graph=h.contexts[0].sources[0];near(graph.startPlan.when-h.player.anchor.context,1.6);near(graph.startPlan.offset,0);await h.close();
+  }
+  {
+    const h=harness({forwardPredecode:true});await h.load(sample('loop',audio(0,1),10));await mark(h,1,4);
+    assert.equal(h.player.transportSnapshot().loop.enabled,true);await h.settle(h.player.play());await frames(h,100);
+    const draws=h.events.filter(e=>e.type==='draw'&&e.kind==='play');assert(draws.some(e=>e.frameId===1));assert(draws.some(e=>e.frameId===4));assert(draws.every(e=>e.frameId>=1&&e.frameId<=4));
+    assert.equal(h.player.snapshot().state,'playing');assert.equal(h.contexts[0].sources.length,1);assert.equal(h.contexts[0].buffers.length,0);
+    const source=h.contexts[0].sources[0];assert(source.loop);near(source.loopStart,.1);near(source.loopEnd,.5);
+    assert(!h.events.some(e=>e.code==='UNDERRUN'));await h.settle(h.player.pause());assert(source.stopped);await h.close();
+  }
+  {
+    const h=harness();await h.load(sample('silence',audio(.2,.1),10));await mark(h,0,4);await h.settle(h.player.play());
+    const ctx=h.contexts[0],buffer=ctx.sources[0].buffer;assert.equal(ctx.buffers.length,1);near(buffer.duration,.5);
+    const data=buffer.getChannelData(0);assert.equal(data[0],0);assert.equal(data[9599],0);assert(Math.abs(data[9600]-.1)<1e-7);assert.equal(data[14400],0);assert.equal(data[data.length-1],0);
+    const bytes=buffer.length*buffer.numberOfChannels*4;assert.equal(h.player.snapshot().budget.kinds['loop-audio'],bytes);
+    await frames(h,400);assert.equal(ctx.buffers.length,1);assert.equal(ctx.sources.length,1);
+    await h.settle(h.player.pause());assert(!h.player.snapshot().budget.kinds['loop-audio']);assert(ctx.sources[0].stopped);await h.close();
+  }
+  {
+    const h=harness();await h.load(sample('silent-range',audio(.6,.2),10));await mark(h,0,2);await h.settle(h.player.play());await frames(h,40);
+    assert.equal(h.player.snapshot().state,'playing');assert.equal(h.contexts[0].sources.length,0);await h.close();
+  }
+  {
+    const h=harness();await h.load(sample('negative-offset',audio(-.2,.3),10));h.player.audioBuffer.getChannelData(0)[9600]=.75;
+    await mark(h,0,2);await h.settle(h.player.play());const data=h.contexts[0].sources[0].buffer.getChannelData(0);
+    near(data[0],.75);assert(Math.abs(data[4799]-.1)<1e-7);assert.equal(data[4800],0);await h.close();
+  }
+  {
+    const h=harness();await h.load(sample('single',null,10));await mark(h,3,3);await h.settle(h.player.play());await frames(h,50);
+    assert.equal(h.player.snapshot().frameId,3);assert.equal(h.player.snapshot().state,'playing');await h.settle(h.player.clearLoop());assert(!h.player.transportSnapshot().loop.enabled);
+    await h.settle(h.player.pause());await h.settle(h.player.setLoopPoint('end'));await h.settle(h.player.seek(.8,{final:true}));await h.settle(h.player.setLoopPoint('start'));
+    assert.equal(h.player.transportSnapshot().loop.endOrdinal,null);assert.equal(h.player.transportSnapshot().loop.valid,false);assert.equal((await h.settle(h.player.setLoopEnabled(true))).status,'ignored');await h.close();
+  }
+  {
+    const h=harness();await h.load(sample('edit',audio(0,2),20));await h.settle(h.player.play());await frames(h,8);
+    const before=h.player.snapshot().frameOrdinal;await h.settle(h.player.setPlaybackRate(.5));assert.equal(h.player.snapshot().state,'playing');assert(h.player.snapshot().frameOrdinal>=before);
+    assert.equal(h.contexts[0].sources[1].playbackRate.value,.5);assert(h.contexts[0].sources[0].stopped);
+    const changing=h.player.setPlaybackRate(.25),seeking=h.player.seek(1.2,{final:true});await h.settle(seeking);assert.equal((await changing).status,'superseded');assert.equal(h.player.playbackRate,.5);
+    await h.settle(h.player.setLoopPoint('start'));const saved=h.player.transportSnapshot();await h.load(sample('other',null,20));assert.equal(h.player.playbackRate,1);assert.equal(h.player.transportSnapshot().loop.startId,null);
+    await h.settle(h.player.restoreTransport(saved));assert.equal(h.player.playbackRate,.5);assert.equal(h.player.transportSnapshot().loop.startId,saved.loop.startId);await h.close();
+  }
+  {
+    const h=harness(),index=require('../plugin/frame-index.cjs'),info=sample('duplicates',null,3);
+    info.frames=index.buildIndex([0,0,1].map((n,id)=>({id,file:'f'+id+'.jpg',bytes:10,ptsTicks:String(n)})),{timeBase:[1,10],lastFrameEndTicks:'2'}).frames;info.duration=.2;
+    await h.load(info);await mark(h,0,0);assert(!h.player.transportSnapshot().loop.valid);assert.equal(h.player.snapshot().state,'paused');
+    await assert.rejects(h.player.setPlaybackRate(2));await h.close();
+  }
+  {
+    const h=harness();await h.load(sample('close-edit',audio(.1,.2),10));await mark(h,0,4);await h.settle(h.player.play());
+    const change=h.player.setPlaybackRate(.25);await h.close();assert.equal((await change).status,'superseded');
+    assert.equal(h.player.snapshot().cacheBytes,0);assert(h.contexts[0].sources.every(s=>s.stopped));
+  }
+  console.log('E06 Player: three rates with/without audio, scaled audio offset, inclusive/native bounded looping, silent padding and gaps, single-frame loop, invalid range recovery, change/seek race, reset/restore and release passed; deterministic models, not real sound.');
+}
+main().catch(e=>{console.error(e.stack);process.exitCode=1;});

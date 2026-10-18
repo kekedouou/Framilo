@@ -116,6 +116,7 @@
       this.decodeDelayMs = 0; this.verifyMarkers = true; this.rafCount = 0; this.drawCount = 0; this.lastDrawAt = null; this.maxDrawGapMs = 0;
       this.lastClockEmit = -Infinity; this.waitingSince = null; this.ended = false; this.lastIssue = null; this.lastErrorCode = null;
       this.rafId = null; this.disposed = false; this.disposePromise = null; this._schedule();
+      this.playbackRate = 1; this.loopStart = null; this.loopEnd = null; this.loopEnabled = false;
     }
     _emit(type, values) {
       try { this.emit(Object.assign({ type, at: this.env.now(), epoch: this.epoch }, values || {})); }
@@ -141,12 +142,74 @@
           residentBytes: ledger.kinds && ledger.kinds['compressed-jpeg'] || 0, limitBytes: this.experimentMode === 'compressed-ram' ? this.compressedLimit : 0 },
         forwardPredecode: this.forwardPredecode, forwardStatus: this.forwardStatus, forwardIssue: this.forwardIssue,
         loadTimings: this.loadTimings ? { ...this.loadTimings } : null,
+        transport: this.transportSnapshot(),
         memoryScope: 'managed decoded RGBA, audio, compressed/copy buffers and in-flight reservations; browser/GPU/internal decoder copies excluded' };
     }
     setForwardPredecode(enabled) {
       if (typeof enabled !== 'boolean') throw new Error('提前解压设置必须为开或关。');
       this.forwardPredecode = enabled; ++this.forwardToken; this.preparePlan = null;
       this.forwardStatus = enabled ? 'idle' : 'disabled'; this.forwardIssue = null; this._change();
+    }
+    _loopRange() {
+      if (!this.info || this.loopStart === null || this.loopEnd === null || this.loopStart > this.loopEnd) return null;
+      const start = this.info.frames[this.loopStart].time;
+      const end = this.loopEnd === this.info.frames.length - 1 ? this.info.duration : this.info.frames[this.loopEnd].end;
+      return end > start ? { start, end, first: this.loopStart, last: this.loopEnd } : null;
+    }
+    transportSnapshot() {
+      const range = this._loopRange(), frames = this.info && this.info.frames;
+      return { rate: this.playbackRate, loop: { enabled: this.loopEnabled, valid: !!range,
+        startId: frames && this.loopStart !== null ? frames[this.loopStart].id : null,
+        endId: frames && this.loopEnd !== null ? frames[this.loopEnd].id : null,
+        startOrdinal: this.loopStart, endOrdinal: this.loopEnd,
+        startTime: frames && this.loopStart !== null ? frames[this.loopStart].time : null,
+        endTime: frames && this.loopEnd !== null ? frames[this.loopEnd].time : null } };
+    }
+    async _editTransport(edit, resume = false) {
+      if (!this._canSeek()) throw new Error('视频尚未就绪。');
+      const epoch = this.epoch, playing = this.state === 'playing', paused = this.pause(), token = this.playToken;
+      await paused;
+      if (!this._playValid(epoch, token) || this.state !== 'paused') return { status: 'superseded' };
+      const result = await edit();
+      if (!this._playValid(epoch, token)) return { status: 'superseded' };
+      this._change();
+      if (!this._playValid(epoch, token)) return { status: 'superseded' };
+      return playing && resume ? this.play() : result || { status: 'applied' };
+    }
+    setPlaybackRate(rate) {
+      if (![.25, .5, 1].includes(rate)) return Promise.reject(new Error('播放速度请选择0.25×、0.5×或1×。'));
+      return this._editTransport(() => { this.playbackRate = rate; }, true);
+    }
+    setLoopPoint(point) {
+      if (!['start', 'end'].includes(point)) return Promise.reject(new Error('未知循环端点。'));
+      return this._editTransport(() => {
+        const at = this.currentIndex;
+        if (point === 'start') { this.loopStart = at; if (this.loopEnd !== null && this.loopEnd < at) this.loopEnd = null; }
+        else { this.loopEnd = at; if (this.loopStart !== null && this.loopStart > at) this.loopStart = null; }
+        this.loopEnabled = false;
+      });
+    }
+    clearLoop() { return this._editTransport(() => { this.loopStart = this.loopEnd = null; this.loopEnabled = false; }, true); }
+    setLoopEnabled(enabled) {
+      if (typeof enabled !== 'boolean') return Promise.reject(new Error('循环状态必须为开或关。'));
+      return this._editTransport(async () => {
+        const range = this._loopRange();
+        if (enabled && !range) return { status: 'ignored', reason: 'invalid-loop' };
+        this.loopEnabled = enabled;
+        if (enabled && (this.currentIndex < range.first || this.currentIndex > range.last))
+          await this._request(range.start, { index: range.first, kind: 'loop-enable', final: true, inputAt: this.env.now() });
+      }, true);
+    }
+    restoreTransport(value) {
+      if (!value || ![.25, .5, 1].includes(value.rate) || !value.loop || typeof value.loop.enabled !== 'boolean')
+        return Promise.reject(new Error('播放控制恢复数据无效。'));
+      return this._editTransport(() => {
+        const ordinal = id => id === null ? null : this.info.frames.findIndex(frame => frame.id === id);
+        const start = ordinal(value.loop.startId), end = ordinal(value.loop.endId);
+        if (start === -1 || end === -1) throw new Error('原循环范围与当前源帧不匹配。');
+        this.playbackRate = value.rate; this.loopStart = start; this.loopEnd = end;
+        this.loopEnabled = value.loop.enabled && !!this._loopRange();
+      });
     }
     setDecodeDelay(ms) {
       if (!Number.isFinite(ms) || ms < 0 || ms > 2000) throw new Error('解码延迟须在0～2000ms。');
@@ -184,6 +247,7 @@
       ++this.forwardToken; this.preparePlan = null; this.forwardStatus = this.forwardPredecode ? 'waiting' : 'disabled';
       this.forwardIssue = null; this.warmPlan = null; this.warmCursor = 0; this.loadTimings = null;
       this.currentIndex = null; this.time = 0; this.targetTime = 0; this.lastIssue = null; this.lastErrorCode = null; this.prefetchFailed.clear(); this.ended = false;
+      this.playbackRate = 1; this.loopStart = this.loopEnd = null; this.loopEnabled = false;
       this._change('loading');
       const loadStartedAt = this.env.now();
       const operation = Promise.resolve().then(async () => {
@@ -310,28 +374,55 @@
       try {
         await resumed; if (!this._playValid(epoch, token)) return { status: 'superseded' };
         let ordinal = this.currentIndex === null ? 0 : this.currentIndex;
-        if (this.ended || this.time >= this.info.duration) {
-          const result = await this._request(0, { kind: 'restart', final: true, index: 0, inputAt: this.env.now() });
+        const loop = this.loopEnabled ? this._loopRange() : null;
+        if (this.ended || this.time >= this.info.duration || loop && (ordinal < loop.first || ordinal > loop.last)) {
+          const first = loop ? loop.first : 0;
+          const result = await this._request(this.info.frames[first].time, { kind: 'restart', final: true, index: first, inputAt: this.env.now() });
           if (!['drawn', 'reused'].includes(result.status) || !this._playValid(epoch, token)) return { status: 'superseded' };
-          ordinal = 0; this._change('seeking');
+          ordinal = first; this._change('seeking');
         }
-        for (let offset = 0; offset < 4 && ordinal + offset < this.info.frames.length; offset++) {
-          await this._prime(ordinal + offset, epoch, token); if (!this._playValid(epoch, token)) return { status: 'superseded' };
+        for (let offset = 0; offset < Math.min(4, loop ? loop.last - loop.first + 1 : this.info.frames.length - ordinal); offset++) {
+          const next = loop ? loop.first + (ordinal - loop.first + offset) % (loop.last - loop.first + 1) : ordinal + offset;
+          await this._prime(next, epoch, token); if (!this._playValid(epoch, token)) return { status: 'superseded' };
         }
         const media = this.info.frames[ordinal].time, when = context ? context.currentTime + 0.02 : null;
-        this.anchor = { media, context: when, perf: this.env.now() + 20 }; this.waitingSince = null;
+        this.anchor = { media, context: when, perf: this.env.now() + 20, rate: this.playbackRate, loop }; this.waitingSince = null;
         if (context && this.audioBuffer) {
-          const plan = this.index.audioStartPlan(media, this.info.audio.start, this.audioBuffer.duration, when);
-          if (plan) {
-            const source = context.createBufferSource(), gain = context.createGain(); source.buffer = this.audioBuffer;
-            source.connect(gain); gain.connect(context.destination); gain.gain.setValueAtTime(1, context.currentTime);
-            const graph = { source, gain, token }; this.graph = graph;
-            source.onended = () => {
-              if (this.graph !== graph || !this._playValid(epoch, token)) return;
-              this._emit('clock', { epoch, phase: 'audio-ended-video-clock-continues', mediaTime: this._clockTime() });
-            };
-            source.start(plan.when, plan.offset);
-          }
+          let buffer = this.audioBuffer, loopBudget = null, plan;
+          try {
+            if (loop) {
+              const audioStart = this.info.audio.start, audioEnd = audioStart + buffer.duration;
+              const from = Math.max(loop.start, audioStart), to = Math.min(loop.end, audioEnd);
+              if (to > from) {
+                let offsetOrigin = audioStart;
+                if (loop.start < audioStart || loop.end > audioEnd) {
+                  const sr = buffer.sampleRate, channels = buffer.numberOfChannels, length = Math.ceil((loop.end - loop.start) * sr), bytes = length * channels * 4;
+                  loopBudget = this.budget.reserve(bytes * 2, 'loop-audio-loading', () => this._evict());
+                  const copied = context.createBuffer(channels, length, sr);
+                  const input = Math.max(0, Math.round((from - audioStart) * sr)), output = Math.max(0, Math.round((from - loop.start) * sr));
+                  const count = Math.min(length - output, buffer.length - input, Math.round((to - from) * sr));
+                  for (let channel = 0; channel < channels; channel++) copied.copyToChannel(buffer.getChannelData(channel).subarray(input, input + count), channel, output);
+                  buffer = copied; offsetOrigin = loop.start; this.budget.shrink(loopBudget, bytes, 'loop-audio');
+                }
+                plan = { when, offset: media - offsetOrigin, loopStart: loop.start - offsetOrigin, loopEnd: loop.end - offsetOrigin };
+              }
+            } else {
+              plan = this.index.audioStartPlan(media, this.info.audio.start, buffer.duration, when);
+              if (plan) plan.when = when + (plan.when - when) / this.playbackRate;
+            }
+            if (plan) {
+              const source = context.createBufferSource(), gain = context.createGain(); source.buffer = buffer;
+              source.playbackRate.value = this.playbackRate;
+              if (loop) { source.loop = true; source.loopStart = plan.loopStart; source.loopEnd = plan.loopEnd; }
+              const graph = { source, gain, token, loopBudget }; this.graph = graph; loopBudget = null;
+              source.connect(gain); gain.connect(context.destination); gain.gain.setValueAtTime(1, context.currentTime);
+              source.onended = () => {
+                if (this.graph !== graph || !this._playValid(epoch, token)) return;
+                this._emit('clock', { epoch, phase: 'audio-ended-video-clock-continues', mediaTime: this._clockTime() });
+              };
+              source.start(plan.when, plan.offset);
+            }
+          } finally { this.budget.release(loopBudget); }
         }
         const audioStart = this.info.audio ? this.info.audio.start : null;
         this._change('playing');
@@ -360,7 +451,8 @@
         this.clockMethod = estimated ? 'getOutputTimestamp-estimate' : 'AudioContext.currentTime-fallback-unmeasured-output-latency';
         elapsed = output - this.anchor.context;
       } else { elapsed = (this.env.now() - this.anchor.perf) / 1000; this.clockMethod = 'performance-monotonic'; }
-      return Math.max(this.anchor.media, Math.min(this.info.duration, this.anchor.media + elapsed));
+      const raw = this.anchor.media + Math.max(0, elapsed) * this.anchor.rate, loop = this.anchor.loop;
+      return loop ? raw < loop.end ? raw : loop.start + (raw - loop.end) % (loop.end - loop.start) : Math.min(this.info.duration, raw);
     }
     _halt(capture) {
       const media = capture && this.state === 'playing' ? this._clockTime() : this.time;
@@ -370,6 +462,7 @@
         try { graph.gain.gain.setValueAtTime(0, this.audioContext.currentTime); } catch (_) { /* closed output */ }
         try { graph.source.stop(); } catch (_) { /* already ended */ }
         try { graph.source.disconnect(); graph.gain.disconnect(); } catch (_) { /* already detached */ }
+        this.budget.release(graph.loopBudget);
       }
       this.anchor = null; this.waitingSince = null; return media;
     }
@@ -389,6 +482,7 @@
       const center = this.target ? this.target.index : this.currentIndex;
       for (const entry of this.cache.values()) {
         if (entry.index === this.currentIndex || (this.target && entry.index === this.target.index)) continue;
+        if (this.state === 'seeking' && this.loopEnabled && entry.index === this.loopStart) continue;
         const distance = this.forwardPredecode && this.info && center !== null ? Math.abs(this.info.frames[entry.index].time - this.info.frames[center].time) : 0;
         if (!victim || distance > farthest || distance === farthest && entry.usedAt < victim.usedAt) { victim = entry; farthest = distance; }
       }
@@ -404,10 +498,12 @@
     }
     _evictOutsideWindow(plan) {
       let victim = null, farthest = -1;
+      const loop = this.loopEnabled ? this._loopRange() : null;
       for (const entry of this.cache.values()) {
         if (entry.index >= plan.start && entry.index <= plan.end || entry.index === this.currentIndex || this.target && entry.index === this.target.index) continue;
         const delta = this.info.frames[entry.index].time - this.info.frames[plan.center].time;
-        if (this.state === 'playing' && delta > 0 && delta <= .3) continue;
+        const ahead = loop && entry.index < plan.center ? delta + loop.end - loop.start : delta;
+        if (this.state === 'playing' && ahead > 0 && ahead <= .3 * this.playbackRate) continue;
         if (Math.abs(delta) > farthest) { victim = entry; farthest = Math.abs(delta); }
       }
       return victim ? this._dropDecoded(victim) : false;
@@ -765,9 +861,11 @@
       const offsets = playing ? Array.from({ length: 12 }, (_, i) => i + 1) : [direction, -direction, direction * 2, -direction * 2, direction * 3, -direction * 3];
       for (const offset of offsets) {
         if (base === null || this.tasks.size >= maximumTasks) break;
-        const ordinal = base + offset;
+        const loop = playing && this.loopEnabled ? this._loopRange() : null;
+        const ordinal = loop ? loop.first + (base - loop.first + offset) % (loop.last - loop.first + 1) : base + offset;
         if (ordinal < 0 || ordinal >= this.info.frames.length) continue;
-        if (playing && this.info.frames[ordinal].time - this.info.frames[base].time > 0.3) break;
+        const delta = this.info.frames[ordinal].time - this.info.frames[base].time + (loop && ordinal < base ? loop.end - loop.start : 0);
+        if (playing && delta > 0.3 * this.playbackRate) break;
         if (!this.cache.has(ordinal) && !this.tasks.has(this.epoch + ':' + ordinal) && !this.prefetchFailed.has(ordinal)) this._decode(ordinal, playing ? 'play-ahead' : 'neighbour', null);
       }
       this._startBackground();
@@ -787,11 +885,12 @@
       this.inRaf = true;
       try {
         if (this.info && this.state === 'playing') {
-          const epoch = this.epoch, media = this._clockTime(), ordinal = this.index.frameAt(this.info.frames, media);
+          const epoch = this.epoch, media = this._clockTime(), range = this.loopEnabled ? this._loopRange() : null;
+          const raw = this.index.frameAt(this.info.frames, media), ordinal = range ? Math.max(range.first, Math.min(range.last, raw)) : raw;
           if (media >= this.info.duration) {
             this._halt(false); this._request(this.info.duration, { kind: 'ended', final: true, inputAt: this.env.now() });
           } else if (ordinal !== this.currentIndex && (!this.target || this.target.index !== ordinal || !this.target.resolve)) {
-            this._request(media, { kind: 'play', inputAt: this.env.now() });
+            this._request(media, { kind: 'play', index: ordinal, inputAt: this.env.now() });
           }
           if (this._valid(epoch) && this.state === 'playing') {
             // Count missing supply only after a *new source frame* becomes due. A low-fps hold is not an underrun.

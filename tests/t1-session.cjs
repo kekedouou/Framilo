@@ -46,7 +46,9 @@ function harness(settings = {}) {
         this.change({ state: 'paused', time: this.info.frames[index].time, frameId: this.info.frames[index].id, frameOrdinal: index });
         return { status: 'drawn', frameId: index };
       },
-      async step(delta) { return this.seek(Math.max(0, Math.min(2, this.value.frameOrdinal + delta)), { final: true }); }
+      async step(delta) { return this.seek(Math.max(0, Math.min(2, this.value.frameOrdinal + delta)), { final: true }); },
+      async restoreTransport(value) { if (settings.restoreTransport) await settings.restoreTransport(this,value,h);
+        h.events.push('restore-transport'); this.change({transport:value}); return {status:'applied'}; }
     };
     h.players.push(player); return player;
   }
@@ -354,6 +356,30 @@ async function main() {
     h.selection=selected('B');await h.session.loadSelected();assert.equal(h.session.cacheCoverageSnapshot(),null);
     h.players[1].cacheCoverageSnapshot=()=>({epoch:1,revision:1,ranges:[{start:0,end:2}]});
     assert(h.session.cacheCoverageSnapshot().sessionEpoch>first.sessionEpoch);await h.session.close();assert.equal(h.session.cacheCoverageSnapshot(),null);
+  });
+  await test('E06 routes transport controls and rejects obsolete operation completion after close',async()=>{
+    const h=harness();await h.session.loadSelected();const p=h.players[0],calls=[];
+    for(const method of ['setPlaybackRate','setLoopPoint','setLoopEnabled','clearLoop'])p[method]=async value=>{calls.push([method,value]);return {status:'applied'};};
+    await h.session.setPlaybackRate(.5);await h.session.setLoopPoint('start');await h.session.setLoopEnabled(true);await h.session.clearLoop();
+    assert.deepEqual(calls,[['setPlaybackRate',.5],['setLoopPoint','start'],['setLoopEnabled',true],['clearLoop',undefined]]);
+    const gate=deferred();p.setPlaybackRate=async()=>{await gate.promise;p.change({state:'playing'});return {status:'playing'};};
+    const pending=h.session.setPlaybackRate(.25);await h.session.close();const changes=h.changes.length;gate.resolve();
+    assert.equal((await pending).status,'superseded');assert.equal(h.changes.length,changes);assert.equal(h.session.snapshot().state,'closed');
+  });
+  await test('E06 same-source settings restore transport paused; selecting a new video never inherits it',async()=>{
+    let q='720p';const prefs={snapshot:()=>({ramMiB:1024}),quality:()=>q,forwardPredecode:()=>true,preview(){},save(_m,next){q=next;}};
+    const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>({...m.makeInfo(v),preview:{quality:o.previewQuality}})});
+    await h.session.loadSelected();await h.session.seek(2);const transport={rate:.5,loop:{startId:0,endId:2,enabled:true}};h.players[0].change({transport});
+    await h.session.setPlaybackSettings({ramMiB:2048,previewQuality:'1080p'});assert.equal(h.calls,1);assert.equal(h.session.snapshot().state,'paused');
+    assert.deepEqual(h.session.snapshot().playback.transport,transport);assert.equal(h.session.snapshot().playback.frameId,2);
+    h.selection=selected('B');await h.session.loadSelected();assert.equal(h.session.snapshot().playback.transport,undefined);
+    assert.equal(h.events.filter(e=>e==='restore-transport').length,1);await h.session.close();
+  });
+  await test('E06 content hash change never restores the previous range or speed',async()=>{
+    let q='720p';const prefs={snapshot:()=>({ramMiB:1024}),quality:()=>q,preview(){},save(_m,next){q=next;}};
+    const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>{const info=m.makeInfo(v);if(m.prepared.length>1)info.source.sha256='b'.repeat(64);return {...info,preview:{quality:o.previewQuality}};}});
+    await h.session.loadSelected();h.players[0].change({transport:{rate:.25,loop:{startId:0,endId:2,enabled:true}}});
+    assert.equal((await h.session.setPlaybackSettings({ramMiB:2048,previewQuality:'1080p'})).status,'ready');assert(!h.events.includes('restore-transport'));await h.session.close();
   });
   console.log('T1 session memory tests passed: ' + tests + '. Not real Eagle, media, Canvas or performance verification.');
 }

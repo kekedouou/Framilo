@@ -1,5 +1,13 @@
 # 技术架构：阶段 3B 已批准
 
+## E-06播放控制扩展（2026-10-18）
+
+同一Player管理源帧范围、播放倍率和音画时钟；UI只调用Session，Session保护素材epoch/标注编辑，应用RAM或画质后按同源SHA恢复传输控制。循环按源帧end边界映射时钟，前向预读跨范围末端；原欠载停声、两图像槽和周围缓存预算不变。
+
+沿既有Web Audio使用source.playbackRate与原生loop，不引入依赖或每轮重启进程/生成缓存。音频覆盖范围完整时复用原AudioBuffer；循环包含原音频前后静音区时才建立单个有界补静音缓冲，计入原Budget，在暂停/改速/改范围/换片/关闭时释放；绝不每次循环新增缓冲。视频与音频同倍率，偏移等待按倍率换算，不做保音调。循环后的时间映射仍以音频时钟为准，无音频用原单调时钟。
+
+API依据：[Web Audio 1.0](https://www.w3.org/TR/webaudio-1.0/)、[AudioBuffer](https://developer.mozilla.org/en-US/docs/Web/API/AudioBuffer)、[原生循环](https://developer.mozilla.org/en-US/docs/Web/API/AudioBufferSourceNode/loop)。规范支持不等于当前Eagle真实音频验收，最后集中体验。
+
 ## E-04/E-05中心窗口调度修正（2026-10-18）
 
 同一Player按实际源时间规划最近的连续帧窗口，保留原固定资源/压缩池/两个前台工作余量。后台仍最多一个任务，空闲时每次有限替换窗口外最远位图；当前显示/目标及近期播放供帧受保护。光标变化使旧计划失效，前台不等后台，固定中心不形成替换循环；关闭开关保留按需策略/已有位图。不新增进程、预算、磁盘格式或媒体处理。

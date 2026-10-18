@@ -47,7 +47,7 @@ function harness() {
         },
         createGain() { return { gain: { setValueAtTime() {} }, connect() {}, disconnect() {} }; },
         createBufferSource() {
-          const source = { stopped: false, connect() {}, disconnect() {}, start(when, offset) { this.startPlan = { when, offset }; }, stop() { this.stopped = true; } };
+          const source = { stopped: false, playbackRate: { value: 1 }, connect() {}, disconnect() {}, start(when, offset) { this.startPlan = { when, offset }; }, stop() { this.stopped = true; } };
           this.sources.push(source); return source;
         } };
       contexts.push(context); return context;
@@ -117,6 +117,18 @@ async function run() {
     assert.strictEqual(h.session.snapshot().source.id, 'B'); assert.strictEqual(h.el('sourceName').textContent, '中文 B.mp4');
     assert.strictEqual(h.session.snapshot().state, 'paused'); assert.strictEqual(h.el('currentTime').textContent, '0:00.000');
     h.space(); await h.until(() => h.session.snapshot().state === 'playing'); await h.close(); assert.deepStrictEqual(h.released, ['A', 'B']);
+  });
+  await check('E06 actual UI/session/Player: direct speed and loop actions, inclusive wrap, pause and clear',async()=>{
+    const h=harness();await h.settle(h.session.loadSelected());h.el('playbackRate').value='0.5';h.el('playbackRate').fire('change');
+    await h.until(()=>h.session.snapshot().playback.transport.rate===.5);
+    h.el('loopStart').fire('click');await h.until(()=>h.session.snapshot().playback.transport.loop.startOrdinal===0);
+    await h.settle(h.session.seek(.8,{final:true}));h.el('loopEnd').fire('click');await h.until(()=>h.session.snapshot().playback.transport.loop.endOrdinal===8);
+    assert(h.el('loopRange').textContent.includes('第9帧'));h.el('loopEnabled').checked=true;h.el('loopEnabled').fire('change');await h.until(()=>h.session.snapshot().playback.transport.loop.enabled);
+    h.space();await h.until(()=>h.session.snapshot().state==='playing');for(let n=0;n<150;n++)await h.frame();
+    assert(h.drawings.some(d=>d.ordinal===0));assert(h.drawings.some(d=>d.ordinal===8));assert(h.drawings.every(d=>d.ordinal<=8));
+    assert(h.contexts[0].sources[0].loop);assert.equal(h.contexts[0].sources[0].playbackRate.value,.5);
+    h.space();await h.until(()=>h.session.snapshot().state==='paused');h.el('loopClear').fire('click');await h.until(()=>h.session.snapshot().playback.transport.loop.startOrdinal===null);
+    assert.equal(h.el('loopRange').textContent,'未设置范围');await h.close();
   });
   console.log('T1 real-module playback integration: ' + passed.length + ' in-memory checks; no real Eagle/media/performance acceptance.');
   return { passed, count: passed.length };

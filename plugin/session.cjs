@@ -146,6 +146,12 @@ function createSession(options) {
             request.restoreFrameId !== undefined && ready.frameId !== request.restoreFrameId)
           throw issue('MEMORY_POSITION_NOT_READY', '应用设置后未能准确恢复当前源帧。');
       }
+      if (request.transportState && request.transportState.sourceSha256 === info.source.sha256) {
+        if (typeof player.restoreTransport !== 'function') throw issue('TRANSPORT_RESTORE_UNAVAILABLE', '播放器不能恢复片段范围和速度。');
+        await player.restoreTransport(request.transportState.value);
+        if (!current(request)) { await releaseOwner(owned); return { status: 'superseded' }; }
+        ready = player.snapshot();
+      }
       owned.ready = true; playback = { ...ready }; state = 'paused'; progress = null; error = null;
       if (request.restoredWrite) restoreWrite(request.restoredWrite);
       // UI enables ready controls synchronously inside this notification. Count
@@ -173,7 +179,7 @@ function createSession(options) {
     if (!['memory-settings', 'playback-settings'].includes(settings.trigger)) memoryResume = null;
     const startedAt = Number.isFinite(settings.startedAt) ? settings.startedAt : now();
     const request = { epoch: invalidate(), controller: new AbortController(), captured: null, startedAt, trigger: settings.trigger || 'selected-load',
-      restoreTime: settings.restoreTime, restoreFrameId: settings.restoreFrameId,
+      restoreTime: settings.restoreTime, restoreFrameId: settings.restoreFrameId, transportState: settings.transportState,
       previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : undefined };
     if (!current(request)) return Promise.resolve({ status: 'superseded' });
     controller = request.controller;
@@ -215,14 +221,15 @@ function createSession(options) {
     const actual = owner && owner.player ? owner.player.snapshot() : null;
     const time = actual ? actual.time : retainedTime;
     const frameId = actual ? actual.frameId : memoryResume ? memoryResume.frameId : undefined;
+    const transportState = actual && actual.transport && retained ? { sourceSha256: retained.sha256, value: actual.transport } : memoryResume && memoryResume.transportState;
     preferences.save(ramMiB, previewQuality, forwardPredecode);
     if (onlyPredecode && owner && owner.ready) {
       owner.player.setForwardPredecode(forwardPredecode); notify(); return { status: 'applied' };
     }
-    memoryResume = retained ? { id: retained.id, filePath: retained.filePath, time, frameId } : null;
+    memoryResume = retained ? { id: retained.id, filePath: retained.filePath, time, frameId, transportState } : null;
     notify();
     if (closed || token !== epoch) return { status: 'superseded' };
-    return retained ? startLoad({ trigger, restoreTime: time, restoreFrameId: frameId }, retained) : { status: 'applied' };
+    return retained ? startLoad({ trigger, restoreTime: time, restoreFrameId: frameId, transportState }, retained) : { status: 'applied' };
   }
   function setMemoryMiB(ramMiB) { return setPlaybackSettings({ ramMiB }, 'memory-settings'); }
   function control(method, args, allowed) {
@@ -373,6 +380,10 @@ function createSession(options) {
     toggle: () => state === 'playing' ? control('pause', [], ['playing']) : control('play', [], ['paused']),
     seek: (time, settings = {}) => control('seek', [time, { ...settings, inputAt: settings.inputAt === undefined ? now() : settings.inputAt }], ['paused', 'playing', 'seeking']),
     step: delta => control('step', [delta], ['paused', 'playing', 'seeking']),
+    setPlaybackRate: rate => control('setPlaybackRate', [rate], ['paused', 'playing']),
+    setLoopPoint: point => control('setLoopPoint', [point], ['paused', 'playing']),
+    setLoopEnabled: enabled => control('setLoopEnabled', [enabled], ['paused', 'playing']),
+    clearLoop: () => control('clearLoop', [], ['paused', 'playing']),
     beginComment, setCommentText, saveComment, cancelComment, checkComment,
     seekComment: id => {
       const item = comments.items.find(value => value.id === id);

@@ -42,7 +42,14 @@ function harness(options = {}) {
     },
     createAudioContext: () => {
       const createdAt = now;
-      const output = { state: 'suspended', sampleRate: 48000, destination: {}, sources: [], gains: [],
+      const makeBuffer = (channels, length, sampleRate) => {
+        const data = new Map();
+        const result = { length, numberOfChannels: channels, sampleRate, duration: length / sampleRate,
+          getChannelData(channel) { if (!data.has(channel)) data.set(channel, new Float32Array(length).fill((channel + 1) / 10)); return data.get(channel); },
+          copyToChannel(values, channel, offset = 0) { this.getChannelData(channel).set(values, offset); } };
+        return result;
+      };
+      const output = { state: 'suspended', sampleRate: 48000, destination: {}, sources: [], gains: [], buffers: [],
         get currentTime() { return (now - createdAt) / 1000; },
         getOutputTimestamp() {
           if (options.outputTimestampFailure) throw new Error('fake unsupported output timestamp');
@@ -54,7 +61,7 @@ function harness(options = {}) {
           const decode = (options.audioDecodeGate ? options.audioDecodeGate.promise : Promise.resolve()).then(() => {
             if (options.audioFailure) throw new Error('fake audio decode failure');
             const data = Buffer.from(array), duration = data.readDoubleLE(0), channels = data[8];
-            return { length: Math.round(duration * 48000), numberOfChannels: channels, sampleRate: 48000, duration };
+            return makeBuffer(channels, Math.round(duration * 48000), 48000);
           });
           decode.then(resolve, reject); return decode;
         },
@@ -62,8 +69,13 @@ function harness(options = {}) {
           const gain = { values: [], gain: { setValueAtTime(value, at) { gain.values.push({ value, at }); } }, connect() {}, disconnect() {} };
           output.gains.push(gain); return gain;
         },
+        createBuffer(channels, length, sampleRate) {
+          const buffer = makeBuffer(channels, length, sampleRate);
+          for(let c=0;c<channels;c++)buffer.getChannelData(c).fill(0);
+          output.buffers.push(buffer); return buffer;
+        },
         createBufferSource() {
-          const source = { stopped: false, connect() {}, disconnect() {}, start(when, offset) { source.startPlan = { when, offset }; }, stop() { source.stopped = true; } };
+          const source = { stopped: false, playbackRate: { value: 1 }, connect() {}, disconnect() {}, start(when, offset) { source.startPlan = { when, offset }; }, stop() { source.stopped = true; } };
           output.sources.push(source); return source;
         }
       };

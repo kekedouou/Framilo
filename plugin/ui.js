@@ -37,7 +37,7 @@
     const ids = ['picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
       'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentText', 'commentSave', 'commentCancel',
       'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality',
-      'forwardPredecode', 'decodedCache', 'cacheStatus'];
+      'forwardPredecode', 'decodedCache', 'cacheStatus', 'playbackRate', 'loopStart', 'loopEnd', 'loopEnabled', 'loopClear', 'loopRange'];
     const el = Object.fromEntries(ids.map(id => [id, doc.getElementById(id)]));
     if (ids.some(id => !el[id])) throw new Error('播放器界面缺少必要元素。');
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
@@ -138,6 +138,34 @@
     const invoke = fn => {
       try { Promise.resolve(fn()).catch(() => {}); } catch (_) { /* session publishes operation errors */ }
     };
+    let transportBusy = false;
+    async function transportAction(method, value) {
+      if (!session || transportBusy || !interactive() || !['paused', 'playing'].includes(state.state) || gesture) return;
+      const active = session; transportBusy = true; updateTransport();
+      try { await active[method](value); }
+      catch (_) { /* Session publishes controlled failures. */ }
+      finally { transportBusy = false; if (session === active) updateTransport(); }
+    }
+    function updateTransport() {
+      const transport = state.playback && state.playback.transport, loop = transport && transport.loop;
+      const disabled = transportBusy || !interactive() || !['paused', 'playing'].includes(state.state) || !!gesture;
+      for (const key of ['playbackRate', 'loopStart', 'loopEnd']) set(el[key], 'disabled', disabled);
+      set(el.loopEnabled, 'disabled', disabled || !loop || !loop.valid);
+      set(el.loopClear, 'disabled', disabled || !loop || loop.startOrdinal === null && loop.endOrdinal === null);
+      if (!transportBusy) {
+        set(el.playbackRate, 'value', String(transport ? transport.rate : 1));
+        set(el.loopEnabled, 'checked', !!(loop && loop.enabled));
+      }
+      const point = (time, ordinal) => Number.isFinite(time) && Number.isSafeInteger(ordinal) ? formatTime(time) + '（第' + (ordinal + 1) + '帧）' : '未设';
+      set(el.loopRange, 'textContent', !loop || loop.startOrdinal === null && loop.endOrdinal === null ? '未设置范围' :
+        point(loop.startTime, loop.startOrdinal) + ' → ' + point(loop.endTime, loop.endOrdinal) +
+        (loop.valid ? ' · 含结束帧' : loop.startOrdinal !== null && loop.endOrdinal !== null ? ' · 请调整为有效范围' : ''));
+    }
+    on(el.playbackRate, 'change', () => { if (!el.playbackRate.disabled) transportAction('setPlaybackRate', Number(el.playbackRate.value)); });
+    on(el.loopStart, 'click', () => { if (!el.loopStart.disabled) transportAction('setLoopPoint', 'start'); });
+    on(el.loopEnd, 'click', () => { if (!el.loopEnd.disabled) transportAction('setLoopPoint', 'end'); });
+    on(el.loopEnabled, 'change', () => { if (!el.loopEnabled.disabled) transportAction('setLoopEnabled', !!el.loopEnabled.checked); });
+    on(el.loopClear, 'click', () => { if (!el.loopClear.disabled) transportAction('clearLoop'); });
     function thumb(time) {
       const ratio = state.duration > 0 ? clamp(time / state.duration) : 0;
       set(el.thumb.style, 'left', ratio * 100 + '%'); set(el.progress.style, 'width', ratio * 100 + '%');
@@ -159,6 +187,7 @@
     function clearGesture(hideHint = true) {
       const old = gesture; gesture = null; if (hideHint) clearHint();
       if (old) { try { if (el.timeline.hasPointerCapture(old.id)) el.timeline.releasePointerCapture(old.id); } catch (_) {} }
+      updateTransport();
     }
     function requestAt(event, final, inputAt = now()) {
       const time = event && gesture ? pointerTime(event.clientX, gesture.rect, state.duration) : lastRequestedTime;
@@ -292,6 +321,7 @@
       if (hintEpoch !== null) hint(time); // Includes final release settlement; only actual submitted frame time.
       updateComments();
       updateMemorySettings();
+      updateTransport();
       if (coverageEpoch !== state.epoch || !['paused', 'playing', 'seeking'].includes(state.state)) clearCoverage();
       coverageEpoch = state.epoch;
     }
