@@ -245,9 +245,13 @@ function ffmpegArgs(source, hasAudio, codecName, video = {}, preview = null) {
   // Bound H.264/HEVC input decoding separately from JPEG output encoding. One video
   // job remains active; resolution/q3/audio/RAM remain unchanged. Color revision
   // separately invalidates old pixels without changing ownership record layout.
+  // E04 bounded 1080p trials kept all 30 JPEG bytes/PTS identical with more
+  // filter workers. Keep 720p/other codecs on their previously verified count.
+  const filterThreads = preview && preview.quality === '1080p' && ['h264', 'vp9'].includes(codecName)
+    ? codecName === 'h264' ? '4' : '2' : codecName === 'h264' ? '2' : codecName === 'hevc' ? '4' : '1';
   const args = ['-hide_banner', '-loglevel', 'info', '-nostdin', '-copyts', '-threads', ['hevc', 'h264'].includes(codecName) ? '8' : '2', '-i', source,
     '-map', '0:v:0', '-an', '-sn', '-dn', '-vf', 'showinfo@v=checksum=0,' + fittedRgb + ',scale=in_range=pc:out_range=pc:out_color_matrix=bt601:flags=bilinear+accurate_rnd+full_chroma_int,format=yuvj420p',
-    '-filter_threads', codecName === 'h264' ? '2' : codecName === 'hevc' ? '4' : '1', '-fps_mode', 'passthrough', '-c:v', 'mjpeg', '-threads', '2', '-q:v', '3', '-f', 'image2pipe', 'pipe:1'];
+    '-filter_threads', filterThreads, '-fps_mode', 'passthrough', '-c:v', 'mjpeg', '-threads', '2', '-q:v', '3', '-f', 'image2pipe', 'pipe:1'];
   if (hasAudio) args.push('-map', '0:a:0', '-vn', '-sn', '-dn', '-af', 'aresample=48000,ashowinfo@a', '-c:a', 'pcm_f32le', '-f', 'wav', 'pipe:3');
   return args;
 }

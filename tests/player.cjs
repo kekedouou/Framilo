@@ -72,7 +72,7 @@ function harness(options = {}) {
   };
   player = new Player({ canvas, env, frameIndex, ramBytes: options.ramBytes === undefined ? 512 * 1024 ** 2 : options.ramBytes, budget: options.budget,
     playbackGuardMs: options.playbackGuardMs, experimentMode: options.experimentMode,
-    compressedRamBytes: options.compressedRamBytes, observeCanvas: options.observeCanvas,
+    compressedRamBytes: options.compressedRamBytes, forwardPredecode: options.forwardPredecode, observeCanvas: options.observeCanvas,
     readFrameBatch: options.readFrameBatch,
     emit: event => { events.push(event); if (options.onEvent) options.onEvent(event, player); },
     onChange: state => changes.push(state), readAsset: async (info, file) => {
@@ -705,5 +705,5 @@ async function run() {
     limits: ['No real JPEG/audio decoding, Eagle, FFmpeg, filesystem cache or physical display measured.',
       'These checks do not establish P-01/P-02/P-03 acceptance or physical AV synchronization.'] };
 }
-module.exports = { run };
+module.exports = { run, harness, sample, audio, flush, deferred };
 if (require.main === module) run().then(result => console.log(JSON.stringify(result, null, 2))).catch(error => { console.error(error.stack); process.exitCode = 1; });

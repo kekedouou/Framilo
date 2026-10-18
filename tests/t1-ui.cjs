@@ -4,8 +4,9 @@ const { createUI, pointerTime, formatTime, spaceAllowed } = require('../plugin/u
 let checks = 0;
 function test(name, fn) { fn(); checks++; console.log('ok ' + name); }
 function target(tagName = 'div', parent = null) {
-  const handlers = new Map();
-  return { style: {}, attributes: {}, tagName: tagName.toLowerCase(), parentElement: parent, disabled: false, hidden: false, textContent: '', offsetWidth: 80,
+  const handlers = new Map(), paints = [];
+  const context = { clearRect(...args) { paints.push(['clear',...args]); }, fillRect(...args) { paints.push(['fill',...args]); } };
+  return { paints, getContext: () => context, style: {}, attributes: {}, tagName: tagName.toLowerCase(), parentElement: parent, disabled: false, hidden: false, textContent: '', offsetWidth: 80,
     addEventListener(type, fn) { if (!handlers.has(type)) handlers.set(type, new Set()); handlers.get(type).add(fn); },
     removeEventListener(type, fn) { if (handlers.has(type)) handlers.get(type).delete(fn); },
     fire(type, values = {}) { const e = { pointerId: 1, button: 0, buttons: 1, clientX: 100, preventDefault() { this.prevented = true; }, ...values }; for (const fn of handlers.get(type) || []) fn(e); return e; },
@@ -210,14 +211,14 @@ test('Identical observations do not rewrite static material text or ARIA attribu
 });
 test('Video RAM is current, distinct from process memory, and its timer ends on destroy', () => {
   const h = harness(); let tick, cleared = 0, budget = null;
-  h.win.setInterval = (fn, ms) => { assert.equal(ms, 500); tick = fn; return 17; };
-  h.win.clearInterval = id => { assert.equal(id, 17); cleared++; };
+  h.win.setInterval = (fn, ms) => { assert([500,250].includes(ms)); if(ms===500)tick=fn; return ms; };
+  h.win.clearInterval = id => { assert([500,250].includes(id)); cleared++; };
   h.ui.bindSession({ memorySnapshot: () => budget });
   assert.equal(h.el('memoryUsage').textContent, '视频缓存 RAM：—');
   budget = { used: 128.5 * 1048576, limit: 512 * 1048576 }; tick();
   assert.equal(h.el('memoryUsage').textContent, '视频缓存 RAM：128.5 / 512 MiB');
   budget = null; tick(); assert.equal(h.el('memoryUsage').textContent, '视频缓存 RAM：—');
-  h.ui.destroy(); assert.equal(cleared, 1); tick(); assert.equal(h.el('memoryUsage').textContent, '视频缓存 RAM：—');
+  h.ui.destroy(); assert.equal(cleared, 2); tick(); assert.equal(h.el('memoryUsage').textContent, '视频缓存 RAM：—');
 });
 test('E03 quality selection remains pending until unified apply, label uses actual source size', () => {
   const h=harness(), memory={ramMiB:1024,ramBytes:1024**3};let applied=null;
@@ -227,7 +228,32 @@ test('E03 quality selection remains pending until unified apply, label uses actu
     sourceWidth:1920,sourceHeight:1080,sampleAspectRatio:'1:1',originalResolution:false}});
   assert.equal(h.el('qualitySelect').options[1].textContent,'1080p（原始分辨率）');
   h.el('qualitySelect').value='1080p';h.el('qualitySelect').fire('change');assert.equal(applied,null);
-  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'1080p'});
+  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'1080p',forwardPredecode:false});
   assert.equal(h.el('qualitySelect').disabled,true);h.ui.destroy();
+});
+test('E05 strip is sampled separately; unchanged residency and frame updates do not repaint or scan',()=>{
+  const h=harness(),timers=new Map();let scans=0,coverage={sessionEpoch:1,epoch:4,revision:1,duration:10,
+    decodedFrames:10,totalFrames:100,ranges:[{start:0,end:1},{start:8,end:10}],enabled:true,phase:'preparing'};
+  h.win.setInterval=(fn,ms)=>{timers.set(ms,fn);return ms;};h.win.clearInterval=id=>timers.delete(id);
+  h.ui.bindSession({cacheCoverageSnapshot(){scans++;return coverage;}});
+  const strip=h.el('decodedCache'),paints=strip.paints.length,initialScans=scans;
+  for(let i=0;i<120;i++)h.ui.update({...h.state,playback:{time:i/60}});
+  assert.equal(scans,initialScans);assert.equal(strip.paints.length,paints);
+  timers.get(250)();assert.equal(strip.paints.length,paints);
+  assert.deepEqual(strip.paints.filter(p=>p[0]==='fill').slice(-2).map(p=>p.map(v=>typeof v==='number'?+v.toFixed(4):v)),
+    [['fill',0,0,20,3],['fill',160,0,40,3]]);
+  coverage={...coverage,enabled:false};timers.get(250)();assert(h.el('cacheStatus').textContent.includes('按需缓存'));assert.equal(strip.paints.length,paints);
+  coverage={...coverage,revision:2,decodedFrames:9,ranges:[{start:8,end:10}]};timers.get(250)();assert(strip.paints.length>paints);
+  h.ui.update({...h.state,epoch:2});assert.equal(h.el('cacheStatus').textContent,'');const cleared=strip.paints.length;
+  timers.get(250)();assert.equal(strip.paints.length,cleared,'Stale source coverage cannot reappear.');
+  h.ui.destroy();assert.equal(timers.size,0);
+});
+test('E04 switch keeps pending edits across frame updates and applies with unified settings',()=>{
+  const h=harness();let applied;
+  h.ui.bindSession({setPlaybackSettings(value){applied=value;return Promise.resolve({status:'applied'});}});
+  const settings={...h.state,memorySettings:{ramMiB:1024,ramBytes:1024**3},previewQuality:'720p',forwardPredecode:true};
+  h.ui.update(settings);assert.equal(h.el('forwardPredecode').checked,true);
+  h.el('forwardPredecode').checked=false;h.ui.update({...settings,playback:{time:3}});assert.equal(h.el('forwardPredecode').checked,false);
+  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:false});h.ui.destroy();
 });
 console.log('T1 UI: ' + checks + ' in-memory checks passed; real layout/input experience not tested.');

@@ -22,6 +22,9 @@ canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
 .controls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .time-readout { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; color: #d0d0d0; display: flex; flex-wrap: wrap; justify-content: flex-end; column-gap: 14px; row-gap: 3px; }
 .frame-readout { color: #aaa; }
+.cache-strip { position: absolute; top: 3px; left: 0; width: 100%; height: 3px; pointer-events: none; }
+.cache-status { font-size: 12px; margin: 4px 0 10px; }
+.predecode-option { display: flex; align-items: center; gap: 5px; margin-top: 10px; }
 .muted { color: #aaa; }
 .sidebar { border-left: 1px solid #3b3b3b; padding: 20px 18px; background: #292929; overflow-y: auto; }
 .sidebar h1 { font-size: 13px; font-weight: 600; margin: 0 0 16px; color: #aaa; }

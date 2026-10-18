@@ -55,7 +55,14 @@ for (const kind of ['link', 'links', 'large', 'foreign', 'broken']) {
 {
   const m=model();m.put(file,JSON.stringify({owner:OWNER,percent:2.5}));const before=Buffer.from(m.files.get(file).data);
   assert.equal(m.create(42551783424).snapshot().ramMiB,1024);assert(m.create().snapshot().legacyConverted);assert(m.files.get(file).data.equals(before));
-  const p=m.create();p.save(1024);assert.deepEqual(JSON.parse(m.files.get(file).data),{owner:OWNER,ramMiB:1024,previewQuality:'720p'});assert(!m.create().snapshot().legacyConverted);
+  const p=m.create();p.save(1024);assert.deepEqual(JSON.parse(m.files.get(file).data),{owner:OWNER,ramMiB:1024,previewQuality:'720p',forwardPredecode:true});assert(!m.create().snapshot().legacyConverted);
+}
+{
+  const m=model();m.put(file,JSON.stringify({owner:OWNER,ramMiB:1024,previewQuality:'1080p'}));
+  const old=Buffer.from(m.files.get(file).data),p=m.create();assert.equal(p.forwardPredecode(),true);assert(m.files.get(file).data.equals(old));
+  p.save(1024,'1080p',false);assert.equal(m.create().forwardPredecode(),false);p.save(2048);assert.equal(m.create().forwardPredecode(),false);
+  assert.throws(()=>p.save(1024,'720p','yes'));m.io.failRename=true;assert.throws(()=>p.save(1024,'720p',true));assert.equal(p.forwardPredecode(),false);
+  assert.equal(m.create().forwardPredecode(),false);m.put(file,JSON.stringify({owner:OWNER,ramMiB:1024,previewQuality:'1080p',forwardPredecode:'yes'}));assert.throws(()=>m.create());
 }
 {
   const m=model(); m.put(file,JSON.stringify({owner:OWNER,ramMiB:2048}));

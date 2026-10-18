@@ -26,6 +26,10 @@ async function main() {
   assert.throws(()=>profile.dimensions(source,'2K'));
   const args=media.ffmpegArgs(source.filePath,false,'h264',source,profile.dimensions(source,'1080p'));
   assert(args[args.indexOf('-vf')+1].includes('scale=1920:1080:')); assert.equal(args[args.indexOf('-q:v')+1],'3');
+  for(const [codec,q,threads] of [['h264','720p','2'],['h264','1080p','4'],['vp9','720p','1'],['vp9','1080p','2'],['hevc','1080p','4']]){
+    const a=media.ffmpegArgs(source.filePath,true,codec,source,profile.dimensions(source,q));assert.equal(a[a.indexOf('-filter_threads')+1],threads);
+    assert(a.includes('pcm_f32le'));assert.equal(a[a.indexOf('-q:v')+1],'3');assert(a.includes('passthrough'));
+  }
   const h=harness(), old=await prepared(h); h.cache.release(old);
   const a=await build(h,'720p'); h.cache.release(a); const b=await build(h,'1080p'); h.cache.release(b);
   assert.notEqual(a.cacheDir,b.cacheDir); assert.notEqual(a.cacheDir,old.cacheDir);

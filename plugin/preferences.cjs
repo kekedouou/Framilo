@@ -13,6 +13,7 @@ function memoryValue(total, ramMiB, persisted = false) {
 }
 function createMemoryPreferences(options) {
   let selectedQuality = '720p';
+  let selectedPredecode = true;
   const io = options.io || fs, root = path.resolve(options.pluginRoot), total = options.totalRamBytes === undefined ? os.totalmem() : options.totalRamBytes;
   const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
   function checkRoot() {
@@ -42,16 +43,19 @@ function createMemoryPreferences(options) {
       return Object.freeze({ ...memoryValue(total, tier, true), legacyConverted: true });
     }
     const keys = Object.keys(value).sort().join(',');
-    if (!['owner,ramMiB', 'owner,previewQuality,ramMiB'].includes(keys)) throw new Error('播放器设置格式无法识别；原件已保留。');
+    if (!['owner,ramMiB', 'owner,previewQuality,ramMiB', 'forwardPredecode,owner,previewQuality,ramMiB'].includes(keys)) throw new Error('播放器设置格式无法识别；原件已保留。');
+    if (value.forwardPredecode !== undefined && typeof value.forwardPredecode !== 'boolean') throw new Error('提前解压设置必须为开或关。');
+    selectedPredecode = value.forwardPredecode === undefined ? true : value.forwardPredecode;
     selectedQuality = quality(value.previewQuality);
     return memoryValue(total, value.ramMiB, true);
   }
   let current = read() || memoryValue(total, DEFAULT_BYTES / 1024 ** 2);
-  return Object.freeze({ snapshot: () => current, quality: () => selectedQuality,
-    preview: ramMiB => memoryValue(total, ramMiB), save(ramMiB, previewQuality = selectedQuality) {
+  return Object.freeze({ snapshot: () => current, quality: () => selectedQuality, forwardPredecode: () => selectedPredecode,
+    preview: ramMiB => memoryValue(total, ramMiB), save(ramMiB, previewQuality = selectedQuality, forwardPredecode = selectedPredecode) {
     quality(previewQuality);
+    if (typeof forwardPredecode !== 'boolean') throw new Error('提前解压设置必须为开或关。');
     const next = memoryValue(total, ramMiB, true); checkRoot(); read(); const before = identity(stat(file));
-    const bytes = Buffer.from(JSON.stringify({ owner: OWNER, ramMiB, previewQuality }, null, 2));
+    const bytes = Buffer.from(JSON.stringify({ owner: OWNER, ramMiB, previewQuality, forwardPredecode }, null, 2));
     let fd = null, owned = null;
     try {
       fd = io.openSync(temp, 'wx'); owned = io.fstatSync(fd);
@@ -60,7 +64,7 @@ function createMemoryPreferences(options) {
       if (identity(stat(file)) !== before || !io.readFileSync(temp).equals(bytes)) throw new Error('内存设置保存期间改变，未覆盖原件。');
       const s = stat(temp);
       if (!s || s.dev !== owned.dev || s.ino !== owned.ino) throw new Error('内存设置临时文件身份改变。');
-      io.renameSync(temp, file); owned = null; current = next; selectedQuality = previewQuality; return current;
+      io.renameSync(temp, file); owned = null; current = next; selectedQuality = previewQuality; selectedPredecode = forwardPredecode; return current;
     } finally {
       if (fd !== null) io.closeSync(fd);
       if (owned) { const s = stat(temp); if (s && s.dev === owned.dev && s.ino === owned.ino) io.unlinkSync(temp); }

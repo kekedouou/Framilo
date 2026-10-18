@@ -32,12 +32,19 @@ function createSession(options) {
       loadMetrics: loadMetrics ? { ...loadMetrics } : null, comments,
       preview: owner && owner.ready && owner.epoch === epoch && owner.info.preview ? owner.info.preview : null,
       previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : '720p',
+      forwardPredecode: !!(options.memoryPreferences && typeof options.memoryPreferences.forwardPredecode === 'function' && options.memoryPreferences.forwardPredecode()),
       memorySettings: options.memoryPreferences ? options.memoryPreferences.snapshot() : null });
   }
   function memorySnapshot() {
     if (closed || !owner || owner.epoch !== epoch || !owner.player) return null;
     const budget = owner.player.snapshot().budget;
     return budget ? { used: budget.used, limit: budget.limit } : null;
+  }
+  function cacheCoverageSnapshot() {
+    if (closed || !owner || !owner.ready || owner.epoch !== epoch || !['paused', 'playing', 'seeking'].includes(state) ||
+        typeof owner.player.cacheCoverageSnapshot !== 'function') return null;
+    const value = owner.player.cacheCoverageSnapshot();
+    return value ? Object.freeze({ ...value, sessionEpoch: epoch }) : null;
   }
   function notify() { try { onChange(snapshot()); } catch (_) { /* UI observation does not own session state. */ } }
   function current(request) { return !closed && request.epoch === epoch && !request.controller.signal.aborted; }
@@ -190,20 +197,28 @@ function createSession(options) {
     const result = await cache.clearOther({ sourceSha256: retained.sha256 });
     return closed || token !== epoch ? { status: 'superseded' } : { status: 'cleared', ...result };
   }
-  async function setPlaybackSettings({ ramMiB, previewQuality } = {}, trigger = 'playback-settings') {
+  async function setPlaybackSettings({ ramMiB, previewQuality, forwardPredecode } = {}, trigger = 'playback-settings') {
     const preferences = options.memoryPreferences;
     if (!preferences) throw issue('MEMORY_SETTINGS_UNAVAILABLE', '当前入口没有内存设置接口。');
     if (previewQuality !== undefined) quality(previewQuality);
+    if (forwardPredecode !== undefined && typeof forwardPredecode !== 'boolean') throw issue('SETTINGS_INVALID', '提前解压设置必须为开或关。');
     preferences.preview(ramMiB);
     if (closed || state === 'preparing' || comments.draft) throw issue('MEMORY_SETTINGS_BUSY', '请等待准备完成，并先保存或取消标注。');
     const token = epoch, retained = source;
+    const onlyPredecode = forwardPredecode !== undefined && preferences.snapshot().ramMiB === ramMiB &&
+      (previewQuality === undefined || typeof preferences.quality === 'function' && previewQuality === preferences.quality());
+    if (onlyPredecode && owner && owner.ready && typeof owner.player.setForwardPredecode !== 'function')
+      throw issue('SETTINGS_UNAVAILABLE', '当前播放器没有提前解压设置接口。');
     if (owner && owner.ready) await control('pause', [], ['paused', 'playing', 'seeking']);
     if (closed || token !== epoch) return { status: 'superseded' };
     const retainedTime = memoryResume && retained && memoryResume.id === retained.id && memoryResume.filePath === retained.filePath ? memoryResume.time : 0;
     const actual = owner && owner.player ? owner.player.snapshot() : null;
     const time = actual ? actual.time : retainedTime;
     const frameId = actual ? actual.frameId : memoryResume ? memoryResume.frameId : undefined;
-    preferences.save(ramMiB, previewQuality);
+    preferences.save(ramMiB, previewQuality, forwardPredecode);
+    if (onlyPredecode && owner && owner.ready) {
+      owner.player.setForwardPredecode(forwardPredecode); notify(); return { status: 'applied' };
+    }
     memoryResume = retained ? { id: retained.id, filePath: retained.filePath, time, frameId } : null;
     notify();
     if (closed || token !== epoch) return { status: 'superseded' };
@@ -364,6 +379,6 @@ function createSession(options) {
       return item && item.time <= duration ? control('seek', [item.time, { kind: 'annotation', final: true, inputAt: now() }], ['paused', 'playing', 'seeking']) : Promise.resolve({ status: 'ignored' });
     },
     annotationHistory: () => Object.freeze(annotationReceipts.slice()), setMemoryMiB, setPlaybackSettings, clearOtherCaches,
-    libraryChanged: () => clear('library-changed'), close: () => clear('closed'), snapshot, memorySnapshot });
+    libraryChanged: () => clear('library-changed'), close: () => clear('closed'), snapshot, memorySnapshot, cacheCoverageSnapshot });
 }
 module.exports = { createSession };

@@ -9,6 +9,19 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const RAM_LIMIT = 1024 * 1024 * 1024;
+  function decodedRanges(frames, ordinals, duration = 0) {
+    const ranges = [];
+    for (const ordinal of [...ordinals].sort((a, b) => a - b)) {
+      const frame = frames[ordinal];
+      if (!frame) continue;
+      const end = ordinal === frames.length - 1 ? Math.max(frame.end, duration) : frame.end;
+      if (!(end > frame.time)) continue;
+      const last = ranges[ranges.length - 1];
+      if (last && frame.time <= last.end) last.end = Math.max(last.end, end);
+      else ranges.push({ start: frame.time, end });
+    }
+    return Object.freeze(ranges.map(range => Object.freeze(range)));
+  }
   class Budget {
     constructor(limit) {
       if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error('RAM预算必须是有效的正整数字节数。');
@@ -78,6 +91,10 @@
       if (!['baseline', 'compressed-ram', 'ready-submit'].includes(this.experimentMode)) throw new Error('未知T0对照模式。');
       this.compressedLimit = options.compressedRamBytes === undefined ? Math.floor(ledgerLimit / 8) : options.compressedRamBytes;
       if (!Number.isSafeInteger(this.compressedLimit) || this.compressedLimit < 0 || this.compressedLimit > Math.floor(ledgerLimit / 8)) throw new Error('压缩图像池不得超过总RAM额度的1/8。');
+      if (options.forwardPredecode !== undefined && typeof options.forwardPredecode !== 'boolean') throw new Error('提前解压设置必须为开或关。');
+      this.forwardPredecode = !!options.forwardPredecode; this.forwardToken = 0; this.forwardCursor = 1;
+      this.forwardStatus = 'idle'; this.forwardIssue = null; this.warmPlan = null; this.warmCursor = 0;
+      this.coverageVersion = 0; this.coverageMemo = null; this.loadTimings = null;
       this.observeCanvas = !!options.observeCanvas;
       this.compressed = new Map(); this.compressedBytes = 0; this.compressedCapacity = 0;
       this.compressedStats = { warmedBytes: 0, warmedFrames: 0, hits: 0, misses: 0, warmMs: 0, admittedFrames: 0, evictions: 0 };
@@ -113,13 +130,29 @@
         playbackGuardMs: this.playbackGuardMs, telemetryIssue: this.telemetryIssue || null,
         experimentMode: this.experimentMode, compressed: { ...this.compressedStats, residentFrames: this.compressed.size,
           residentBytes: ledger.kinds && ledger.kinds['compressed-jpeg'] || 0, limitBytes: this.experimentMode === 'compressed-ram' ? this.compressedLimit : 0 },
+        forwardPredecode: this.forwardPredecode, forwardStatus: this.forwardStatus, forwardIssue: this.forwardIssue,
+        loadTimings: this.loadTimings ? { ...this.loadTimings } : null,
         memoryScope: 'managed decoded RGBA, audio, compressed/copy buffers and in-flight reservations; browser/GPU/internal decoder copies excluded' };
+    }
+    setForwardPredecode(enabled) {
+      if (typeof enabled !== 'boolean') throw new Error('提前解压设置必须为开或关。');
+      this.forwardPredecode = enabled; ++this.forwardToken; this.forwardCursor = (this.currentIndex === null ? 0 : this.currentIndex) + 1;
+      this.forwardStatus = enabled ? 'idle' : 'disabled'; this.forwardIssue = null; this._change();
     }
     setDecodeDelay(ms) {
       if (!Number.isFinite(ms) || ms < 0 || ms > 2000) throw new Error('解码延迟须在0～2000ms。');
       this.decodeDelayMs = ms; this._change();
     }
     setVerifyMarkers(enabled) { this.verifyMarkers = !!enabled; this._change(); }
+    cacheCoverageSnapshot() {
+      // Coverage is sampled separately; normal seeks never enumerate bitmaps.
+      if (!this.info || this.disposed) return null;
+      if (!this.coverageMemo || this.coverageMemo.revision !== this.coverageVersion)
+        this.coverageMemo = Object.freeze({ revision: this.coverageVersion, ranges: decodedRanges(this.info.frames, this.cache.keys(), this.info.duration) });
+      return Object.freeze({ epoch: this.epoch, revision: this.coverageVersion, duration: this.info.duration,
+        decodedFrames: this.cache.size, totalFrames: this.info.frames.length, ranges: this.coverageMemo.ranges,
+        enabled: this.forwardPredecode, phase: this.forwardStatus, issue: this.forwardIssue });
+    }
     _valid(epoch) { return !this.disposed && epoch === this.epoch; }
     _playValid(epoch, token) { return this._valid(epoch) && token === this.playToken; }
     _settle(target, status, values) {
@@ -139,8 +172,11 @@
       this.lastSubmission = null; this.observedSerial = this.submissionSerial; this.observedFrame = null;
       const oldContext = this.audioContext; this.audioContext = null; this.audioBuffer = null;
       this.budget.release(this.audioBudget); this.audioBudget = null; this.info = null;
+      ++this.forwardToken; this.forwardCursor = 1; this.forwardStatus = this.forwardPredecode ? 'waiting' : 'disabled';
+      this.forwardIssue = null; this.warmPlan = null; this.warmCursor = 0; this.loadTimings = null;
       this.currentIndex = null; this.time = 0; this.targetTime = 0; this.lastIssue = null; this.lastErrorCode = null; this.prefetchFailed.clear(); this.ended = false;
       this._change('loading');
+      const loadStartedAt = this.env.now();
       const operation = Promise.resolve().then(async () => {
         let context = null, reservation = null, transferred = false;
         try {
@@ -169,10 +205,18 @@
               sampleRate: buffer.sampleRate, channels: buffer.numberOfChannels, bytes: actual });
           }
           if (!this._valid(epoch)) return { status: 'superseded' };
-          if (this.experimentMode === 'compressed-ram') await this._warmCompressed(info, epoch);
+          const warmStartedAt = this.env.now();
+          if (this.experimentMode === 'compressed-ram') {
+            if (this.forwardPredecode) this.warmPlan = this._planCompressed(info);
+            else await this._warmCompressed(info, epoch);
+          }
+          this.loadTimings = { initialWarmDeferred: this.forwardPredecode, compressedWarmMs: this.env.now() - warmStartedAt };
           if (!this._valid(epoch)) return { status: 'superseded' };
           const result = await this._request(0, { kind: 'load', final: true, inputAt: this.env.now(), preserveLoading: true, index: 0 });
-          if (result.status === 'error') throw new Error(result.error); return result;
+          if (result.status === 'error') throw new Error(result.error);
+          if (this._valid(epoch)) { this.loadTimings.firstFrameReadyMs = this.env.now() - loadStartedAt;
+            this._emit('cache', { phase: 'first-frame-ready', ...this.loadTimings }); }
+          return result;
         } catch (error) {
           if (!this._valid(epoch)) return { status: 'superseded' };
           this._fail(error); throw error;
@@ -214,9 +258,11 @@
           if (predicted !== ordinal) target.predictedIndex = predicted;
         } else target.dragSamples = [previous.targetTime, targetTime];
       }
+      target.cacheStateAtInput = this.cache.has(ordinal) ? 'decoded' : this.tasks.has(epoch + ':' + ordinal) ? 'inflight' : this.compressed.has(ordinal) ? 'jpeg-ram' : 'disk';
+      if (!['load', 'play', 'ended'].includes(options.kind)) { ++this.forwardToken; this.forwardCursor = ordinal + 1; }
       this.target = target;
       this._emit('request', { epoch, phase: 'input', requestId: target.requestId, kind: target.kind, frameId: frame.id,
-        frameOrdinal: ordinal, targetTime, inputAt: target.inputAt, final: target.final,
+        frameOrdinal: ordinal, targetTime, inputAt: target.inputAt, final: target.final, cacheStateAtInput: target.cacheStateAtInput,
         workReused: this.cache.has(ordinal) || this.tasks.has(epoch + ':' + ordinal) });
       this._settle(previous, 'superseded', { reason: 'new-request' });
       if (this._valid(epoch) && this.target === target && !options.preserveLoading && options.kind !== 'play') this._change('seeking');
@@ -339,10 +385,10 @@
         const compressed = this.compressed.entries().next(); if (compressed.done) return false;
         this._dropCompressed(compressed.value[0]); return true;
       }
-      this.cache.delete(victim.index); this._closeEntry(victim);
+      this.cache.delete(victim.index); ++this.coverageVersion; this._closeEntry(victim);
       this._emit('cache', { phase: 'evict', frameId: victim.id, budgetBytes: this.budget.used }); return true;
     }
-    _clearCache() { for (const entry of this.cache.values()) this._closeEntry(entry); this.cache.clear(); }
+    _clearCache() { for (const entry of this.cache.values()) this._closeEntry(entry); this.cache.clear(); ++this.coverageVersion; }
     _dropCompressed(ordinal) {
       const entry = this.compressed.get(ordinal); if (!entry) return;
       this.compressed.delete(ordinal); this.compressedBytes -= entry.bytes.byteLength; this.budget.release(entry.budget);
@@ -364,8 +410,8 @@
       this.compressed.set(ordinal, { bytes, budget: token }); this.compressedBytes += bytes.byteLength;
       this.compressedStats.admittedFrames++;
     }
-    async _warmCompressed(info, epoch) {
-      const began = this.env.now(), rgba = info.width * info.height * 4;
+    _planCompressed(info) {
+      const rgba = info.width * info.height * 4;
       const largest = info.frames.reduce((maximum, frame) => Math.max(maximum, frame.bytes), 0);
       // Leave room for two real image tasks and the transient copies of the
       // two warm reads. This pool competes with RGBA inside the same ledger.
@@ -397,6 +443,12 @@
         // stay distributed while avoiding unnecessary scattered disk access.
         ordinals.sort((a, b) => a - b);
       }
+      return { ordinals, batching, batchBytes, transient, largest };
+    }
+    async _warmCompressed(info, epoch) {
+      const began = this.env.now(), plan = this._planCompressed(info);
+      this.warmPlan = plan; // Re-enabling idle fill must not shrink a pool already charged to the ledger.
+      const { ordinals, batching, batchBytes } = plan;
       for (let n = 0; n < ordinals.length && this._valid(epoch);) {
         if (!batching) {
           const results = await Promise.allSettled(ordinals.slice(n, n + 2).map(ordinal => this._readCompressed(info, epoch, ordinal))); n += 2;
@@ -432,6 +484,8 @@
             throw new Error('图片包预载批次与清单不符。');
           for (let i = 0; i < ordinals.length; i++) {
             const ordinal = ordinals[i], bytes = buffers[i], token = reservations[i];
+            if (this.compressed.has(ordinal) || this.compressedBytes + bytes.byteLength > this.compressedCapacity) continue;
+            // Foreground reads may have occupied the pool while this batch was pending.
             this.budget.shrink(token, bytes.byteLength, 'compressed-jpeg');
             this.compressed.set(ordinal, { bytes, budget: token }); this.compressedBytes += bytes.byteLength; transferred.add(token);
             this.compressedStats.warmedBytes += bytes.byteLength; this.compressedStats.warmedFrames++;
@@ -457,6 +511,7 @@
           const bytes = await this.readAsset(info, frame.file);
           if (!this._valid(epoch)) return;
           if (!bytes || bytes.byteLength !== frame.bytes) throw new Error('压缩预读长度与清单不符。');
+          if (this.compressed.has(ordinal) || this.compressedBytes + frame.bytes > this.compressedCapacity) return;
           this.budget.shrink(reservation, frame.bytes, 'compressed-jpeg');
           this.compressed.set(ordinal, { bytes, budget: reservation }); this.compressedBytes += bytes.byteLength; transferred = true;
           this.compressedStats.warmedBytes += frame.bytes; this.compressedStats.warmedFrames++;
@@ -497,16 +552,17 @@
       const epoch = this.epoch, info = this.info, key = epoch + ':' + ordinal;
       const existing = this.tasks.get(key); if (existing) return existing.promise;
       if (this.tasks.size >= 2) throw new Error('图像任务超过两个在途槽。');
-      const frame = info.frames[ordinal], holder = { epoch, index: ordinal, role, promise: null };
+      const frame = info.frames[ordinal], holder = { epoch, index: ordinal, role, forwardToken: this.forwardToken, promise: null };
       this.tasks.set(key, holder);
       const task = Promise.resolve().then(async () => {
         let reservation = null, bitmap = null, transferred = false;
         try {
           if (!this._valid(epoch)) return null;
+          if (role === 'forward-fill' && (!this.forwardPredecode || holder.forwardToken !== this.forwardToken) && (!this.target || this.target.index !== ordinal)) return null;
           if (role === 'target' && (!this.target || this.target.index !== ordinal)) return null;
           if (role === 'drag-ahead' && (!this.target || this.target.index !== ordinal && this.target.predictedIndex !== ordinal)) return null;
           const rgba = info.width * info.height * 4;
-          reservation = this.budget.reserve(rgba + frame.bytes * 2, 'frame-inflight', () => this._evict());
+          reservation = this.budget.reserve(rgba + frame.bytes * 2, 'frame-inflight', role === 'forward-fill' ? undefined : () => this._evict());
           const readStartedAt = this.env.now();
           const compressed = this.compressed.get(ordinal);
           if (compressed) { this.compressed.delete(ordinal); this.compressed.set(ordinal, compressed); }
@@ -528,6 +584,7 @@
             }
             return null;
           }
+          if (role === 'forward-fill' && (!this.forwardPredecode || holder.forwardToken !== this.forwardToken) && (!this.target || this.target.index !== ordinal)) return null;
           const delay = this.decodeDelayMs, decodeStartedAt = this.env.now();
           bitmap = await this.env.decodeImage(bytes);
           const decodeEndedAt = this.env.now();
@@ -535,11 +592,12 @@
           // An obsolete result can populate this material's bounded LRU, never its canvas.
           if (delay) await this.env.sleep(delay);
           if (!this._valid(epoch)) return null;
+          if (role === 'forward-fill' && (!this.forwardPredecode || holder.forwardToken !== this.forwardToken) && (!this.target || this.target.index !== ordinal)) return null;
           if (!bitmap || bitmap.width !== info.width || bitmap.height !== info.height) throw new Error('JPEG解码尺寸与索引不符。');
           this.budget.shrink(reservation, rgba, 'decoded-frame');
           if (!compressed) this._rememberCompressed(ordinal, bytes);
           const entry = { index: ordinal, id: frame.id, bitmap, budget: reservation, readyAt: this.env.now(), usedAt: this.env.now() };
-          this.cache.set(ordinal, entry); transferred = true;
+          this.cache.set(ordinal, entry); ++this.coverageVersion; transferred = true;
           this._emit('ready', { epoch, phase: 'read-and-image-decode-complete', requestId: request ? request.requestId : null,
             kind: request ? request.kind : role, frameId: frame.id, readyAt: entry.readyAt, inputAt: request ? request.inputAt : null,
             readStartedAt, readEndedAt, readMs: readEndedAt - readStartedAt,
@@ -547,6 +605,7 @@
             decodeStartedAt, decodeEndedAt, decodeMs: decodeEndedAt - decodeStartedAt,
             injectedDelayMs: delay, decoderServiceMs: entry.readyAt - decodeStartedAt,
             delayModel: 'non-cancellable-service-after-decode-entry-v2',
+            cacheStateAtInput: request ? request.cacheStateAtInput : null,
             stillTarget: !!this.target && this.target.epoch === epoch && this.target.index === ordinal, budgetBytes: this.budget.used });
           return entry;
         } finally {
@@ -560,7 +619,8 @@
       task.then(() => { this._startTargetWork(); this._startDragAheadWork(); this._tryReadySubmit(); }, error => {
         if (this._valid(epoch)) {
           if (this.target && this.target.resolve && this.target.index === ordinal) this._fail(error);
-          else { this.prefetchFailed.add(ordinal); this._emit('error', { epoch, phase: 'background-image', frameId: frame.id, error: error.message }); }
+          else { this.prefetchFailed.add(ordinal); if (role === 'forward-fill') this.forwardIssue = error.message;
+            this._emit('error', { epoch, phase: 'background-image', frameId: frame.id, error: error.message }); }
         }
         this._startTargetWork(); this._startDragAheadWork();
       });
@@ -601,6 +661,7 @@
         catch (error) { barcode = { actual: null, expected: null, ok: null, uncertain: true, error: error.message }; }
       }
       const event = { epoch: target.epoch, requestId: target.requestId, kind: target.kind, frameId: frame.id, frameOrdinal: target.index,
+        cacheStateAtInput: target.cacheStateAtInput, readyToSubmitMs: Math.max(0, drawAt - Math.max(target.inputAt, entry.readyAt)),
         time: frame.time, targetTime: target.targetTime, mediaTime: this.state === 'playing' ? this._clockTime() : frame.time,
         inputAt: target.inputAt, readyAt: entry.readyAt, drawAt, responseMs: drawAt - target.inputAt,
         budgetBytes: this.budget.used, cachePeakBytes: this.budget.peak, rafOpportunity: this.rafCount, repeatedFrame: repeated,
@@ -609,6 +670,39 @@
         physicalDisplayTime: null, note: 'canvas submission; no physical-screen measurement' };
       this._settle(target, 'drawn', { time: frame.time, drawAt }); this._emit('draw', event);
       if (this._valid(target.epoch) && this.target === target) this._change();
+    }
+    _startBackground() {
+      if (!this.forwardPredecode || this.forwardIssue || !this.info || this.disposed || !['paused', 'playing'].includes(this.state) || this.tasks.size ||
+          this.target && (this.target.resolve || !this.target.final && ['drag', 'rapid'].includes(this.target.kind))) return;
+      const info = this.info;
+      if (!this.warmPlan) this.warmPlan = this.experimentMode === 'compressed-ram' ? this._planCompressed(info) :
+        { ordinals: [], batching: false, batchBytes: 1024 ** 2, transient: 0, largest: info.frames.reduce((n, f) => Math.max(n, f.bytes), 0) };
+      const plan = this.warmPlan, rgba = info.width * info.height * 4;
+      const headroom = 2 * (rgba + plan.largest * 2) + plan.transient;
+      const unfilledCompressed = Math.max(0, this.compressedCapacity - this.compressedBytes);
+      while (this.forwardCursor < info.frames.length && (this.cache.has(this.forwardCursor) || this.prefetchFailed.has(this.forwardCursor))) ++this.forwardCursor;
+      const next = info.frames[this.forwardCursor];
+      if (next && this.budget.limit - this.budget.used >= rgba + next.bytes * 2 + headroom + unfilledCompressed) {
+        this.forwardStatus = 'preparing'; this._decode(this.forwardCursor++, 'forward-fill', null); return;
+      }
+      this.forwardStatus = next ? 'budget' : 'complete';
+      // Fill the reserved JPEG space only at idle boundaries, one bounded read
+      // at a time. Foreground reads may race it; publication deduplicates tokens.
+      const group = []; let size = 0, end = null;
+      while (this.warmCursor < plan.ordinals.length) {
+        const ordinal = plan.ordinals[this.warmCursor], frame = info.frames[ordinal];
+        if (this.compressed.has(ordinal)) { ++this.warmCursor; continue; }
+        if (group.length && (!plan.batching || size + frame.bytes > plan.batchBytes || frame.offset !== end)) break;
+        if (this.budget.limit - this.budget.used < (size + frame.bytes) * 2 + 2 * (rgba + plan.largest * 2)) break;
+        group.push(ordinal); size += frame.bytes; end = frame.offset + frame.bytes; ++this.warmCursor;
+        if (!plan.batching || frame.bytes > plan.batchBytes) break;
+      }
+      if (!group.length) return;
+      const epoch = this.epoch;
+      const work = plan.batching && size <= plan.batchBytes ? this._readCompressedBatch(info, epoch, group) : this._readCompressed(info, epoch, group[0]);
+      work.catch(error => {
+        if (this._valid(epoch)) { this.forwardIssue = error.message; this._emit('error', { epoch, phase: 'background-jpeg-read', error: error.message }); }
+      });
     }
     _pump() {
       const target = this.target;
@@ -637,8 +731,10 @@
         const ordinal = base + offset;
         if (ordinal < 0 || ordinal >= this.info.frames.length) continue;
         if (playing && this.info.frames[ordinal].time - this.info.frames[base].time > 0.3) break;
+        if (this.forwardPredecode && !playing && this.budget.used + this.info.width * this.info.height * 4 + this.info.frames[ordinal].bytes * 2 > this.budget.limit) break;
         if (!this.cache.has(ordinal) && !this.tasks.has(this.epoch + ':' + ordinal) && !this.prefetchFailed.has(ordinal)) this._decode(ordinal, playing ? 'play-ahead' : 'neighbour', null);
       }
+      this._startBackground();
     }
     _schedule() { if (!this.disposed) this.rafId = this.env.raf(() => this._tick()); }
     _observeCanvas() {
@@ -702,5 +798,5 @@
       return this.disposePromise;
     }
   }
-  return { Player, Budget, ManagedBudget: Budget, readBarcode };
+  return { Player, Budget, ManagedBudget: Budget, readBarcode, decodedRanges };
 });

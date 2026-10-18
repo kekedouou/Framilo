@@ -17,6 +17,7 @@
         <div class="timeline-area">
           <div id="timeline" class="timeline" role="slider" tabindex="0" aria-label="视频进度"
             aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-disabled="true">
+            <canvas id="decodedCache" class="cache-strip" width="1" height="3" aria-label="绿条表示RAM中已解压的画面"></canvas>
             <div class="rail"><div id="progress" class="progress"></div></div>
             <span id="thumb" class="thumb"></span>
             <output id="timeHint" class="time-hint" hidden>0:00.000</output>
@@ -36,11 +37,14 @@
       <p id="sourceName" class="source-name">未载入视频</p>
       <p id="previewQuality" class="preview-quality">720p 预览</p>
       <p id="memoryUsage" class="muted" title="当前视频由播放器管理的JPEG、解码图像、音频与在途预留；不包含浏览器、GPU或FFmpeg额外占用。">视频缓存 RAM：—</p>
+      <p id="cacheStatus" class="cache-status muted"></p>
       <details class="memory-settings">
         <summary>设置</summary>
         <label for="qualitySelect">预览画质</label>
         <select id="qualitySelect" aria-label="预览画质" disabled><option value="720p">720p</option><option value="1080p">1080p</option></select>
         <p class="muted">保持比例，不放大小视频。JPEG轻量预览。</p>
+        <label class="predecode-option"><input id="forwardPredecode" type="checkbox" checked disabled> 提前解压后续画面</label>
+        <p class="muted">后台准备优先让出操作。绿条表示已解压；未覆盖处首次拖动可能等待。</p>
         <label for="memoryMiB">视频缓存内存上限</label>
         <div class="memory-controls"><select id="memoryMiB" aria-label="视频缓存内存上限" disabled>
           <option value="512">512 MB</option><option value="1024">1 GB</option><option value="2048">2 GB</option>

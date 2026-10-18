@@ -78,7 +78,8 @@
           const binding = Object.freeze({ sessionEpoch: value.epoch, libraryEpoch: value.libraryEpoch,
             itemId: identity && identity.itemId, sourceSha256: identity && identity.sha256 });
           const memory = preferences.snapshot();
-          return new window.EVAPlayer.Player({ ...options, ramBytes: memory.ramBytes, compressedRamBytes: memory.compressedRamBytes, canvas: ui.canvas, frameIndex,
+          return new window.EVAPlayer.Player({ ...options, ramBytes: memory.ramBytes, compressedRamBytes: memory.compressedRamBytes,
+            forwardPredecode: preferences.forwardPredecode(), canvas: ui.canvas, frameIndex,
             emit: event => diagnostics.publish('player', () => ({ binding, event })) });
         }, onChange: snapshot => { ui.update(snapshot); diagnostics.publish('state', snapshot); } });
       ui.bindSession(session);

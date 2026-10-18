@@ -26,6 +26,7 @@ function harness(settings = {}) {
       value: { state: 'loading', time: 0, frameId: null, frameOrdinal: null },
       change(value) { this.value = { ...this.value, ...value }; options.onChange({ ...this.value }); },
       snapshot() { return { ...this.value }; },
+      setForwardPredecode(enabled) { this.value.forwardPredecode=enabled; h.events.push('forward-'+enabled); },
       async load(info) {
         this.info = info; this.change({ state: 'loading' });
         await options.readAsset({ ...info }, info.frames[0].file);
@@ -337,6 +338,22 @@ async function main() {
     const closing=h.session.close();gate.resolve();assert.equal((await pending).status,'superseded');await closing;assert.equal(h.session.snapshot().state,'closed');
     const bad=harness({memoryPreferences:prefs,prepare:async(v,_o,m)=>({...m.makeInfo(v),preview:{quality:'720p'}})});
     assert.equal((await bad.session.loadSelected()).error.code,'PREVIEW_QUALITY_MISMATCH');await bad.session.close();
+  });
+  await test('E04 applying only forward preparation pauses/persists without reloading or recapturing another selection',async()=>{
+    let enabled=true;const prefs={snapshot:()=>({ramMiB:1024}),quality:()=> '720p',forwardPredecode:()=>enabled,preview(){},save(_m,_q,e){enabled=e;}};
+    const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>({...m.makeInfo(v),preview:{quality:o.previewQuality}})});
+    await h.session.loadSelected();await h.session.seek(2);await h.session.play();const player=h.players[0];h.selection=selected('B');
+    assert.equal((await h.session.setPlaybackSettings({ramMiB:1024,previewQuality:'720p',forwardPredecode:false})).status,'applied');
+    assert.equal(h.calls,1);assert.equal(h.prepared.length,1);assert.strictEqual(h.players[0],player);assert.equal(h.session.snapshot().playback.frameId,2);
+    assert.equal(h.session.snapshot().state,'paused');assert.equal(h.session.snapshot().forwardPredecode,false);assert(h.events.includes('forward-false'));await h.session.close();
+  });
+  await test('E05 source ownership hides stale coverage during replacement and after close',async()=>{
+    const h=harness();assert.equal(h.session.cacheCoverageSnapshot(),null);await h.session.loadSelected();
+    h.players[0].cacheCoverageSnapshot=()=>({epoch:4,revision:1,ranges:[{start:0,end:1}]});
+    const first=h.session.cacheCoverageSnapshot();assert.equal(first.sessionEpoch,h.session.snapshot().epoch);
+    h.selection=selected('B');await h.session.loadSelected();assert.equal(h.session.cacheCoverageSnapshot(),null);
+    h.players[1].cacheCoverageSnapshot=()=>({epoch:1,revision:1,ranges:[{start:0,end:2}]});
+    assert(h.session.cacheCoverageSnapshot().sessionEpoch>first.sessionEpoch);await h.session.close();assert.equal(h.session.cacheCoverageSnapshot(),null);
   });
   console.log('T1 session memory tests passed: ' + tests + '. Not real Eagle, media, Canvas or performance verification.');
 }

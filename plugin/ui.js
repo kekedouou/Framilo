@@ -36,13 +36,39 @@
     const doc = options.document || document, win = options.window || window, now = options.now || (() => performance.now());
     const ids = ['picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
       'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentText', 'commentSave', 'commentCancel',
-      'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality'];
+      'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality',
+      'forwardPredecode', 'decodedCache', 'cacheStatus'];
     const el = Object.fromEntries(ids.map(id => [id, doc.getElementById(id)]));
     if (ids.some(id => !el[id])) throw new Error('播放器界面缺少必要元素。');
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
     const attributes = new Map();
     const set = (node, key, value) => { if (node[key] !== value) node[key] = value; };
     let memoryTimer = null;
+    let coverageTimer = null, coverageKey = null, coverageEpoch = null;
+    const coverageContext = typeof el.decodedCache.getContext === 'function' ? el.decodedCache.getContext('2d') : null;
+    function clearCoverage() {
+      if (coverageKey !== 'empty' && coverageContext) coverageContext.clearRect(0, 0, el.decodedCache.width || 1, el.decodedCache.height || 3);
+      coverageKey = 'empty'; set(el.cacheStatus, 'textContent', '');
+    }
+    function refreshCoverage() {
+      const value = session && typeof session.cacheCoverageSnapshot === 'function' ? session.cacheCoverageSnapshot() : null;
+      if (!value || value.sessionEpoch !== state.epoch || !(value.duration > 0)) { clearCoverage(); return; }
+      const text = value.issue ? '后台准备暂停，请重开视频重试' : value.decodedFrames === value.totalFrames ? '整段已解压' :
+        (value.enabled ? value.phase === 'budget' ? '已保留操作余量' : value.phase === 'complete' ? '后续准备完成' : '后台准备' : '按需缓存') + ' · ' + value.decodedFrames + ' / ' + value.totalFrames + ' 帧';
+      set(el.cacheStatus, 'textContent', text);
+      const key = [value.sessionEpoch, value.epoch, value.revision, value.duration].join(':');
+      if (key === coverageKey) return;
+      coverageKey = key;
+      if (!coverageContext) return;
+      const scale = Number(win.devicePixelRatio) || 1;
+      const width = Math.max(1, Math.round(el.timeline.getBoundingClientRect().width * scale)), height = Math.max(1, Math.round(3 * scale));
+      set(el.decodedCache, 'width', width); set(el.decodedCache, 'height', height);
+      coverageContext.clearRect(0, 0, width, height); coverageContext.fillStyle = '#68ab79';
+      for (const range of value.ranges) {
+        const start = clamp(range.start / value.duration), end = clamp(range.end / value.duration);
+        if (end > start) coverageContext.fillRect(start * width, 0, (end - start) * width, height);
+      }
+    }
     function refreshMemory() {
       const budget = session && typeof session.memorySnapshot === 'function' ? session.memorySnapshot() : null;
       const available = budget && Number.isFinite(budget.used) && budget.used >= 0 && Number.isFinite(budget.limit) && budget.limit > 0;
@@ -54,11 +80,12 @@
     }
     const listeners = [];
     const on = (target, type, handler) => { target.addEventListener(type, handler); listeners.push([target, type, handler]); };
-    let memoryBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null;
+    let memoryBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null, shownPredecode = null;
     function updateMemorySettings() {
       const memory = state.memorySettings;
       const disabled = !session || !memory || memoryBusy || cleaning || state.state === 'preparing' || state.state === 'closed' || !!state.comments?.draft;
       set(el.memoryApply, 'disabled', disabled); set(el.memoryMiB, 'disabled', disabled); set(el.qualitySelect, 'disabled', disabled);
+      set(el.forwardPredecode, 'disabled', disabled);
       set(el.cacheClearOther, 'disabled', disabled || !['paused', 'playing', 'seeking'].includes(state.state));
       if (memory && memory !== shownMemory) {
         shownMemory = memory; shownTier = String(memory.ramMiB);
@@ -70,6 +97,9 @@
         shownQuality = state.previewQuality || '720p'; set(el.qualitySelect, 'value', shownQuality);
       }
       const preview = state.preview;
+      if (shownPredecode !== !!state.forwardPredecode) {
+        shownPredecode = !!state.forwardPredecode; set(el.forwardPredecode, 'checked', shownPredecode);
+      }
       for (const option of Array.from(el.qualitySelect.options || [])) {
         const long = option.value === '1080p' ? 1920 : 1280, short = option.value === '1080p' ? 1080 : 720;
         const original = preview && preview.sampleAspectRatio === '1:1' &&
@@ -84,12 +114,12 @@
       const active = session, ramMiB = Number(el.memoryMiB.value);
       memoryBusy = true; set(el.memoryStatus, 'textContent', '正在应用，完成后保持暂停…'); updateMemorySettings();
       try { const result = typeof active.setPlaybackSettings === 'function'
-          ? await active.setPlaybackSettings({ ramMiB, previewQuality: el.qualitySelect.value }) : await active.setMemoryMiB(ramMiB);
+          ? await active.setPlaybackSettings({ ramMiB, previewQuality: el.qualitySelect.value, forwardPredecode: el.forwardPredecode.checked }) : await active.setMemoryMiB(ramMiB);
         if (session !== active) return;
         set(el.memoryStatus, 'textContent', result.status === 'error' ? '设置已保存，视频准备失败；可调整画质或内存后重试。' :
           result.status === 'superseded' ? '操作已被素材切换或关闭替代。' : '设置已保存。');
       } catch (failure) { if (session === active) set(el.memoryStatus, 'textContent', String(failure.message || failure)); }
-      finally { memoryBusy = false; if (session === active) { shownMemory = null; shownQuality = null; updateMemorySettings(); } }
+      finally { memoryBusy = false; if (session === active) { shownMemory = null; shownQuality = null; shownPredecode = null; updateMemorySettings(); } }
     });
     on(el.cacheClearOther, 'click', async () => {
       if (el.cacheClearOther.disabled || !session || typeof session.clearOtherCaches !== 'function') return;
@@ -100,6 +130,7 @@
       } catch (failure) { if (session === active) set(el.cacheClearStatus, 'textContent', String(failure.message || failure)); }
       finally { cleaning = false; if (session === active) updateMemorySettings(); }
     });
+    on(win, 'resize', () => { coverageKey = null; refreshCoverage(); });
     const interactive = () => !!session && !state.comments?.draft && ['paused', 'playing', 'seeking'].includes(state.state);
     const invoke = fn => {
       try { Promise.resolve(fn()).catch(() => {}); } catch (_) { /* session publishes operation errors */ }
@@ -258,14 +289,18 @@
       if (hintEpoch !== null) hint(time); // Includes final release settlement; only actual submitted frame time.
       updateComments();
       updateMemorySettings();
+      if (coverageEpoch !== state.epoch || !['paused', 'playing', 'seeking'].includes(state.state)) clearCoverage();
+      coverageEpoch = state.epoch;
     }
     return { canvas: el.picture, bindSession(value) {
-      session = value; update(state); refreshMemory();
+      session = value; update(state); refreshMemory(); refreshCoverage();
       if (memoryTimer === null && typeof win.setInterval === 'function') memoryTimer = win.setInterval(refreshMemory, 500);
+      if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 250);
     }, update,
       destroy() {
         if (memoryTimer !== null) { win.clearInterval(memoryTimer); memoryTimer = null; }
-        clearGesture(); listeners.forEach(([target, type, fn]) => target.removeEventListener(type, fn)); session = null; refreshMemory();
+        if (coverageTimer !== null) { win.clearInterval(coverageTimer); coverageTimer = null; }
+        clearGesture(); listeners.forEach(([target, type, fn]) => target.removeEventListener(type, fn)); session = null; refreshMemory(); clearCoverage();
       } };
   }
   return { createUI, formatTime, pointerTime, spaceAllowed };

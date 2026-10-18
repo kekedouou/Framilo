@@ -4,12 +4,15 @@ const fs=require('fs'),path=require('path'),crypto=require('crypto'),assert=requ
 const root=path.resolve(__dirname,'..'), sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const profiles=require('../plugin/preview-profile.cjs'),{_test:media}=require('../plugin/media.cjs');
 const {createCache}=require('../plugin/cache.cjs'),{createMemoryPreferences}=require('../plugin/preferences.cjs');
-const MIB=1024**2, recordRoot=path.join(root,'verification-runs/e03-local');
+const iteration=process.argv.find(v=>v.startsWith('--iteration='))?.slice('--iteration='.length)||'e03';
+assert(['e03','e04'].includes(iteration),'Unknown local verification iteration.');
+const recordOwner='eva-'+iteration+'-local-v1';
+const MIB=1024**2, recordRoot=path.join(root,'verification-runs/'+iteration+'-local');
 function plain(file,dir=false){const s=fs.lstatSync(file);assert(!s.isSymbolicLink()&&(dir?s.isDirectory():s.isFile()&&s.nlink===1));assert.equal(fs.realpathSync(file).toLowerCase(),path.resolve(file).toLowerCase());return s;}
 function recordPreflight(){
   plain(path.dirname(recordRoot),true);
-  if(!fs.existsSync(recordRoot)){fs.mkdirSync(recordRoot);fs.writeFileSync(path.join(recordRoot,'owner.json'),JSON.stringify({owner:'eva-e03-local-v1'}),{flag:'wx'});}
-  plain(recordRoot,true);plain(path.join(recordRoot,'owner.json'));assert.equal(JSON.parse(fs.readFileSync(path.join(recordRoot,'owner.json'))).owner,'eva-e03-local-v1');
+  if(!fs.existsSync(recordRoot)){fs.mkdirSync(recordRoot);fs.writeFileSync(path.join(recordRoot,'owner.json'),JSON.stringify({owner:recordOwner}),{flag:'wx'});}
+  plain(recordRoot,true);plain(path.join(recordRoot,'owner.json'));assert.equal(JSON.parse(fs.readFileSync(path.join(recordRoot,'owner.json'))).owner,recordOwner);
   const names=fs.readdirSync(recordRoot);assert(names.every(n=>n==='owner.json'||/^run-[0-9a-f]{16}\.json$/.test(n)));
   assert(names.length<=8,'Local verification record slots exhausted; retain existing records.');
   assert(names.reduce((n,f)=>n+plain(path.join(recordRoot,f)).size,0)+65536<=512*1024);
@@ -18,11 +21,11 @@ function tool(file,args,input){plain(file);const r=spawnSync(file,args,{input,en
   if(r.error||r.status!==0)throw Error('Existing media tool failed: '+String(r.error||r.stderr).slice(-1200));return r.stdout;}
 async function main(){
   recordPreflight();const config=JSON.parse(fs.readFileSync(path.join(root,'prototypes/preview-quality/config.local.json'),'utf8'));
-  const token=crypto.randomBytes(8).toString('hex'),parent=path.join(root,'tests/preview-quality-scratch');
+  const token=crypto.randomBytes(8).toString('hex'),parent=path.join(root,'tests',iteration==='e04'?'preparation-scratch':'preview-quality-scratch');
   if(!fs.existsSync(parent))fs.mkdirSync(parent);plain(parent,true);
-  const scratch=path.join(parent,'run-'+token+' 中文 空格');fs.mkdirSync(scratch);fs.writeFileSync(path.join(scratch,'owner.json'),JSON.stringify({owner:'eva-e03-local-v1',token}),{flag:'wx'});
-  const report={schema:'eva-e03-local-v1',node:process.versions.node,electron:process.versions.electron||null,frames:[],checks:[],limitBytes:2*MIB};
-  report.runtimeSources=Object.fromEntries(['preview-profile.cjs','media.cjs','cache.cjs','preferences.cjs','session.cjs','task-client.cjs','task-worker.cjs','ui.js','index.html']
+  const scratch=path.join(parent,'run-'+token+' 中文 空格');fs.mkdirSync(scratch);fs.writeFileSync(path.join(scratch,'owner.json'),JSON.stringify({owner:recordOwner,token}),{flag:'wx'});
+  const report={schema:recordOwner,node:process.versions.node,electron:process.versions.electron||null,frames:[],checks:[],limitBytes:2*MIB};
+  report.runtimeSources=Object.fromEntries(['preview-profile.cjs','media.cjs','cache.cjs','preferences.cjs','session.cjs','task-client.cjs','task-worker.cjs','player.js','ui.js','styles.css','index.html']
     .map(n=>[n,sha(fs.readFileSync(path.join(root,'plugin',n)))]));
   let generated=0;const images=new Map();
   for(const [w,h,q,sar]of [[1920,1080,'720p'],[1920,1080,'1080p'],[1080,1920,'720p'],[640,360,'1080p'],[1919,1079,'1080p'],[720,576,'720p','16:15']]){
@@ -47,7 +50,10 @@ async function main(){
   assert.equal(make().inventory().caches.length,2);report.checks.push('Windows dual-quality publish/reopen/read/release/clear-current/cancel/reopen');
   let prefs=createMemoryPreferences({pluginRoot:scratch,totalRamBytes:16*1024**3});assert.equal(prefs.quality(),'720p');prefs.save(1024,'1080p');
   prefs=createMemoryPreferences({pluginRoot:scratch,totalRamBytes:16*1024**3});assert.equal(prefs.quality(),'1080p');prefs.save(2048);assert.equal(createMemoryPreferences({pluginRoot:scratch,totalRamBytes:16*1024**3}).quality(),'1080p');
-  report.checks.push('Windows atomic settings persist/reopen/retain quality on RAM change');
+  assert.equal(prefs.forwardPredecode(),true);prefs.save(2048,'1080p',false);
+  prefs=createMemoryPreferences({pluginRoot:scratch,totalRamBytes:16*1024**3});assert.equal(prefs.forwardPredecode(),false);
+  prefs.save(1024);assert.equal(createMemoryPreferences({pluginRoot:scratch,totalRamBytes:16*1024**3}).forwardPredecode(),false);
+  report.checks.push('Windows atomic settings persist/reopen/retain quality and forward-predecode setting on RAM change');
   if(process.argv.includes('--with-worker')){
     assert(process.versions.node.startsWith('16.'),'Run the worker regression with Eagle Node16.');
     const workerRoot=path.join(scratch,'worker');fs.mkdirSync(workerRoot);fs.mkdirSync(path.join(workerRoot,'native'));
