@@ -166,6 +166,20 @@ async function run() {
     await h.until(()=>h.el('timeline').attributes['data-selecting']==='false'&&h.session.snapshot().state==='paused');
     assert(h.el('loopHandleStart').hidden&&h.el('loopHandleEnd').hidden);assert(!h.session.snapshot().playback.transport.loop.valid);await h.close();
   });
+  await check('Wheel actual UI/session/Player: rapid input uses source ordinals, stops sound, and edits selected endpoint',async()=>{
+    const h=harness();await h.settle(h.session.loadSelected());h.space();await h.until(()=>h.session.snapshot().state==='playing');
+    h.el('screen').fire('wheel',{deltaY:100});await h.until(()=>h.session.snapshot().state==='paused');assert(h.contexts[0].sources[0].stopped);
+    await h.settle(h.session.seek(0,{index:0,final:true}));
+    for(let n=0;n<10;n++)h.el('screen').fire('wheel',{deltaY:100});
+    for(let n=0;n<3;n++)h.el('timeline').fire('wheel',{deltaY:-100});
+    await h.until(()=>h.session.snapshot().state==='paused');assert.equal(h.session.snapshot().playback.frameOrdinal,7);
+    h.el('loopSelect').fire('click');await h.until(()=>!h.el('loopSelect').disabled);
+    h.el('timeline').fire('pointerdown',{clientX:120});h.win.fire('pointerup',{clientX:120,buttons:0});await h.until(()=>h.session.snapshot().state==='paused');
+    h.el('timeline').fire('pointerdown',{clientX:180});h.win.fire('pointerup',{clientX:180,buttons:0});await h.until(()=>h.session.snapshot().state==='paused');
+    h.el('screen').fire('wheel',{deltaY:-100});await h.until(()=>h.session.snapshot().state==='paused');assert.equal(h.session.snapshot().playback.frameOrdinal,7);
+    assert(h.el('loopRange').textContent.includes('第8帧'));assert(!h.session.snapshot().playback.transport.loop.valid);
+    h.win.fire('keydown',{key:'Escape'});await h.until(()=>h.el('timeline').attributes['data-selecting']==='false'&&h.session.snapshot().state==='paused');await h.close();
+  });
   console.log('T1 real-module playback integration: ' + passed.length + ' in-memory checks; no real Eagle/media/performance acceptance.');
   return { passed, count: passed.length };
 }

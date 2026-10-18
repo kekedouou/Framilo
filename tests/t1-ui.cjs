@@ -228,7 +228,7 @@ test('E03 quality selection remains pending until unified apply, label uses actu
     sourceWidth:1920,sourceHeight:1080,sampleAspectRatio:'1:1',originalResolution:false}});
   assert.equal(h.el('qualitySelect').options[1].textContent,'1080p（原始分辨率）');
   h.el('qualitySelect').value='1080p';h.el('qualitySelect').fire('change');assert.equal(applied,null);
-  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'1080p',forwardPredecode:false});
+  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'1080p',forwardPredecode:false,wheelFrames:1,showCacheStrip:true});
   assert.equal(h.el('qualitySelect').disabled,true);h.ui.destroy();
 });
 test('E05 strip is sampled separately; unchanged residency and frame updates do not repaint or scan',()=>{
@@ -254,7 +254,7 @@ test('E04 switch keeps pending edits across frame updates and applies with unifi
   const settings={...h.state,memorySettings:{ramMiB:1024,ramBytes:1024**3},previewQuality:'720p',forwardPredecode:true};
   h.ui.update(settings);assert.equal(h.el('forwardPredecode').checked,true);
   h.el('forwardPredecode').checked=false;h.ui.update({...settings,playback:{time:3}});assert.equal(h.el('forwardPredecode').checked,false);
-  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:false});h.ui.destroy();
+  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:false,wheelFrames:1,showCacheStrip:true});h.ui.destroy();
 });
 test('E05 fractional scaling fills the full rail; changing residency avoids repeated layout queries',()=>{
   const fs=require('fs'),path=require('path'),css=fs.readFileSync(path.join(__dirname,'../plugin/styles.css'),'utf8');
@@ -288,5 +288,33 @@ test('E06 controls act directly, display actual frame endpoints and obey editing
   h.ui.update({...h.state,state:'seeking'});for(const id of ['playbackRate','loopEnabled'])assert(h.el(id).disabled);
   h.ui.update({...h.state,comments:{draft:{id:'text',status:'editing',time:2,text:'a b'},items:[]}});assert(h.el('playbackRate').disabled);assert(h.el('loopSelect').disabled);
   h.ui.update({...h.state,epoch:2,state:'empty',playback:null});assert.equal(h.el('loopRange').textContent,'未设置范围');assert.equal(h.el('playbackRate').value,'1');h.ui.destroy();
+});
+test('Wheel steps on screen/track with applied sensitivity; sidebar, editing focus, modifiers, drag and stale states are protected',()=>{
+  const h=harness();let e=h.el('screen').fire('wheel',{deltaY:-100});assert(e.prevented);assert.deepEqual(h.calls.pop(),['step',-1]);
+  h.ui.update({...h.state,interactionSettings:{wheelFrames:5,showCacheStrip:true}});e=h.el('timeline').fire('wheel',{deltaY:1});assert(e.prevented);assert.deepEqual(h.calls.pop(),['step',5]);
+  h.el('wheelFrames').value='10';h.el('screen').fire('wheel',{deltaY:-1});assert.deepEqual(h.calls.pop(),['step',-5],'Unsaved edits must not change sensitivity.');
+  for(const extra of [{ctrlKey:true},{shiftKey:true},{altKey:true},{metaKey:true},{deltaY:0},{deltaY:NaN},{deltaY:1,deltaX:5}]){
+    const before=h.calls.length;h.el('screen').fire('wheel',{deltaY:100,...extra});assert.equal(h.calls.length,before);
+  }
+  h.doc.activeElement=target('select');h.el('screen').fire('wheel',{deltaY:100});assert.equal(h.calls.length,0);h.doc.activeElement=null;
+  h.el('sourceName').fire('wheel',{deltaY:100});assert.equal(h.calls.length,0);
+  h.el('timeline').fire('pointerdown');const during=h.calls.length;h.el('screen').fire('wheel',{deltaY:100});assert.equal(h.calls.length,during);h.win.fire('pointerup');
+  for(const patch of [{state:'preparing'},{state:'closed'},{comments:{draft:{status:'editing'},items:[]}}]){
+    h.ui.update({...h.state,...patch});const before=h.calls.length;h.el('screen').fire('wheel',{deltaY:100});assert.equal(h.calls.length,before);
+  }
+  h.ui.destroy();const before=h.calls.length;h.el('screen').fire('wheel',{deltaY:100});assert.equal(h.calls.length,before);
+});
+test('Wheel/strip settings stay pending until apply; hidden green cache stops painting and returns at current revision',()=>{
+  const h=harness(),timers=new Map();let applied=null,revision=1;
+  h.win.setInterval=(fn,ms)=>{timers.set(ms,fn);return ms;};h.win.clearInterval=id=>timers.delete(id);
+  h.ui.bindSession({setPlaybackSettings(v){applied=v;return Promise.resolve({status:'applied'});},cacheCoverageSnapshot:()=>({sessionEpoch:1,epoch:1,revision,duration:10,
+    decodedFrames:2,totalFrames:10,ranges:[{start:0,end:2}],enabled:true,phase:'preparing'})});
+  const state={...h.state,memorySettings:{ramMiB:1024,ramBytes:1024**3},previewQuality:'720p',forwardPredecode:true,interactionSettings:{wheelFrames:1,showCacheStrip:true}};
+  h.ui.update(state);h.el('wheelFrames').value='5';h.el('showCacheStrip').checked=false;h.ui.update({...state,playback:{time:3}});
+  assert.equal(h.el('wheelFrames').value,'5');assert.equal(h.el('showCacheStrip').checked,false);assert.equal(h.el('decodedCache').hidden,false);
+  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:true,wheelFrames:5,showCacheStrip:false});
+  h.ui.update({...state,interactionSettings:{wheelFrames:5,showCacheStrip:false}});const before=h.el('decodedCache').paints.length;
+  revision++;timers.get(50)();assert.equal(h.el('decodedCache').paints.length,before);assert(h.el('cacheStatus').textContent.includes('2 / 10'));
+  h.ui.update({...state,interactionSettings:{wheelFrames:5,showCacheStrip:true}});timers.get(50)();assert(h.el('decodedCache').paints.length>before);assert(!h.el('decodedCache').hidden);h.ui.destroy();
 });
 console.log('T1 UI: ' + checks + ' in-memory checks passed; real layout/input experience not tested.');

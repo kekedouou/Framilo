@@ -23,10 +23,12 @@ canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
 .speed-control, .loop-controls, .loop-controls label { display: flex; align-items: center; gap: 6px; }
 .speed-control { white-space: nowrap; }
 #playbackRate { font: inherit; color: inherit; background: #303030; border: 1px solid #474747; border-radius: 4px; padding: 5px; }
-.loop-controls { margin-top: 8px; flex-wrap: wrap; gap: 8px; }
-.loop-controls button { padding: 4px 9px; }
-.loop-controls output { font-size: 12px; font-variant-numeric: tabular-nums; }
-.loop-help { margin: 6px 0 0; color: #e9c887; font-size: 12px; }
+.loop-controls { margin-top: 8px; flex-wrap: nowrap; gap: 8px; min-width: 0; }
+.loop-controls button { padding: 4px 9px; flex-shrink: 0; white-space: nowrap; }
+.loop-controls label { flex-shrink: 0; white-space: nowrap; }
+.loop-controls output { font-size: 12px; font-variant-numeric: tabular-nums; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.loop-help { position: absolute; left: 12px; right: 12px; bottom: 8px; margin: 0; padding: 4px 8px;
+  color: #e9c887; font-size: 12px; background: #151515e6; border-radius: 3px; pointer-events: none; z-index: 3; }
 .loop-band { position: absolute; top: 10px; height: 6px; background: #a6b9dc; opacity: .22; pointer-events: none; }
 .timeline[data-loop-on="true"] .loop-band { opacity: .72; }
 .loop-handle { position: absolute; top: -18px; padding: 0; width: 24px; height: 42px; border: 0; border-radius: 3px;
@@ -62,7 +64,7 @@ canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
 .comment-markers { position: absolute; inset: 0; pointer-events: none; }
 .memory-settings { font-size: 12px; margin: 10px 0; }
 .settings-heading { font-size: 12px; font-weight: 600; margin: 16px 0 8px; padding-top: 12px; border-top: 1px solid #383838; }
-#qualitySelect { width: 100%; margin-top: 6px; }
+#qualitySelect, #wheelFrames { width: 100%; margin: 6px 0; }
 .memory-settings summary { cursor: pointer; margin-bottom: 8px; }
 .memory-controls { display: flex; align-items: center; gap: 5px; margin-top: 6px; }
 #memoryMiB { width: 76px; min-width: 0; padding: 5px; background: #202020; color: #eee; border: 1px solid #555; border-radius: 3px; }

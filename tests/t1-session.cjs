@@ -381,6 +381,30 @@ async function main() {
     await h.session.loadSelected();h.players[0].change({transport:{rate:.25,loop:{startId:0,endId:2,enabled:true}}});
     assert.equal((await h.session.setPlaybackSettings({ramMiB:2048,previewQuality:'1080p'})).status,'ready');assert(!h.events.includes('restore-transport'));await h.session.close();
   });
+  await test('UX wheel/strip apply persists and pauses the same player without media reload or predecode churn',async()=>{
+    let interaction={wheelFrames:1,showCacheStrip:true},q='720p';
+    const prefs={snapshot:()=>({ramMiB:1024}),quality:()=>q,forwardPredecode:()=>true,interaction:()=>interaction,preview(){},save(_m,next,_p,ui){if(next!==undefined)q=next;interaction=ui;}};
+    const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>({...m.makeInfo(v),preview:{quality:o.previewQuality}})});
+    await h.session.loadSelected();await h.session.seek(2);await h.session.play();const player=h.players[0],transport={rate:.5,loop:{startId:0,endId:2,enabled:true}};player.change({transport});
+    assert.equal((await h.session.setPlaybackSettings({ramMiB:1024,previewQuality:'720p',forwardPredecode:true,wheelFrames:5,showCacheStrip:false})).status,'applied');
+    assert.strictEqual(h.players[0],player);assert.equal(h.prepared.length,1);assert.equal(h.calls,1);assert.equal(h.session.snapshot().state,'paused');assert.equal(h.session.snapshot().playback.frameId,2);
+    assert.deepEqual(h.session.snapshot().playback.transport,transport);assert.deepEqual(h.session.snapshot().interactionSettings,{wheelFrames:5,showCacheStrip:false});assert(!h.events.some(e=>e.startsWith('forward-')));
+    await h.session.setPlaybackSettings({ramMiB:1024,previewQuality:'1080p'});assert.deepEqual(h.session.snapshot().interactionSettings,{wheelFrames:5,showCacheStrip:false});await h.session.close();
+  });
+  await test('Invalid or failed interaction settings keep the old preferences/player; closing or switching during pause prevents writes',async()=>{
+    for(const abort of ['close','switch']){
+      let saves=0;const prefs={snapshot:()=>({ramMiB:1024}),quality:()=> '720p',preview(){},save(){saves++;}};
+      const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>({...m.makeInfo(v),preview:{quality:o.previewQuality}})});assert.equal((await h.session.loadSelected()).status,'ready');await h.session.play();
+      await assert.rejects(()=>h.session.setPlaybackSettings({ramMiB:1024,wheelFrames:3}));assert.equal(h.session.snapshot().state,'playing');assert.equal(saves,0);
+      const gate=deferred(),p=h.players[0],pause=p.pause;p.pause=async()=>{await gate.promise;return pause.call(p);};
+      const apply=h.session.setPlaybackSettings({ramMiB:1024,wheelFrames:5,showCacheStrip:false});await flush();
+      let end;if(abort==='close')end=h.session.close();else{h.selection=selected('B');end=h.session.loadSelected();}
+      gate.resolve();assert.equal((await apply).status,'superseded');await end;assert.equal(saves,0);await h.session.close();
+    }
+    const prefs={snapshot:()=>({ramMiB:1024}),quality:()=> '720p',preview(){},save(){throw Error('write refused');}};
+    const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>({...m.makeInfo(v),preview:{quality:o.previewQuality}})});assert.equal((await h.session.loadSelected()).status,'ready');await assert.rejects(()=>h.session.setPlaybackSettings({ramMiB:1024,wheelFrames:5,showCacheStrip:false}));
+    assert.equal(h.players.length,1);assert.equal(h.session.snapshot().state,'paused');assert.deepEqual(h.session.snapshot().interactionSettings,{wheelFrames:1,showCacheStrip:true});await h.session.close();
+  });
   console.log('T1 session memory tests passed: ' + tests + '. Not real Eagle, media, Canvas or performance verification.');
 }
 main().catch(error => { console.error(error.stack); process.exitCode = 1; });

@@ -9,9 +9,10 @@
 <body>
   <main class="workspace">
     <section class="player-pane" aria-label="视频播放器">
-      <div class="screen">
+      <div id="screen" class="screen">
         <canvas id="picture" width="1280" height="720" aria-label="当前视频画面"></canvas>
         <div id="notice" class="notice" role="status">在 Eagle 中单选 MP4 后打开插件</div>
+        <p id="loopHelp" class="loop-help" role="status" hidden></p>
       </div>
       <div class="transport">
         <div class="timeline-area">
@@ -40,7 +41,6 @@
           <label title="L切换循环，关闭时保留范围"><input id="loopEnabled" type="checkbox" disabled>循环（L）</label>
           <output id="loopRange" class="muted">未设置范围</output>
         </div>
-        <p id="loopHelp" class="loop-help" role="status" hidden></p>
       </div>
     </section>
     <aside class="sidebar" aria-label="素材信息">
@@ -56,6 +56,10 @@
         <p class="muted">保持比例，不放大小视频。JPEG轻量预览。</p>
         <label class="predecode-option"><input id="forwardPredecode" type="checkbox" checked disabled> 提前解压周围画面</label>
         <p class="muted">优先准备光标附近，自动替换远处画面。绿条表示已解压；未覆盖处首次拖动可能等待。</p>
+        <label class="predecode-option"><input id="showCacheStrip" type="checkbox" checked disabled> 显示缓存绿条</label>
+        <label for="wheelFrames">滚轮灵敏度</label>
+        <select id="wheelFrames" aria-label="滚轮逐帧灵敏度" disabled><option value="1">1帧 / 次</option><option value="2">2帧 / 次</option><option value="5">5帧 / 次</option><option value="10">10帧 / 次</option></select>
+        <p class="muted">画面或时间轴上滚上一帧、下滚下一帧；选择时微调当前端点。点击应用生效。</p>
         <label for="memoryMiB">视频缓存内存上限</label>
         <div class="memory-controls"><select id="memoryMiB" aria-label="视频缓存内存上限" disabled>
           <option value="512">512 MB</option><option value="1024">1 GB</option><option value="2048">2 GB</option>

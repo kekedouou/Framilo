@@ -45,11 +45,11 @@
   }
   function createUI(options = {}) {
     const doc = options.document || document, win = options.window || window, now = options.now || (() => performance.now());
-    const ids = ['picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
+    const ids = ['screen', 'picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
       'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentText', 'commentSave', 'commentCancel',
       'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality',
       'forwardPredecode', 'decodedCache', 'cacheStatus', 'playbackRate', 'loopSelect', 'loopCancel', 'loopEnabled', 'loopRange',
-      'loopBand', 'loopHandleStart', 'loopHandleEnd', 'loopHelp'];
+      'loopBand', 'loopHandleStart', 'loopHandleEnd', 'loopHelp', 'wheelFrames', 'showCacheStrip'];
     const el = Object.fromEntries(ids.map(id => [id, doc.getElementById(id)]));
     if (ids.some(id => !el[id])) throw new Error('播放器界面缺少必要元素。');
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
@@ -74,6 +74,7 @@
       const text = value.issue ? '后台准备暂停，请重开视频重试' : value.decodedFrames === value.totalFrames ? '整段已解压' :
         (value.enabled ? value.phase === 'budget' ? '已保留操作余量' : '后台准备附近画面' : '按需缓存') + ' · ' + value.decodedFrames + ' / ' + value.totalFrames + ' 帧';
       set(el.cacheStatus, 'textContent', text);
+      if (el.decodedCache.hidden) { coverageKey = null; return; }
       const key = [value.sessionEpoch, value.epoch, value.revision, value.duration].join(':');
       if (key === coverageKey) return;
       coverageKey = key;
@@ -100,13 +101,14 @@
       if (attributes.get(name) !== value) { el.timeline.setAttribute(name, value); attributes.set(name, value); }
     }
     const listeners = [];
-    const on = (target, type, handler) => { target.addEventListener(type, handler); listeners.push([target, type, handler]); };
-    let memoryBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null, shownPredecode = null;
+    const on = (target, type, handler, settings) => { target.addEventListener(type, handler, settings); listeners.push([target, type, handler, settings]); };
+    let memoryBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null, shownPredecode = null, shownWheel = null, shownStrip = null;
     function updateMemorySettings() {
       const memory = state.memorySettings;
       const disabled = !session || !memory || memoryBusy || cleaning || state.state === 'preparing' || state.state === 'closed' || !!state.comments?.draft || selection.snapshot().editing;
       set(el.memoryApply, 'disabled', disabled); set(el.memoryMiB, 'disabled', disabled); set(el.qualitySelect, 'disabled', disabled);
       set(el.forwardPredecode, 'disabled', disabled);
+      set(el.wheelFrames, 'disabled', disabled); set(el.showCacheStrip, 'disabled', disabled);
       set(el.cacheClearOther, 'disabled', disabled || !['paused', 'playing', 'seeking'].includes(state.state));
       if (memory && memory !== shownMemory) {
         shownMemory = memory; shownTier = String(memory.ramMiB);
@@ -121,6 +123,9 @@
       if (shownPredecode !== !!state.forwardPredecode) {
         shownPredecode = !!state.forwardPredecode; set(el.forwardPredecode, 'checked', shownPredecode);
       }
+      const interaction = state.interactionSettings || { wheelFrames: 1, showCacheStrip: true };
+      if (shownWheel !== interaction.wheelFrames) { shownWheel = interaction.wheelFrames; set(el.wheelFrames, 'value', String(shownWheel)); }
+      if (shownStrip !== interaction.showCacheStrip) { shownStrip = interaction.showCacheStrip; set(el.showCacheStrip, 'checked', shownStrip); }
       for (const option of Array.from(el.qualitySelect.options || [])) {
         const long = option.value === '1080p' ? 1920 : 1280, short = option.value === '1080p' ? 1080 : 720;
         const original = preview && preview.sampleAspectRatio === '1:1' &&
@@ -135,12 +140,13 @@
       const active = session, ramMiB = Number(el.memoryMiB.value);
       memoryBusy = true; set(el.memoryStatus, 'textContent', '正在应用，完成后保持暂停…'); updateMemorySettings();
       try { const result = typeof active.setPlaybackSettings === 'function'
-          ? await active.setPlaybackSettings({ ramMiB, previewQuality: el.qualitySelect.value, forwardPredecode: el.forwardPredecode.checked }) : await active.setMemoryMiB(ramMiB);
+          ? await active.setPlaybackSettings({ ramMiB, previewQuality: el.qualitySelect.value, forwardPredecode: el.forwardPredecode.checked,
+            wheelFrames: Number(el.wheelFrames.value), showCacheStrip: !!el.showCacheStrip.checked }) : await active.setMemoryMiB(ramMiB);
         if (session !== active) return;
         set(el.memoryStatus, 'textContent', result.status === 'error' ? '设置已保存，视频准备失败；可调整画质或内存后重试。' :
           result.status === 'superseded' ? '操作已被素材切换或关闭替代。' : '设置已保存。');
       } catch (failure) { if (session === active) set(el.memoryStatus, 'textContent', String(failure.message || failure)); }
-      finally { memoryBusy = false; if (session === active) { shownMemory = null; shownQuality = null; shownPredecode = null; updateMemorySettings(); } }
+      finally { memoryBusy = false; if (session === active) { shownMemory = null; shownQuality = null; shownPredecode = null; shownWheel = null; shownStrip = null; updateMemorySettings(); } }
     });
     on(el.cacheClearOther, 'click', async () => {
       if (el.cacheClearOther.disabled || !session || typeof session.clearOtherCaches !== 'function') return;
@@ -185,6 +191,7 @@
       const start = editing.editing ? editing.start : loop?.startOrdinal != null ? { time: loop.startTime, ordinal: loop.startOrdinal } : null,
         endPoint = editing.editing ? editing.end : loop?.endOrdinal != null ? { time: loop.endTime, ordinal: loop.endOrdinal } : null;
       set(el.loopRange, 'textContent', !start && !endPoint ? '未设置范围' : point(start?.time, start?.ordinal) + ' → ' + point(endPoint?.time, endPoint?.ordinal) + (start && endPoint ? ' · 含结束帧' : ''));
+      set(el.loopRange, 'title', el.loopRange.textContent);
       loopAttribute(el.timeline, 'data-selecting', String(editing.editing)); loopAttribute(el.timeline, 'data-loop-on', String(!!loop?.enabled && !editing.editing));
       for (const [node, value, name] of [[el.loopHandleStart, start, 'start'], [el.loopHandleEnd, endPoint, 'end']]) {
         set(node, 'hidden', !value); set(node, 'disabled', !editing.editing || editing.busy);
@@ -268,6 +275,16 @@
     });
     on(el.play, 'click', () => { if (session && !gesture && !selection.snapshot().editing && !selection.snapshot().busy) { clearHint(); invoke(() => session.toggle()); } });
     function step(delta) { if (interactive() && !gesture && !selection.snapshot().busy) { clearHint(); if (!selection.snapshot().editing || !selection.step(delta)) invoke(() => session.step(delta)); } }
+    function wheel(event) {
+      if (event.defaultPrevented || event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.isComposing ||
+          !Number.isFinite(event.deltaY) || !event.deltaY || Math.abs(event.deltaX || 0) > Math.abs(event.deltaY) ||
+          !interactive() || gesture || selection.snapshot().busy || memoryBusy || cleaning) return;
+      const target = doc.activeElement;
+      if (target && (target.isContentEditable || typeof target.closest === 'function' && target.closest('input,textarea,select,[contenteditable],[role="textbox"]'))) return;
+      const sensitivity = state.interactionSettings?.wheelFrames || 1;
+      event.preventDefault(); step(Math.sign(event.deltaY) * sensitivity);
+    }
+    on(el.screen, 'wheel', wheel, { passive: false }); on(el.timeline, 'wheel', wheel, { passive: false });
     on(el.previous, 'click', () => step(-1)); on(el.next, 'click', () => step(1));
     on(el.retry, 'click', () => { if (session) invoke(() => session.retry()); });
     on(win, 'keydown', event => {
@@ -372,6 +389,8 @@
       updateComments();
       updateMemorySettings();
       updateTransport();
+      const hideStrip = state.interactionSettings?.showCacheStrip === false;
+      if (el.decodedCache.hidden !== hideStrip) { set(el.decodedCache, 'hidden', hideStrip); coverageKey = null; }
       if (coverageEpoch !== state.epoch || !['paused', 'playing', 'seeking'].includes(state.state)) clearCoverage();
       coverageEpoch = state.epoch;
     }
@@ -384,7 +403,7 @@
       destroy() {
         if (memoryTimer !== null) { win.clearInterval(memoryTimer); memoryTimer = null; }
         if (coverageTimer !== null) { win.clearInterval(coverageTimer); coverageTimer = null; }
-        selection.destroy(); clearGesture(); listeners.forEach(([target, type, fn]) => target.removeEventListener(type, fn)); session = null; refreshMemory(); clearCoverage();
+        selection.destroy(); clearGesture(); listeners.forEach(([target, type, fn, settings]) => target.removeEventListener(type, fn, settings)); session = null; refreshMemory(); clearCoverage();
       } };
   }
   return { createUI, formatTime, pointerTime, spaceAllowed };

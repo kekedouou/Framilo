@@ -3,6 +3,7 @@
 // Coordinates one material at a time. No Eagle calls, filesystem or UI access.
 const path = require('path');
 const { quality } = require('./preview-profile.cjs');
+const { interactionValue, DEFAULT_INTERACTION } = require('./preferences.cjs');
 function issue(code, message) { const error = new Error(message); error.code = code; return error; }
 function createSession(options) {
   const { eagleAdapter, media, cache, createPlayer } = options || {};
@@ -33,6 +34,7 @@ function createSession(options) {
       preview: owner && owner.ready && owner.epoch === epoch && owner.info.preview ? owner.info.preview : null,
       previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : '720p',
       forwardPredecode: !!(options.memoryPreferences && typeof options.memoryPreferences.forwardPredecode === 'function' && options.memoryPreferences.forwardPredecode()),
+      interactionSettings: options.memoryPreferences && typeof options.memoryPreferences.interaction === 'function' ? options.memoryPreferences.interaction() : DEFAULT_INTERACTION,
       memorySettings: options.memoryPreferences ? options.memoryPreferences.snapshot() : null });
   }
   function memorySnapshot() {
@@ -203,17 +205,21 @@ function createSession(options) {
     const result = await cache.clearOther({ sourceSha256: retained.sha256 });
     return closed || token !== epoch ? { status: 'superseded' } : { status: 'cleared', ...result };
   }
-  async function setPlaybackSettings({ ramMiB, previewQuality, forwardPredecode } = {}, trigger = 'playback-settings') {
+  async function setPlaybackSettings({ ramMiB, previewQuality, forwardPredecode, wheelFrames, showCacheStrip } = {}, trigger = 'playback-settings') {
     const preferences = options.memoryPreferences;
     if (!preferences) throw issue('MEMORY_SETTINGS_UNAVAILABLE', '当前入口没有内存设置接口。');
     if (previewQuality !== undefined) quality(previewQuality);
     if (forwardPredecode !== undefined && typeof forwardPredecode !== 'boolean') throw issue('SETTINGS_INVALID', '提前解压设置必须为开或关。');
+    const previousInteraction = typeof preferences.interaction === 'function' ? preferences.interaction() : DEFAULT_INTERACTION;
+    const interaction = interactionValue(wheelFrames === undefined ? previousInteraction.wheelFrames : wheelFrames,
+      showCacheStrip === undefined ? previousInteraction.showCacheStrip : showCacheStrip);
     preferences.preview(ramMiB);
     if (closed || state === 'preparing' || comments.draft) throw issue('MEMORY_SETTINGS_BUSY', '请等待准备完成，并先保存或取消标注。');
     const token = epoch, retained = source;
-    const onlyPredecode = forwardPredecode !== undefined && preferences.snapshot().ramMiB === ramMiB &&
+    const onlyControls = (forwardPredecode !== undefined || wheelFrames !== undefined || showCacheStrip !== undefined) && preferences.snapshot().ramMiB === ramMiB &&
       (previewQuality === undefined || typeof preferences.quality === 'function' && previewQuality === preferences.quality());
-    if (onlyPredecode && owner && owner.ready && typeof owner.player.setForwardPredecode !== 'function')
+    const predecodeChanged = forwardPredecode !== undefined && (typeof preferences.forwardPredecode !== 'function' || forwardPredecode !== preferences.forwardPredecode());
+    if (onlyControls && predecodeChanged && owner && owner.ready && typeof owner.player.setForwardPredecode !== 'function')
       throw issue('SETTINGS_UNAVAILABLE', '当前播放器没有提前解压设置接口。');
     if (owner && owner.ready) await control('pause', [], ['paused', 'playing', 'seeking']);
     if (closed || token !== epoch) return { status: 'superseded' };
@@ -222,9 +228,10 @@ function createSession(options) {
     const time = actual ? actual.time : retainedTime;
     const frameId = actual ? actual.frameId : memoryResume ? memoryResume.frameId : undefined;
     const transportState = actual && actual.transport && retained ? { sourceSha256: retained.sha256, value: actual.transport } : memoryResume && memoryResume.transportState;
-    preferences.save(ramMiB, previewQuality, forwardPredecode);
-    if (onlyPredecode && owner && owner.ready) {
-      owner.player.setForwardPredecode(forwardPredecode); notify(); return { status: 'applied' };
+    preferences.save(ramMiB, previewQuality, forwardPredecode, interaction);
+    if (onlyControls && owner && owner.ready) {
+      if (predecodeChanged) owner.player.setForwardPredecode(forwardPredecode);
+      notify(); return { status: 'applied' };
     }
     memoryResume = retained ? { id: retained.id, filePath: retained.filePath, time, frameId, transportState } : null;
     notify();

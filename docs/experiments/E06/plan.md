@@ -1,5 +1,13 @@
 # E-06：片段循环与慢放
 
+## UX-01～03接续（基线322fccc）
+
+用户两张截图显示选择态loopHelp新增文档流高度；将提示移到screen绝对定位浮层、loop-controls不因取消按钮/长时间文字换行。滚轮只绑定画面/时间轴，用既有step与选区active端点，新增两项本地设置按统一应用保存；纯显示/输入修改不重载媒体。preferences旧ram/quality/predecode/percent记录只读兼容，保存格式增加wheelFrames/showCacheStrip，不写用户实际设置来测试。
+
+验证新默认/合法值/非法和未知字段、失败原子保存/重开、普通/选区滚轮方向与灵敏度、横向/修饰键/输入/关闭保护、隐藏后零画布更新且重现准确绿条、画布内在尺寸不变/布局不受提示高度影响。沿development-plan本任务独立e06-controls-local额度，旧e06-local不动。实际Eagle集中体验由用户判断；不重新导入入口或重跑长期性能。
+
+设置文件补验仅在tests/e06-controls-settings-唯一自有目录、合计≤2MiB：真实Windows/新Node16进程读取旧格式、保存/重开/沿旧调用改画质保留新字段、非法值与残留next拒绝。清理前核对绝对路径/文件清单/身份和SHA，保全回执后定点删除；不访问或修改plugin/memory-settings.json。布局无真实渲染证据时明确待Eagle体验，不以CSS检查当实际尺寸通过。
+
 ## 选区优化执行（基线21f62d6）
 
 已批准交互见[产品修订](../../product.md#e-06选区交互修订2026-10-18用户已批准)。不再默认两端放片头/尾，不用旧两按钮作为主要操作。新增loop-selection.js只管理UI草稿/按键时序，ui.js负责DOM/指针，session转发，player决定真实源帧及原子范围；旧循环/音频与缓存继续复用。
