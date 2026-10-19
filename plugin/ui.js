@@ -4,20 +4,17 @@
   // Eagle exposes CommonJS in a Window, but its require is rooted in the host.
   // Page scripts must use the helper already loaded by index.html instead.
   const view = typeof window === 'object' && window ? window : root && root.document ? root : null;
-  const api = factory(view ? view.EVALoopSelection : require('./loop-selection.js'));
+  const api = factory(view ? view.EVALoopSelection : require('./loop-selection.js'),
+    view ? view.EVATimelineView : require('./timeline-view.js'));
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (view) view.EVAUI = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (selectionAPI) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (selectionAPI, timelineAPI) {
   'use strict';
-  const clamp = value => Math.max(0, Math.min(1, value));
   function formatTime(seconds) {
     const milliseconds = Math.max(0, Math.floor((Number(seconds) || 0) * 1000 + .00001));
     return Math.floor(milliseconds / 60000) + ':' + String(Math.floor(milliseconds / 1000) % 60).padStart(2, '0') + '.' + String(milliseconds % 1000).padStart(3, '0');
   }
-  function pointerTime(x, rect, duration) {
-    if (!Number.isFinite(x) || !rect || !(rect.width > 0) || !(duration > 0)) return null;
-    return clamp((x - rect.left) / rect.width) * duration;
-  }
+  const pointerTime = (x, rect, range) => timelineAPI.timeAt(x, rect, range);
   function spaceAllowed(event, timeline) {
     if (!(event.code === 'Space' || event.key === ' ') || event.repeat || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false;
     const target = event.target;
@@ -49,11 +46,13 @@
       'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentText', 'commentSave', 'commentCancel', 'commentKeyboardHint',
       'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality',
       'forwardPredecode', 'decodedCache', 'cacheStatus', 'playbackRate', 'loopSelect', 'loopCancel', 'loopEnabled', 'loopRange',
-      'loopBand', 'loopHandleStart', 'loopHandleEnd', 'loopHelp', 'wheelFrames', 'showCacheStrip',
+      'loopBand', 'loopHandleStart', 'loopHandleEnd', 'loopHelp', 'timeRuler', 'wheelFrames', 'showCacheStrip',
       'exportDestination', 'exportFolder', 'exportFolderArea', 'exportFolderRefresh', 'exportFrame', 'exportClip', 'exportCancel', 'exportCheck', 'exportStatus'];
     const el = Object.fromEntries(ids.map(id => [id, doc.getElementById(id)]));
     if (ids.some(id => !el[id])) throw new Error('播放器界面缺少必要元素。');
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
+    let viewRange = { start: 0, end: 0, focused: false }, timelineWidth = null, rulerKey = null;
+    const markerButtons = [], markerTimes = new WeakMap();
     const attributes = new Map();
     const loopAttributes = new WeakMap();
     function loopAttribute(node, name, value) {
@@ -71,25 +70,26 @@
     }
     function refreshCoverage() {
       const value = session && typeof session.cacheCoverageSnapshot === 'function' ? session.cacheCoverageSnapshot() : null;
-      if (!value || value.sessionEpoch !== state.epoch || !(value.duration > 0)) { clearCoverage(); return; }
+      if (!value || value.sessionEpoch !== state.epoch || !(value.duration > 0) || !['paused', 'playing', 'seeking'].includes(state.state)) { clearCoverage(); return; }
       const text = value.issue ? '后台准备暂停，请重开视频重试' : value.decodedFrames === value.totalFrames ? '整段已解压' :
         (value.enabled ? value.phase === 'budget' ? '已保留操作余量' : '后台准备附近画面' : '按需缓存') + ' · ' + value.decodedFrames + ' / ' + value.totalFrames + ' 帧';
       set(el.cacheStatus, 'textContent', text);
       if (el.decodedCache.hidden) { coverageKey = null; return; }
-      const key = [value.sessionEpoch, value.epoch, value.revision, value.duration].join(':');
+      const key = [value.sessionEpoch, value.epoch, value.revision, value.duration, viewRange.start, viewRange.end].join(':');
       if (key === coverageKey) return;
       coverageKey = key;
       if (!coverageContext) return;
       if (!coverageSize) {
         const scale = Number(win.devicePixelRatio) || 1;
-        coverageSize = { width: Math.max(1, Math.round(el.timeline.getBoundingClientRect().width * scale)), height: Math.max(1, Math.round(3 * scale)) };
+        if (timelineWidth === null) timelineWidth = el.timeline.getBoundingClientRect().width;
+        coverageSize = { width: Math.max(1, Math.round(timelineWidth * scale)), height: Math.max(1, Math.round(3 * scale)) };
       }
       const { width, height } = coverageSize;
       set(el.decodedCache, 'width', width); set(el.decodedCache, 'height', height);
       coverageContext.clearRect(0, 0, width, height); coverageContext.fillStyle = '#68ab79';
       for (const range of value.ranges) {
-        const start = clamp(range.start / value.duration), end = clamp(range.end / value.duration);
-        if (end > start) coverageContext.fillRect(start * width, 0, (end - start) * width, height);
+        const clipped = timelineAPI.clip(range.start, range.end, viewRange);
+        if (clipped) coverageContext.fillRect(clipped.start * width, 0, (clipped.end - clipped.start) * width, height);
       }
     }
     function refreshMemory() {
@@ -169,7 +169,7 @@
       } catch (failure) { if (session === active) set(el.cacheClearStatus, 'textContent', String(failure.message || failure)); }
       finally { cleaning = false; if (session === active) updateMemorySettings(); }
     });
-    on(win, 'resize', () => { coverageKey = null; coverageSize = null; refreshCoverage(); });
+    on(win, 'resize', () => { coverageKey = null; coverageSize = null; timelineWidth = null; rulerKey = null; updateTransport(); refreshCoverage(); });
     const interactive = () => !!session && !state.comments?.draft && state.exportState?.status !== 'busy' && ['paused', 'playing', 'seeking'].includes(state.state);
     const invoke = fn => {
       try { Promise.resolve(fn()).catch(() => {}); } catch (_) { /* session publishes operation errors */ }
@@ -178,6 +178,44 @@
       setTimeout: (fn, ms) => (win.setTimeout || setTimeout)(fn, ms), clearTimeout: id => (win.clearTimeout || clearTimeout)(id),
       changed() { updateTransport(); updateMemorySettings(); updateComments(); updateExports(); } });
     let transportBusy = false;
+    function positionMarkers() {
+      for (const marker of markerButtons) {
+        const time = markerTimes.get(marker);
+        set(marker, 'hidden', !timelineAPI.contains(time, viewRange));
+        set(marker.style, 'left', timelineAPI.ratio(time, viewRange) * 100 + '%');
+      }
+    }
+    function updateView() {
+      if (timelineWidth === null) timelineWidth = el.timeline.getBoundingClientRect().width;
+      const next = gesture ? gesture.range : timelineAPI.visibleRange(state.duration, state.playback?.transport?.loop, selection.snapshot().editing);
+      const changed = next.start !== viewRange.start || next.end !== viewRange.end || next.focused !== viewRange.focused;
+      viewRange = next;
+      attribute('aria-valuemin', String(viewRange.start)); attribute('aria-valuemax', String(viewRange.end));
+      if (changed) {
+        rulerKey = null; hintGeometry = null; coverageKey = null;
+        attribute('data-view', viewRange.focused ? 'loop' : 'full');
+        attribute('aria-label', viewRange.focused ? '循环片段进度（L关闭恢复整段，长按R临时整段调整）' : '视频进度');
+        positionMarkers();
+        if (!gesture) thumb(state.playback?.time || 0);
+        if (hintEpoch !== null) hint(state.playback?.time || 0);
+        refreshCoverage();
+      }
+      const key = [viewRange.start, viewRange.end, viewRange.focused, timelineWidth].join(':');
+      if (rulerKey === key) return;
+      rulerKey = key;
+      // Non-DOM unit harnesses may omit createElement; browser/loader tests
+      // exercise the actual bounded tick nodes and their geometry.
+      if (typeof doc.createElement !== 'function') return;
+      const nodes = timelineAPI.ticks(viewRange, timelineWidth).map(value => {
+        const tick = doc.createElement('span'); tick.className = 'time-tick'; tick.style.left = value.position * 100 + '%';
+        if (value.label) {
+          const label = doc.createElement('span'); label.className = 'tick-label'; label.textContent = value.label;
+          label.style.left = value.labelOffset + 'px'; tick.appendChild(label);
+        }
+        return tick;
+      });
+      el.timeRuler.replaceChildren(...nodes);
+    }
     async function transportAction(method, value) {
       if (!session || transportBusy || selection.snapshot().editing || selection.snapshot().busy || !interactive() || !['paused', 'playing'].includes(state.state) || gesture) return;
       const active = session; transportBusy = true; updateTransport();
@@ -186,6 +224,7 @@
       finally { transportBusy = false; if (session === active) updateTransport(); }
     }
     function updateTransport() {
+      updateView();
       const transport = state.playback && state.playback.transport, loop = transport && transport.loop;
       const editing = selection.snapshot(), disabled = transportBusy || editing.busy || !interactive() || !['paused', 'playing'].includes(state.state) || !!gesture;
       set(el.playbackRate, 'disabled', disabled || editing.editing);
@@ -202,19 +241,20 @@
       const point = (time, ordinal) => Number.isFinite(time) && Number.isSafeInteger(ordinal) ? formatTime(time) + '（第' + (ordinal + 1) + '帧）' : '未设';
       const start = editing.editing ? editing.start : loop?.startOrdinal != null ? { time: loop.startTime, ordinal: loop.startOrdinal } : null,
         endPoint = editing.editing ? editing.end : loop?.endOrdinal != null ? { time: loop.endTime, ordinal: loop.endOrdinal } : null;
+      loopAttribute(el.timeline, 'data-has-range', String(!!(start || endPoint)));
       set(el.loopRange, 'textContent', !start && !endPoint ? '未设置范围' : point(start?.time, start?.ordinal) + ' → ' + point(endPoint?.time, endPoint?.ordinal) + (start && endPoint ? ' · 含结束帧' : ''));
       set(el.loopRange, 'title', el.loopRange.textContent);
       loopAttribute(el.timeline, 'data-selecting', String(editing.editing)); loopAttribute(el.timeline, 'data-loop-on', String(!!loop?.enabled && !editing.editing));
       for (const [node, value, name] of [[el.loopHandleStart, start, 'start'], [el.loopHandleEnd, endPoint, 'end']]) {
         set(node, 'hidden', !value); set(node, 'disabled', !editing.editing || editing.busy);
         loopAttribute(node, 'data-active', String(editing.editing && editing.active === name));
-        if (value) { set(node.style, 'left', clamp(value.time / state.duration) * 100 + '%'); loopAttribute(node, 'aria-label', (name === 'start' ? '循环起点 ' : '循环终点 ') + point(value.time, value.ordinal)); }
+        if (value) { set(node.style, 'left', timelineAPI.ratio(value.time, viewRange) * 100 + '%'); loopAttribute(node, 'aria-label', (name === 'start' ? '循环起点 ' : '循环终点 ') + point(value.time, value.ordinal)); }
       }
       set(el.loopBand, 'hidden', !start || !endPoint);
-      if (start && endPoint && state.duration > 0) { set(el.loopBand.style, 'left', clamp(start.time / state.duration) * 100 + '%'); set(el.loopBand.style, 'width', Math.max(0, (endPoint.time - start.time) / state.duration) * 100 + '%'); }
+      if (start && endPoint && state.duration > 0) { set(el.loopBand.style, 'left', timelineAPI.ratio(start.time, viewRange) * 100 + '%'); set(el.loopBand.style, 'width', Math.max(0, timelineAPI.ratio(endPoint.time, viewRange) - timelineAPI.ratio(start.time, viewRange)) * 100 + '%'); }
       const help = editing.message || (editing.editing ? editing.busy ? '正在固定画面…' :
         (!start ? '点击并拖动起点，再点击并拖动终点。' : !endPoint ? '点击并拖动终点。' : '拖动端点调整，点击空白处浏览；【／】微调当前端点。') +
-        (editing.mode === 'hold' ? ' 松开 R 确认，Esc 取消。' : ' 再按 R 确认，Esc 取消。') : '');
+        (editing.mode === 'hold' ? ' 临时整段；松开 R 确认，Esc 取消。' : ' 再按 R 确认，Esc 取消。') : '');
       set(el.loopHelp, 'textContent', help); set(el.loopHelp, 'hidden', !help);
     }
     on(el.playbackRate, 'change', () => { if (!el.playbackRate.disabled) transportAction('setPlaybackRate', Number(el.playbackRate.value)); });
@@ -222,7 +262,7 @@
     on(el.loopCancel, 'click', () => { clearGesture(); selection.cancel(); });
     on(el.loopEnabled, 'change', () => { if (!el.loopEnabled.disabled) selection.toggleLoop(); });
     function thumb(time) {
-      const ratio = state.duration > 0 ? clamp(time / state.duration) : 0;
+      const ratio = timelineAPI.ratio(time, viewRange);
       set(el.thumb.style, 'left', ratio * 100 + '%'); set(el.progress.style, 'width', ratio * 100 + '%');
     }
     function measureHint(rect) {
@@ -235,7 +275,7 @@
       set(el.timeHint, 'textContent', formatTime(time));
       if (!hintGeometry) measureHint();
       const { width, half } = hintGeometry;
-      const x = state.duration > 0 ? clamp(time / state.duration) * width : 0;
+      const x = timelineAPI.ratio(time, viewRange) * width;
       set(el.timeHint.style, 'left', Math.max(Math.min(half, width / 2), Math.min(width - half, x)) + 'px');
     }
     function clearHint() { hintEpoch = null; hintGeometry = null; set(el.timeHint, 'hidden', true); }
@@ -245,7 +285,7 @@
       updateTransport();
     }
     function requestAt(event, final, inputAt = now()) {
-      const time = event && gesture ? pointerTime(event.clientX, gesture.rect, state.duration) : lastRequestedTime;
+      const time = event && gesture ? pointerTime(event.clientX, gesture.rect, gesture.range) : lastRequestedTime;
       if (time === null) return;
       lastRequestedTime = time; thumb(time);
       if (gesture && gesture.point) selection.move(gesture.point, time, final, inputAt);
@@ -263,7 +303,7 @@
       const editing = selection.snapshot(); if (editing.busy) return;
       const handle = event.target === el.loopHandleStart ? 'start' : event.target === el.loopHandleEnd ? 'end' : null;
       if (handle && !editing.editing) return;
-      event.preventDefault(); gesture = { id: event.pointerId, rect: el.timeline.getBoundingClientRect(), epoch: state.epoch,
+      event.preventDefault(); gesture = { id: event.pointerId, rect: el.timeline.getBoundingClientRect(), epoch: state.epoch, range: { ...viewRange },
         point: editing.editing ? handle || selection.nextPoint() : null };
       el.timeline.focus(); try { el.timeline.setPointerCapture(event.pointerId); } catch (_) {}
       hintEpoch = state.epoch; set(el.timeHint, 'hidden', false);
@@ -320,7 +360,7 @@
     });
     let renderedItems = null, renderedDuration = null, renderedComments = null, renderedInteractive = null, editorId = null, editorEpoch = null;
     let commentComposing = false, commentCompositionEnd = -Infinity;
-    const commentButtons = [], markerButtons = [];
+    const commentButtons = [];
     function seekComment(event) {
       const button = event.target && event.target.closest && event.target.closest('button[data-comment-id]');
       if (button && !button.disabled && interactive() && !selection.snapshot().editing) {
@@ -414,11 +454,12 @@
           row.appendChild(actions); el.commentList.appendChild(row); commentButtons.push({ button, inRange });
           if (inRange && state.duration > 0) {
             const marker = doc.createElement('button'); marker.type = 'button'; marker.dataset.commentId = item.id;
-            marker.className = 'comment-marker'; marker.style.left = clamp(item.time / state.duration) * 100 + '%';
+            marker.className = 'comment-marker'; markerTimes.set(marker, item.time);
             marker.title = formatTime(item.time) + '  ' + item.text; marker.setAttribute('aria-label', marker.title);
             el.commentMarkers.appendChild(marker); markerButtons.push(marker);
           }
         }
+        positionMarkers();
       }
       if (rebuilt || renderedInteractive !== ready) {
         for (const entry of commentButtons) set(entry.button, 'disabled', !ready || !entry.inRange);
@@ -451,14 +492,17 @@
     }
     function update(snapshot) {
       state = snapshot;
+      if (coverageEpoch !== state.epoch || !['paused', 'playing', 'seeking'].includes(state.state)) clearCoverage();
+      coverageEpoch = state.epoch;
       selection.update();
       if (gesture && (gesture.epoch !== state.epoch || !interactive())) clearGesture();
       if (hintEpoch !== null && (hintEpoch !== state.epoch || !interactive() || state.state === 'playing')) clearHint();
+      updateView();
       const ready = interactive(), time = state.playback && Number.isFinite(state.playback.time) ? state.playback.time : 0;
       set(el.play, 'disabled', !ready || !['paused', 'playing'].includes(state.state));
       set(el.previous, 'disabled', !ready); set(el.next, 'disabled', !ready);
       set(el.play, 'textContent', state.state === 'playing' ? '暂停' : '播放');
-      attribute('aria-disabled', String(!ready)); attribute('aria-valuemax', String(state.duration || 0));
+      attribute('aria-disabled', String(!ready));
       attribute('aria-valuenow', String(time)); attribute('aria-valuetext', formatTime(time));
       set(el.currentTime, 'textContent', formatTime(time)); set(el.duration, 'textContent', formatTime(state.duration));
       const ordinal = state.playback && state.playback.frameOrdinal, count = state.playback && state.playback.frameCount;
@@ -482,15 +526,14 @@
       updateTransport();
       const hideStrip = state.interactionSettings?.showCacheStrip === false;
       if (el.decodedCache.hidden !== hideStrip) { set(el.decodedCache, 'hidden', hideStrip); coverageKey = null; }
-      if (coverageEpoch !== state.epoch || !['paused', 'playing', 'seeking'].includes(state.state)) clearCoverage();
-      coverageEpoch = state.epoch;
     }
     return { canvas: el.picture, bindSession(value) {
       if (session !== value) {
         selection.destroy();
         if (session && typeof session.setCommentsVisible === 'function') session.setCommentsVisible(false);
       }
-      session = value; update(state); commentsVisibility(); refreshMemory(); refreshCoverage();
+      session = value; timelineWidth = null; rulerKey = null; coverageKey = null; coverageSize = null;
+      update(state); commentsVisibility(); refreshMemory(); refreshCoverage();
       if (memoryTimer === null && typeof win.setInterval === 'function') memoryTimer = win.setInterval(refreshMemory, 500);
       if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
     }, update,

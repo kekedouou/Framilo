@@ -35,6 +35,7 @@
       if (draft) { draft.mode = mode; changed(); return; }
       const saved = loop();
       const value = draft = { session: getSession(), epoch: getState().epoch, mode, initializing: true, active: null, modified: false,
+        originalStart: saved?.startOrdinal ?? null, originalEnd: saved?.endOrdinal ?? null,
         start: saved?.startOrdinal != null ? { ordinal: saved.startOrdinal, time: saved.startTime } : null,
         end: saved?.endOrdinal != null ? { ordinal: saved.endOrdinal, time: saved.endTime } : null, pending: Promise.resolve({ status: 'drawn' }) };
       message = ''; changed();
@@ -50,7 +51,9 @@
       if (ordinal !== undefined) bounds.ordinal = ordinal;
       const frame = value.session.loopFrameAt(time, bounds);
       if (!frame) { announce('该视频暂时无法选择两个不同的帧。'); return false; }
-      value[point] = frame; value.active = point; value.modified = true; message = ''; changed();
+      value[point] = frame; value.active = point;
+      value.modified = (value.start?.ordinal ?? null) !== value.originalStart || (value.end?.ordinal ?? null) !== value.originalEnd;
+      message = ''; changed();
       value.pending = Promise.resolve(value.session.seek(frame.time, { index: frame.ordinal, final: !!final, inputAt, kind: 'loop-select' }))
         .catch(() => ({ status: 'error' }));
       return true;

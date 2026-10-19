@@ -163,7 +163,8 @@
         endId: frames && this.loopEnd !== null ? frames[this.loopEnd].id : null,
         startOrdinal: this.loopStart, endOrdinal: this.loopEnd,
         startTime: frames && this.loopStart !== null ? frames[this.loopStart].time : null,
-        endTime: frames && this.loopEnd !== null ? frames[this.loopEnd].time : null } };
+        endTime: frames && this.loopEnd !== null ? frames[this.loopEnd].time : null,
+        endBoundary: range ? range.end : null } };
     }
     async _editTransport(edit, resume = false) {
       if (!this._canSeek()) throw new Error('视频尚未就绪。');
@@ -377,6 +378,13 @@
       if (!this._canSeek() || !Number.isFinite(time)) return Promise.reject(new Error('播放器尚未就绪或定位时间无效。'));
       const settings = Object.assign({ final: false, kind: 'seek', inputAt: this.env.now() }, options || {});
       if (!Number.isFinite(settings.inputAt)) return Promise.reject(new Error('原始输入时间无效。'));
+      if (settings.kind === 'annotation' && this.loopEnabled) {
+        const range = this._loopRange();
+        const ordinal = settings.index === undefined ? this.index.frameAt(this.info.frames, Math.max(0, Math.min(this.info.duration, time))) : settings.index;
+        // One owned seek publishes both changes. No awaited toggle can resume
+        // playback or act on another video's player before the annotation seek.
+        if (range && (ordinal < range.first || ordinal > range.last)) this.loopEnabled = false;
+      }
       this._halt(false); this.lastIssue = null; this.lastErrorCode = null; return this._request(time, settings);
     }
     step(delta) {

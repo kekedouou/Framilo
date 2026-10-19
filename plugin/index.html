@@ -16,6 +16,7 @@
       </div>
       <div class="transport">
         <div class="timeline-area">
+          <div id="timeRuler" class="time-ruler" aria-hidden="true"></div>
           <div id="timeline" class="timeline" role="slider" tabindex="0" aria-label="视频进度"
             aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-disabled="true">
             <canvas id="decodedCache" class="cache-strip" width="1" height="3" aria-label="绿条表示RAM中已解压的画面"></canvas>
@@ -36,10 +37,13 @@
           <span class="time-readout"><output id="frameReadout" class="frame-readout">帧：—</output><span><output id="currentTime">0:00.000</output><span class="muted"> / </span><output id="duration">0:00.000</output></span></span>
         </div>
         <div class="loop-controls" aria-label="片段循环">
-          <button id="loopSelect" type="button" title="R短按选择/清除，长按调整；选择中再按R确认" disabled>选择片段（R）</button>
+          <button id="loopSelect" type="button" title="R短按选择/清除；长按R临时显示整段并调整，松开确认；Esc取消" disabled>选择片段（R）</button>
           <button id="loopCancel" type="button" hidden>取消（Esc）</button>
-          <label title="L切换循环，关闭时保留范围"><input id="loopEnabled" type="checkbox" disabled>循环（L）</label>
+          <label title="L开启循环并展开片段，关闭恢复整段、保留范围"><input id="loopEnabled" type="checkbox" disabled>循环（L）</label>
           <output id="loopRange" class="muted">未设置范围</output>
+          <details class="shortcut-help"><summary title="查看现有操作和快捷键">操作提示</summary>
+            <div class="shortcut-panel">空格：播放／暂停<br>【／】：前后逐帧；画面或时间轴滚轮：逐帧<br>R短按：选择／确认／清除片段<br>长按R：暂停并临时查看整段、拖动端点；松开确认，Esc取消<br>L：循环并展开片段／关闭并查看整段<br>标注输入：Enter保存，Shift+Enter换行</div>
+          </details>
         </div>
       </div>
     </section>
@@ -105,6 +109,7 @@
   </main>
   <script src="player.js"></script>
   <script src="loop-selection.js"></script>
+  <script src="timeline-view.js"></script>
   <script src="ui.js"></script>
   <script src="app.js"></script>
 </body>

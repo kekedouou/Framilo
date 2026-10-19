@@ -5,11 +5,12 @@ const fs = require('fs'), path = require('path'), vm = require('vm'), assert = r
 const root = path.resolve(__dirname, '../plugin');
 const scripts = [...fs.readFileSync(path.join(root, 'index.html'), 'utf8').matchAll(/<script[^>]+src="([^"]+)"/g)].map(m => m[1]);
 assert(scripts.indexOf('loop-selection.js') < scripts.indexOf('ui.js'));
+assert(scripts.includes('timeline-view.js') && scripts.indexOf('timeline-view.js') < scripts.indexOf('ui.js'));
 function element(id) {
   const handlers = new Map();
   return { id, style: {}, attributes: {}, hidden: false, disabled: false, offsetWidth: 80,
     addEventListener(type, fn) { handlers.set(type, fn); }, removeEventListener(type) { handlers.delete(type); },
-    setAttribute(name, value) { this.attributes[name] = value; }, replaceChildren() {}, focus() {},
+    setAttribute(name, value) { this.attributes[name] = value; }, replaceChildren() {}, appendChild() {}, focus() {},
     getBoundingClientRect() { return { left: 0, width: 800 }; }, closest() { return null; } };
 }
 async function check(mode) {
@@ -52,6 +53,7 @@ async function check(mode) {
   for (const name of scripts) vm.runInContext(fs.readFileSync(path.join(root, name), 'utf8'), context, { filename: name });
   const page = context.window;
   assert.equal(typeof page.EVALoopSelection.createSelection, 'function'); assert.equal(typeof page.EVAUI.createUI, 'function');
+  assert.equal(typeof page.EVATimelineView.visibleRange, 'function');
   assert.equal(typeof hooks.onPluginCreate, 'function'); assert.equal(typeof hooks.onPluginRun, 'function');
   assert(!requests.some(name => name.startsWith('.')));
   await hooks.onPluginCreate({ path: root });

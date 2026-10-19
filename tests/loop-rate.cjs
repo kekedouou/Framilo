@@ -10,6 +10,17 @@ async function mark(h,first,last){
 }
 async function main(){
   {
+    const h=harness(),index=require('../plugin/frame-index.cjs'),info=sample('visible-vfr',null,4);
+    info.frames=index.buildIndex([0,30,80,210].map((n,id)=>({id,file:'f'+id+'.jpg',bytes:10,ptsTicks:String(n)})),{timeBase:[1,1000],lastFrameEndTicks:'400'}).frames;info.duration=.4;
+    await h.load(info);await h.settle(h.player.applyLoopRange({startOrdinal:0,endOrdinal:2}));
+    near(h.player.transportSnapshot().loop.endTime,.08);near(h.player.transportSnapshot().loop.endBoundary,.21);
+    await h.settle(h.player.seek(.15,{kind:'annotation',final:true}));assert.equal(h.player.snapshot().frameOrdinal,2);assert(h.player.loopEnabled);
+    await h.settle(h.player.seek(.22,{kind:'annotation',final:true}));assert.equal(h.player.snapshot().frameOrdinal,3);assert(!h.player.loopEnabled);
+    assert.equal(h.player.transportSnapshot().loop.startOrdinal,0);assert.equal(h.player.transportSnapshot().loop.endOrdinal,2);assert.equal(h.player.snapshot().state,'paused');
+    await h.settle(h.player.applyLoopRange({startOrdinal:1,endOrdinal:3}));near(h.player.transportSnapshot().loop.endBoundary,.4);
+    await h.settle(h.player.clearLoop());assert.equal(h.player.transportSnapshot().loop.endBoundary,null);await h.close();
+  }
+  {
     const h=harness();await h.load(sample('range-atomic',audio(0,2),20));
     assert.deepEqual(h.player.loopFrameAt(.249,{maxOrdinal:18}),{ordinal:2,frameId:2,time:.2});
     assert.equal(h.player.loopFrameAt(2,{maxOrdinal:18}).ordinal,18);

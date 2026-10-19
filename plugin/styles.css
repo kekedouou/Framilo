@@ -12,7 +12,11 @@ button:focus-visible, .timeline:focus-visible { outline: 2px solid #7aa7dc; outl
 canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
 .notice { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; color: #bcbcbc; background: #121212; }
 .transport { flex: 0 0 auto; padding: 14px 18px 16px; }
-.timeline-area { padding-top: 30px; }
+.timeline-area { padding-top: 64px; }
+.time-ruler { position: absolute; top: 0; left: 0; right: 0; height: 20px; pointer-events: none; font-size: 11px; color: #aaa; font-variant-numeric: tabular-nums; }
+.time-tick { position: absolute; top: 0; bottom: 0; width: 1px; }
+.time-tick::after { content: ""; position: absolute; bottom: 0; height: 4px; width: 1px; background: #717171; }
+.tick-label { position: absolute; top: 0; white-space: nowrap; line-height: 14px; }
 .timeline { position: relative; height: 26px; touch-action: none; user-select: none; cursor: pointer; }
 .timeline[aria-disabled="true"] { cursor: default; opacity: .4; }
 .rail { position: absolute; top: 11px; left: 0; right: 0; height: 4px; border-radius: 2px; background: #555; overflow: hidden; }
@@ -27,6 +31,9 @@ canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
 .loop-controls button { padding: 4px 9px; flex-shrink: 0; white-space: nowrap; }
 .loop-controls label { flex-shrink: 0; white-space: nowrap; }
 .loop-controls output { font-size: 12px; font-variant-numeric: tabular-nums; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shortcut-help { position: relative; margin-left: auto; flex-shrink: 0; font-size: 12px; color: #aaa; }
+.shortcut-help summary { cursor: pointer; white-space: nowrap; }
+.shortcut-panel { position: absolute; right: 0; bottom: 26px; width: 340px; max-width: calc(100vw - 32px); padding: 10px 12px; border: 1px solid #555; border-radius: 4px; background: #242424; color: #ddd; line-height: 1.8; z-index: 5; box-shadow: 0 3px 12px #0006; }
 .loop-help { position: absolute; left: 12px; right: 12px; bottom: 8px; margin: 0; padding: 4px 8px;
   color: #e9c887; font-size: 12px; background: #151515e6; border-radius: 3px; pointer-events: none; z-index: 3; }
 .loop-band { position: absolute; top: 10px; height: 6px; background: #a6b9dc; opacity: .22; pointer-events: none; }
@@ -47,7 +54,7 @@ canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
 .loop-handle[data-active="true"] { outline: 2px solid #e9c887; outline-offset: 1px; }
 .loop-handle:hover:enabled { background: linear-gradient(#677590 0 18px, transparent 18px); }
 .timeline[data-selecting="true"] .loop-handle:hover:enabled { background: linear-gradient(#806b40 0 18px, transparent 18px); }
-.timeline[data-selecting="true"] .time-hint { top: -43px; }
+.timeline[data-selecting="true"] .time-hint, .timeline[data-has-range="true"] .time-hint { top: -43px; }
 .time-readout { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; color: #d0d0d0; display: flex; flex-wrap: wrap; justify-content: flex-end; column-gap: 14px; row-gap: 3px; }
 .frame-readout { color: #aaa; }
 .cache-strip { position: absolute; top: 3px; left: 0; width: 100%; height: 3px; object-fit: fill; pointer-events: none; }
