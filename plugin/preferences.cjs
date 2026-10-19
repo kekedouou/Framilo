@@ -5,11 +5,13 @@ const { quality } = require('./preview-profile.cjs');
 const OWNER = 'eva-memory-preference-v1', DEFAULT_BYTES = 1024 ** 3, MAX_FILE = 4096;
 const OPTIONS = Object.freeze([512, ...Array.from({ length: 10 }, (_, i) => (i + 1) * 1024)]);
 const WHEEL_OPTIONS = Object.freeze([1, 2, 5, 10]);
-const DEFAULT_INTERACTION = Object.freeze({ wheelFrames: 1, showCacheStrip: true });
-function interactionValue(wheelFrames = 1, showCacheStrip = true) {
+const RATE_STEP_OPTIONS = Object.freeze([.1, .2, .25, .5]);
+const DEFAULT_INTERACTION = Object.freeze({ wheelFrames: 1, showCacheStrip: true, rateStep: .1 });
+function interactionValue(wheelFrames = 1, showCacheStrip = true, rateStep = .1) {
   if (!WHEEL_OPTIONS.includes(wheelFrames)) throw new Error('滚轮灵敏度请选择1、2、5或10帧。');
   if (typeof showCacheStrip !== 'boolean') throw new Error('缓存绿条显示设置必须为开或关。');
-  return Object.freeze({ wheelFrames, showCacheStrip });
+  if (!RATE_STEP_OPTIONS.includes(rateStep)) throw new Error('倍速步长请选择0.1、0.2、0.25或0.5。');
+  return Object.freeze({ wheelFrames, showCacheStrip, rateStep });
 }
 function memoryValue(total, ramMiB, persisted = false) {
   if (!Number.isSafeInteger(total) || total <= 0 || !OPTIONS.includes(ramMiB))
@@ -50,10 +52,10 @@ function createMemoryPreferences(options) {
       const tier = candidates.reduce((a, b) => Math.abs(b - oldMiB) < Math.abs(a - oldMiB) ? b : a, candidates[0]);
       return Object.freeze({ ...memoryValue(total, tier, true), legacyConverted: true });
     }
-    const keys = Object.keys(value).filter(key => !['wheelFrames', 'showCacheStrip'].includes(key)).sort().join(',');
+    const keys = Object.keys(value).filter(key => !['wheelFrames', 'showCacheStrip', 'rateStep'].includes(key)).sort().join(',');
     if (!['owner,ramMiB', 'owner,previewQuality,ramMiB', 'forwardPredecode,owner,previewQuality,ramMiB'].includes(keys)) throw new Error('播放器设置格式无法识别；原件已保留。');
     if (value.forwardPredecode !== undefined && typeof value.forwardPredecode !== 'boolean') throw new Error('提前解压设置必须为开或关。');
-    const interaction = interactionValue(value.wheelFrames, value.showCacheStrip), selected = quality(value.previewQuality), memory = memoryValue(total, value.ramMiB, true);
+    const interaction = interactionValue(value.wheelFrames, value.showCacheStrip, value.rateStep), selected = quality(value.previewQuality), memory = memoryValue(total, value.ramMiB, true);
     selectedPredecode = value.forwardPredecode === undefined ? true : value.forwardPredecode;
     selectedQuality = selected; selectedInteraction = interaction;
     return memory;
@@ -63,7 +65,7 @@ function createMemoryPreferences(options) {
     preview: ramMiB => memoryValue(total, ramMiB), save(ramMiB, previewQuality = selectedQuality, forwardPredecode = selectedPredecode, interaction = selectedInteraction) {
     quality(previewQuality);
     if (typeof forwardPredecode !== 'boolean') throw new Error('提前解压设置必须为开或关。');
-    const nextInteraction = interactionValue(interaction.wheelFrames, interaction.showCacheStrip);
+    const nextInteraction = interactionValue(interaction.wheelFrames, interaction.showCacheStrip, interaction.rateStep);
     const next = memoryValue(total, ramMiB, true); checkRoot(); read(); const before = identity(stat(file));
     const bytes = Buffer.from(JSON.stringify({ owner: OWNER, ramMiB, previewQuality, forwardPredecode, ...nextInteraction }, null, 2));
     let fd = null, owned = null;
@@ -81,4 +83,4 @@ function createMemoryPreferences(options) {
     }
   } });
 }
-module.exports = { createMemoryPreferences, memoryValue, interactionValue, DEFAULT_INTERACTION, WHEEL_OPTIONS, OWNER, DEFAULT_BYTES, OPTIONS };
+module.exports = { createMemoryPreferences, memoryValue, interactionValue, DEFAULT_INTERACTION, WHEEL_OPTIONS, RATE_STEP_OPTIONS, OWNER, DEFAULT_BYTES, OPTIONS };

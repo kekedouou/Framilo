@@ -228,7 +228,7 @@ test('E03 quality selection remains pending until unified apply, label uses actu
     sourceWidth:1920,sourceHeight:1080,sampleAspectRatio:'1:1',originalResolution:false}});
   assert.equal(h.el('qualitySelect').options[1].textContent,'1080p（原始分辨率）');
   h.el('qualitySelect').value='1080p';h.el('qualitySelect').fire('change');assert.equal(applied,null);
-  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'1080p',forwardPredecode:false,wheelFrames:1,showCacheStrip:true});
+  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'1080p',forwardPredecode:false,wheelFrames:1,showCacheStrip:true,rateStep:.1});
   assert.equal(h.el('qualitySelect').disabled,true);h.ui.destroy();
 });
 test('E05 strip is sampled separately; unchanged residency and frame updates do not repaint or scan',()=>{
@@ -254,7 +254,7 @@ test('E04 switch keeps pending edits across frame updates and applies with unifi
   const settings={...h.state,memorySettings:{ramMiB:1024,ramBytes:1024**3},previewQuality:'720p',forwardPredecode:true};
   h.ui.update(settings);assert.equal(h.el('forwardPredecode').checked,true);
   h.el('forwardPredecode').checked=false;h.ui.update({...settings,playback:{time:3}});assert.equal(h.el('forwardPredecode').checked,false);
-  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:false,wheelFrames:1,showCacheStrip:true});h.ui.destroy();
+  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:false,wheelFrames:1,showCacheStrip:true,rateStep:.1});h.ui.destroy();
 });
 test('E05 fractional scaling fills the full rail; changing residency avoids repeated layout queries',()=>{
   const fs=require('fs'),path=require('path'),css=fs.readFileSync(path.join(__dirname,'../plugin/styles.css'),'utf8');
@@ -312,7 +312,7 @@ test('Wheel/strip settings stay pending until apply; hidden green cache stops pa
   const state={...h.state,memorySettings:{ramMiB:1024,ramBytes:1024**3},previewQuality:'720p',forwardPredecode:true,interactionSettings:{wheelFrames:1,showCacheStrip:true}};
   h.ui.update(state);h.el('wheelFrames').value='5';h.el('showCacheStrip').checked=false;h.ui.update({...state,playback:{time:3}});
   assert.equal(h.el('wheelFrames').value,'5');assert.equal(h.el('showCacheStrip').checked,false);assert.equal(h.el('decodedCache').hidden,false);
-  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:true,wheelFrames:5,showCacheStrip:false});
+  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:true,wheelFrames:5,showCacheStrip:false,rateStep:.1});
   h.ui.update({...state,interactionSettings:{wheelFrames:5,showCacheStrip:false}});const before=h.el('decodedCache').paints.length;
   revision++;timers.get(50)();assert.equal(h.el('decodedCache').paints.length,before);assert(h.el('cacheStatus').textContent.includes('2 / 10'));
   h.ui.update({...state,interactionSettings:{wheelFrames:5,showCacheStrip:true}});timers.get(50)();assert(h.el('decodedCache').paints.length>before);assert(!h.el('decodedCache').hidden);h.ui.destroy();

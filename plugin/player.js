@@ -9,6 +9,13 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const RAM_LIMIT = 1024 * 1024 * 1024;
+  const RATE_STEPS = Object.freeze([.1, .2, .25, .5]);
+  const RATE_PRESETS = Object.freeze([.1, .25, .5, 1, 1.5, 2, 3, 4]);
+  const validRate = rate => Number.isFinite(rate) && rate >= .1 && rate <= 4;
+  function steppedRate(rate, direction, step = .1) {
+    if (!validRate(rate) || ![-1, 0, 1].includes(direction) || !RATE_STEPS.includes(step)) throw new Error('播放速度或调整步长无效。');
+    return Math.max(10, Math.min(400, Math.round(rate * 100) + direction * Math.round(step * 100))) / 100;
+  }
   function preparationWindow(frames, center, capacity) {
     const count = Math.max(1, Math.min(frames.length, capacity)), order = [center], time = frames[center].time;
     let left = center - 1, right = center + 1;
@@ -179,7 +186,9 @@
       return resume === 'always' || playing && resume ? this.play() : result || { status: 'applied' };
     }
     setPlaybackRate(rate) {
-      if (![.25, .5, 1].includes(rate)) return Promise.reject(new Error('播放速度请选择0.25×、0.5×或1×。'));
+      if (!validRate(rate)) return Promise.reject(new Error('播放速度须在0.1×至4×之间。'));
+      if (!this._canSeek()) return Promise.reject(new Error('视频尚未就绪。'));
+      if (rate === this.playbackRate) return Promise.resolve({ status: 'applied' });
       return this._editTransport(() => { this.playbackRate = rate; }, true);
     }
     setLoopPoint(point) {
@@ -230,7 +239,7 @@
       }, true);
     }
     restoreTransport(value) {
-      if (!value || ![.25, .5, 1].includes(value.rate) || !value.loop || typeof value.loop.enabled !== 'boolean')
+      if (!value || !validRate(value.rate) || !value.loop || typeof value.loop.enabled !== 'boolean')
         return Promise.reject(new Error('播放控制恢复数据无效。'));
       return this._editTransport(() => {
         const ordinal = id => id === null ? null : this.info.frames.findIndex(frame => frame.id === id);
@@ -969,5 +978,5 @@
       return this.disposePromise;
     }
   }
-  return { Player, Budget, ManagedBudget: Budget, readBarcode, decodedRanges, preparationWindow };
+  return { Player, Budget, ManagedBudget: Budget, readBarcode, decodedRanges, preparationWindow, validRate, steppedRate, RATE_STEPS, RATE_PRESETS };
 });

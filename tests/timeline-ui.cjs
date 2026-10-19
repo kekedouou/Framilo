@@ -152,4 +152,5 @@ async function main() {
   });
   console.log('Timeline UI: ' + count + ' actual UI/helper models; no real Eagle/manual/performance claim.');
 }
-main().catch(error => { console.error(error.stack); process.exitCode = 1; });
+if (require.main === module) main().catch(error => { console.error(error.stack); process.exitCode = 1; });
+module.exports = { harness, flush };
