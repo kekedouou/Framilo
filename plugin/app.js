@@ -160,6 +160,10 @@
   if (typeof eagle !== 'undefined' && typeof eagle.onPluginCreate === 'function') {
     eagle.onPluginCreate(initialize);
     if (typeof eagle.onPluginRun === 'function') eagle.onPluginRun(run);
+    if (typeof eagle.onPluginShow === 'function') eagle.onPluginShow(() => {
+      if (session && !closed) { session.setCommentsVisible(true); session.refreshComments().catch(() => {}); }
+    });
+    if (typeof eagle.onPluginHide === 'function') eagle.onPluginHide(() => { if (session && !closed) session.setCommentsVisible(false); });
     if (typeof eagle.onLibraryChanged === 'function') eagle.onLibraryChanged(() => session && !closed ? session.libraryChanged().catch(startupError) : undefined);
     if (typeof eagle.onPluginBeforeExit === 'function') eagle.onPluginBeforeExit(close);
     window.addEventListener('beforeunload', beforeUnload);

@@ -46,7 +46,7 @@
   function createUI(options = {}) {
     const doc = options.document || document, win = options.window || window, now = options.now || (() => performance.now());
     const ids = ['screen', 'picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
-      'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentText', 'commentSave', 'commentCancel',
+      'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentText', 'commentSave', 'commentCancel', 'commentKeyboardHint',
       'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality',
       'forwardPredecode', 'decodedCache', 'cacheStatus', 'playbackRate', 'loopSelect', 'loopCancel', 'loopEnabled', 'loopRange',
       'loopBand', 'loopHandleStart', 'loopHandleEnd', 'loopHelp', 'wheelFrames', 'showCacheStrip',
@@ -103,6 +103,17 @@
     }
     const listeners = [];
     const on = (target, type, handler, settings) => { target.addEventListener(type, handler, settings); listeners.push([target, type, handler, settings]); };
+    function commentsVisibility() {
+      const visible = !doc.hidden && doc.visibilityState !== 'hidden' && state.state !== 'closed' && state.state !== 'closing';
+      if (session && typeof session.setCommentsVisible === 'function') session.setCommentsVisible(visible);
+      return visible;
+    }
+    function refreshCommentsOnReturn() {
+      if (commentsVisibility() && session && typeof session.refreshComments === 'function')
+        Promise.resolve(session.refreshComments()).catch(() => {});
+    }
+    on(win, 'focus', refreshCommentsOnReturn);
+    if (typeof doc.addEventListener === 'function') on(doc, 'visibilitychange', refreshCommentsOnReturn);
     let memoryBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null, shownPredecode = null, shownWheel = null, shownStrip = null;
     function updateMemorySettings() {
       const memory = state.memorySettings;
@@ -307,7 +318,8 @@
       if (!interactive() || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); step(event.key === 'ArrowLeft' ? -1 : 1); }
     });
-    let renderedItems = null, renderedDuration = null, renderedComments = null, renderedInteractive = null, editorId = null;
+    let renderedItems = null, renderedDuration = null, renderedComments = null, renderedInteractive = null, editorId = null, editorEpoch = null;
+    let commentComposing = false, commentCompositionEnd = -Infinity;
     const commentButtons = [], markerButtons = [];
     function seekComment(event) {
       const button = event.target && event.target.closest && event.target.closest('button[data-comment-id]');
@@ -321,6 +333,22 @@
     on(el.commentMarkers, 'click', seekComment); on(el.commentList, 'click', seekComment);
     on(el.commentAdd, 'click', () => { if (interactive() && !gesture && !selection.snapshot().editing) invoke(() => session.beginComment()); });
     on(el.commentText, 'input', () => { if (session) invoke(() => session.setCommentText(el.commentText.value)); });
+    on(el.commentText, 'compositionstart', () => { commentComposing = true; });
+    on(el.commentText, 'compositionend', () => {
+      commentComposing = false; commentCompositionEnd = now();
+      if (session) invoke(() => session.setCommentText(el.commentText.value));
+    });
+    on(el.commentText, 'keydown', event => {
+      if (event.key !== 'Enter' && event.code !== 'Enter' && event.code !== 'NumpadEnter') return;
+      const draft = state.comments?.draft;
+      if (commentComposing || event.isComposing || event.keyCode === 229 || now() - commentCompositionEnd < 50) return;
+      if (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey || !session || !draft || draft.kind === 'delete' ||
+          !['editing', 'failed'].includes(draft.status)) return;
+      event.preventDefault();
+      if (event.repeat) return;
+      if (typeof event.stopPropagation === 'function') event.stopPropagation();
+      invoke(() => { session.setCommentText(el.commentText.value); return session.saveComment(); });
+    });
     on(el.commentSave, 'click', () => { if (session) invoke(() => state.comments?.draft?.status === 'unknown' ? session.checkComment() : session.saveComment()); });
     on(el.commentCancel, 'click', () => { if (session) invoke(() => session.cancelComment()); });
     on(el.exportDestination, 'change', () => {
@@ -399,17 +427,27 @@
       }
       set(el.commentAdd, 'disabled', !ready || !value || value.status !== 'ready' || state.state === 'seeking');
       if (value === renderedComments) return;
-      renderedComments = value;
-      set(el.commentStatus, 'textContent', draft?.message || value?.message || (value?.status === 'ready' && !items.length ? '暂无标注' : ''));
+      const previous = renderedComments; renderedComments = value;
+      set(el.commentStatus, 'textContent', draft?.message || value?.syncMessage || value?.message || (value?.status === 'ready' && !items.length ? '暂无标注' : ''));
+      // Hiding a focused editor can synchronously move activeElement to body.
+      const editorHadFocus = [el.commentText, el.commentSave, el.commentCancel].includes(doc.activeElement);
       set(el.commentEditor, 'hidden', !draft);
-      if (!draft) { editorId = null; set(el.commentText, 'value', ''); return; }
+      if (!draft) {
+        const saved = previous?.draft && ['saving', 'checking'].includes(previous.draft.status) && editorEpoch === state.epoch &&
+          ['paused', 'playing'].includes(state.state) && value?.status === 'ready';
+        if (saved && editorHadFocus &&
+            (typeof doc.hasFocus !== 'function' || doc.hasFocus())) el.timeline.focus();
+        editorId = null; editorEpoch = null; commentComposing = false; set(el.commentText, 'value', ''); return;
+      }
       const editable = ['editing', 'failed'].includes(draft.status), deleting = draft.kind === 'delete';
       set(el.commentTime, 'textContent', Number.isFinite(draft.time) ? (editable ? '固定时间 ' : '原保存时间 ') + formatTime(draft.time) : '正在固定画面…');
-      set(el.commentText, 'disabled', draft.status === 'pausing'); set(el.commentText, 'readOnly', !editable || deleting); set(el.commentText, 'value', draft.text);
+      set(el.commentText, 'disabled', draft.status === 'pausing'); set(el.commentText, 'readOnly', !editable && !commentComposing || deleting);
+      if (!commentComposing || editorId !== draft.id) set(el.commentText, 'value', draft.text);
+      set(el.commentKeyboardHint, 'hidden', !editable || deleting);
       set(el.commentSave, 'textContent', draft.status === 'unknown' ? '核对保存结果' : deleting ? '确认删除' : '保存');
       set(el.commentSave, 'disabled', !editable && draft.status !== 'unknown');
       set(el.commentCancel, 'disabled', !['editing', 'failed', 'pausing', 'obsolete'].includes(draft.status));
-      if (editable && editorId !== draft.id) { editorId = draft.id; if (!deleting) el.commentText.focus(); }
+      if (editable && editorId !== draft.id) { editorId = draft.id; editorEpoch = state.epoch; if (!deleting) el.commentText.focus(); }
     }
     function update(snapshot) {
       state = snapshot;
@@ -448,12 +486,16 @@
       coverageEpoch = state.epoch;
     }
     return { canvas: el.picture, bindSession(value) {
-      if (session !== value) selection.destroy();
-      session = value; update(state); refreshMemory(); refreshCoverage();
+      if (session !== value) {
+        selection.destroy();
+        if (session && typeof session.setCommentsVisible === 'function') session.setCommentsVisible(false);
+      }
+      session = value; update(state); commentsVisibility(); refreshMemory(); refreshCoverage();
       if (memoryTimer === null && typeof win.setInterval === 'function') memoryTimer = win.setInterval(refreshMemory, 500);
       if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
     }, update,
       destroy() {
+        if (session && typeof session.setCommentsVisible === 'function') session.setCommentsVisible(false);
         if (memoryTimer !== null) { win.clearInterval(memoryTimer); memoryTimer = null; }
         if (coverageTimer !== null) { win.clearInterval(coverageTimer); coverageTimer = null; }
         selection.destroy(); clearGesture(); listeners.forEach(([target, type, fn, settings]) => target.removeEventListener(type, fn, settings)); session = null; refreshMemory(); clearCoverage();

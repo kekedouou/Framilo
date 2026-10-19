@@ -18,9 +18,11 @@ function createSession(options) {
   let cleanupError = null;
   let activeExport = null, exportSequence = 0;
   let exportState = Object.freeze({ status: 'idle', message: '' }), exportFolders = Object.freeze({ status: 'idle', items: [] });
-  const emptyComments = () => Object.freeze({ status: 'idle', items: Object.freeze([]), libraryPath: null, message: '', draft: null });
+  const emptyComments = () => Object.freeze({ status: 'idle', items: Object.freeze([]), libraryPath: null, message: '', syncMessage: '', draft: null });
   let comments = emptyComments(), draftSequence = 0;
   const writes = new Map(), annotationReceipts = [];
+  const commentClock = options.commentTimers || { setTimeout, clearTimeout };
+  let commentsVisible = false, commentTimer = null, commentRead = null, queuedCommentLoad = null, commentWriteRevision = 0, commentFailures = 0;
   function commentChange(value) { comments = Object.freeze({ ...comments, ...value }); notify(); }
   function snapshot() {
     // Background image tasks finish without a UI state notification. Observe
@@ -71,6 +73,8 @@ function createSession(options) {
   }
   function invalidate() {
     const token = ++epoch, previous = controller; controller = null;
+    queuedCommentLoad = null; stopCommentTimer();
+    if (commentRead && commentRead.watch !== null) { commentClock.clearTimeout(commentRead.watch); commentRead.watch = null; }
     if (activeExport) activeExport.controller.abort();
     if (previous) previous.abort(); startDispose(owner);
     return token;
@@ -166,6 +170,7 @@ function createSession(options) {
         reused: !!(info.metrics && info.metrics.reused), trigger: request.trigger,
         mediaPrepareMs: mediaReturnedAt - mediaStartedAt, playerLoadMs: playerLoadedAt - playerStartedAt,
         mediaPhaseMs: info.metrics && info.metrics.phaseMs ? { ...info.metrics.phaseMs } : null };
+      scheduleCommentSync();
       return { status: 'ready', snapshot: snapshot() };
     } catch (failure) {
       try { await releaseOwner(owned || owner); }
@@ -258,7 +263,7 @@ function createSession(options) {
   }
   function clear(kind) {
     if (closed) return tail.then(() => error ? { status: 'error', error: { ...error } } : { status: 'closed' });
-    if (kind === 'closed') closed = true; else libraryEpoch++;
+    if (kind === 'closed') { closed = true; commentsVisible = false; } else libraryEpoch++;
     memoryResume = null;
     const token = invalidate();
     if (kind === 'closed' || token === epoch) {
@@ -284,19 +289,92 @@ function createSession(options) {
     });
   }
   function writeKey(value) { return value.libraryPath + '\0' + value.source.id + '\0' + value.source.filePath; }
-  async function loadComments(request, selected) {
-    commentChange({ status: 'loading', message: '正在读取标注' });
-    try {
-      if (!current(request)) return;
+  function stopCommentTimer() {
+    if (commentTimer !== null) { commentClock.clearTimeout(commentTimer); commentTimer = null; }
+  }
+  function sameComments(a, b) {
+    return a.length === b.length && a.every((item, index) => ['id', 'time', 'text', 'revision'].every(key => item[key] === b[index][key]));
+  }
+  function syncableComments() {
+    return !closed && commentsVisible && source && owner && owner.ready && owner.epoch === epoch &&
+      ['paused', 'playing', 'seeking'].includes(state) && !activeExport && !writes.has(writeKey({ source, libraryPath: comments.libraryPath || '' }));
+  }
+  function scheduleCommentSync(delay = Math.min(30000, 1000 * 2 ** Math.min(commentFailures, 5))) {
+    if (commentTimer !== null || commentRead || !syncableComments()) return;
+    commentTimer = commentClock.setTimeout(() => { commentTimer = null; refreshComments(); }, delay);
+    if (commentTimer && typeof commentTimer.unref === 'function') commentTimer.unref();
+  }
+  function setCommentsVisible(visible) {
+    commentsVisible = !!visible; stopCommentTimer();
+    if (commentsVisible) scheduleCommentSync(0);
+  }
+  function commentReadCurrent(record) {
+    return !closed && record.epoch === epoch && record.libraryEpoch === libraryEpoch && source &&
+      record.source.id === source.id && record.source.filePath === source.filePath;
+  }
+  function startCommentRead(selected, request = null) {
+    const record = { source: selected, request, epoch, libraryEpoch, writeRevision: commentWriteRevision, watch: null, promise: null };
+    commentRead = record; stopCommentTimer();
+    record.watch = commentClock.setTimeout(() => {
+      record.watch = null;
+      if (!commentReadCurrent(record) || record.writeRevision !== commentWriteRevision || !request && !commentsVisible) return;
+      commentChange({ ...(comments.status === 'loading' ? { status: 'error', message: '' } : {}),
+        syncMessage: 'Eagle标注读取暂未返回，已保留现有内容；等待本次读取结束，不重复派发。' });
+    }, 15000);
+    if (record.watch && typeof record.watch.unref === 'function') record.watch.unref();
+    record.promise = Promise.resolve().then(() => {
+      if (!commentReadCurrent(record)) return null;
       if (typeof eagleAdapter.readComments !== 'function') throw issue('COMMENTS_API_UNAVAILABLE', '当前环境没有标注读取接口。');
-      const data = await eagleAdapter.readComments(selected);
-      if (!current(request)) return;
-      const old = writes.get(writeKey({ libraryPath: data.libraryPath, source: selected }));
-      request.restoredWrite = old || null;
-      commentChange({ status: 'ready', items: data.items, libraryPath: data.libraryPath, message: '', draft: old ? old.draft : null });
-    } catch (failure) {
-      if (current(request)) commentChange({ status: 'error', message: '读取标注失败：' + failure.message });
+      // Keep the single read occupied until the actual SDK promise settles.
+      // A timeout or hiding the window cannot cancel Eagle's already-issued IPC.
+      return eagleAdapter.readComments(selected, { libraryPath: comments.libraryPath, waitForCompletion: true });
+    }).then(data => {
+      if (!data || !commentReadCurrent(record) || record.writeRevision !== commentWriteRevision || !request && !commentsVisible)
+        return { status: 'superseded' };
+      commentFailures = 0;
+      const old = request ? writes.get(writeKey({ libraryPath: data.libraryPath, source: selected })) : null;
+      if (request) request.restoredWrite = old || null;
+      const items = sameComments(comments.items, data.items) ? comments.items : data.items;
+      let draft = old ? old.draft : comments.draft;
+      if (draft && draft.original && ['pausing', 'editing', 'failed'].includes(draft.status)) {
+        const target = data.items.find(item => item.id === draft.original.id);
+        if (!target || !sameComments([draft.original], [target])) draft = Object.freeze({ ...draft, status: 'obsolete',
+          message: '这条标注已在Eagle中修改或删除。你的文字已保留，请复制后取消，再重新选择。' });
+      }
+      if (items !== comments.items || draft !== comments.draft || comments.status !== 'ready' || comments.syncMessage || comments.libraryPath !== data.libraryPath)
+        commentChange({ status: 'ready', items, draft, libraryPath: data.libraryPath, syncMessage: '',
+          message: items !== comments.items && !request ? '标注已从Eagle更新。' : request ? '' : comments.message });
+      return { status: 'refreshed' };
+    }, failure => {
+      if (commentReadCurrent(record) && record.writeRevision === commentWriteRevision && (request || commentsVisible)) {
+        commentFailures++;
+        commentChange({ ...(comments.status === 'loading' ? { status: 'error', message: '' } : {}),
+          syncMessage: '标注同步失败：' + failure.message + '；现有内容已保留，将稍后重试。' });
+      }
+      return { status: 'failed' };
+    }).finally(() => {
+      if (record.watch !== null) commentClock.clearTimeout(record.watch);
+      if (commentRead === record) commentRead = null;
+      const next = queuedCommentLoad; queuedCommentLoad = null;
+      if (next && current(next.request)) startCommentRead(next.selected, next.request);
+      else scheduleCommentSync();
+    });
+    record.promise.catch(() => {}); return record.promise;
+  }
+  function refreshComments() {
+    stopCommentTimer();
+    if (!syncableComments()) { scheduleCommentSync(); return Promise.resolve({ status: 'ignored' }); }
+    if (commentRead) return commentRead.promise;
+    return startCommentRead(source);
+  }
+  function loadComments(request, selected) {
+    commentChange({ status: 'loading', message: '正在读取标注' });
+    if (!current(request)) return;
+    if (commentRead) {
+      queuedCommentLoad = { request, selected };
+      commentChange({ message: '正在等待上次Eagle标注读取结束，视频可继续使用。' }); return;
     }
+    startCommentRead(selected, request);
   }
   function liveDraft(id, token) { return !closed && token === epoch && comments.draft && comments.draft.id === id; }
   function restoreWrite(record) {
@@ -316,6 +394,7 @@ function createSession(options) {
     try {
       await owned.player.pause();
       if (!liveDraft(draft.id, token)) return { status: 'superseded' };
+      if (comments.draft.status === 'obsolete') return { status: 'obsolete' };
       const actual = owned.player.snapshot();
       const frame = owned.info.frames[actual.frameOrdinal];
       if (actual.state !== 'paused' || actual.pendingTargets > 0 || !Number.isSafeInteger(actual.frameId) || !Number.isFinite(actual.time) ||
@@ -340,6 +419,7 @@ function createSession(options) {
     try {
       await owned.player.pause();
       if (!liveDraft(draft.id, token)) return { status: 'superseded' };
+      if (comments.draft.status === 'obsolete') return { status: 'obsolete' };
       commentChange({ draft: Object.freeze({ ...draft, status: 'editing', message: kind === 'delete'
         ? '确认删除下面这条标注？此操作会从Eagle资料库删除。' : '修改文字，原标注时间保持不变。' }) });
       return { status: 'editing' };
@@ -350,8 +430,12 @@ function createSession(options) {
   }
   function setCommentText(text) {
     const draft = comments.draft;
-    if (!draft || draft.kind === 'delete' || !['editing', 'failed'].includes(draft.status) || typeof text !== 'string') return { status: 'ignored' };
-    commentChange({ draft: Object.freeze({ ...draft, text, status: 'editing', message: '' }) }); return { status: 'editing' };
+    if (!draft || draft.kind === 'delete' || !['editing', 'failed', 'obsolete'].includes(draft.status) || typeof text !== 'string') return { status: 'ignored' };
+    // A composition already in progress may finish after an external conflict.
+    // Preserve those final characters for copying without enabling a stale save.
+    const obsolete = draft.status === 'obsolete';
+    commentChange({ draft: Object.freeze({ ...draft, text, status: obsolete ? 'obsolete' : 'editing', message: obsolete ? draft.message : '' }) });
+    return { status: obsolete ? 'obsolete' : 'editing' };
   }
   function cancelComment() {
     const draft = comments.draft;
@@ -370,7 +454,7 @@ function createSession(options) {
     const key = writeKey(draft);
     if (writes.has(key)) return Promise.resolve({ status: 'ignored' });
     const record = { draft: Object.freeze({ ...draft, status: 'saving', message: '正在保存并核对…' }), promise: null };
-    writes.set(key, record); commentChange({ draft: record.draft });
+    commentWriteRevision++; writes.set(key, record); commentChange({ draft: record.draft });
     const active = () => liveDraft(draft.id, token) && libraryEpoch === draft.libraryEpoch;
     // Attach the promise before any adapter callback can trigger a close.
     record.promise = Promise.resolve().then(() => eagleAdapter.saveComment(draft, { isCurrent: active,
@@ -380,6 +464,7 @@ function createSession(options) {
     return record.promise;
   }
   function finishComment(record, key, result, id, token) {
+    commentWriteRevision++;
     record.result = result;
     record.draft = Object.freeze({ ...record.draft, status: result.status, attempt: result.status === 'failed' ? null : result.attempt || record.draft.attempt, message: result.message });
     annotationReceipts.push(Object.freeze({ source: record.draft.source, libraryPath: record.draft.libraryPath,
@@ -396,7 +481,7 @@ function createSession(options) {
       else if (token !== epoch && result.status === 'failed') { restoreWrite(record); notify(); }
       else commentChange({ ...(result.items ? { items: result.items } : {}), draft: record.draft });
     }
-    return result;
+    scheduleCommentSync(); return result;
   }
   function checkComment() {
     const draft = comments.draft, token = epoch;
@@ -404,6 +489,7 @@ function createSession(options) {
     const key = writeKey(draft), record = writes.get(key);
     if (!record) return Promise.resolve({ status: 'ignored' });
     record.draft = Object.freeze({ ...draft, status: 'checking', message: '正在核对原操作结果，不会再次写入…' });
+    commentWriteRevision++;
     commentChange({ draft: record.draft });
     record.promise = Promise.resolve().then(() => eagleAdapter.verifyComment(draft.attempt))
       .catch(failure => ({ status: 'unknown', attempt: draft.attempt, message: failure.message }))
@@ -491,6 +577,7 @@ function createSession(options) {
       if (closed) exportState = Object.freeze(result);
       else if (token === epoch || result.status === 'unknown') exportChange(result);
       else exportChange({ status: 'idle', message: result.status === 'saved' ? '上个视频的导出已保存。' : '上个视频的导出已结束。' });
+      scheduleCommentSync();
       return result;
     });
     return job.promise;
@@ -520,7 +607,7 @@ function createSession(options) {
     loopFrameAt: (time, bounds) => !closed && owner && owner.ready && owner.epoch === epoch && !comments.draft &&
       ['paused', 'playing', 'seeking'].includes(state) && typeof owner.player.loopFrameAt === 'function' ? owner.player.loopFrameAt(time, bounds) : null,
     beginComment, editComment: id => beginCommentMutation(id, 'edit'), deleteComment: id => beginCommentMutation(id, 'delete'),
-    setCommentText, saveComment, cancelComment, checkComment,
+    setCommentText, saveComment, cancelComment, checkComment, refreshComments, setCommentsVisible,
     seekComment: id => {
       const item = comments.items.find(value => value.id === id);
       return item && item.time <= duration ? control('seek', [item.time, { kind: 'annotation', final: true, inputAt: now() }], ['paused', 'playing', 'seeking']) : Promise.resolve({ status: 'ignored' });

@@ -177,10 +177,11 @@ function cloneComments(value) {
       ...(Number.isFinite(revision) || typeof revision === 'string' && /^\d+$/.test(revision) ? { revision: String(revision) } : {}) });
   }).sort((a, b) => a.time - b.time || a.id.localeCompare(b.id)));
 }
-async function commentItem(api, source, expectedLibrary, options) {
+async function commentItem(api, source, expectedLibrary, options, waitForCompletion = false) {
   const selected = validateSnapshot(source), context = guardLibrary(api, expectedLibrary);
   if (!api.item || typeof api.item.getById !== 'function') throw commentError('COMMENTS_API_UNAVAILABLE', '当前Eagle没有标注读取接口。');
-  const item = await commentDeadline(api.item.getById(selected.id), options);
+  const pending = api.item.getById(selected.id);
+  const item = await (waitForCompletion ? pending : commentDeadline(pending, options));
   guardLibrary(api, context);
   const actual = validateSnapshot(item);
   if (actual.id !== selected.id || !samePath(actual.filePath, selected.filePath))
@@ -188,7 +189,7 @@ async function commentItem(api, source, expectedLibrary, options) {
   return { item, libraryPath: context };
 }
 async function readComments(api, source, context = {}, options = {}) {
-  const result = await commentItem(api, source, context.libraryPath, options);
+  const result = await commentItem(api, source, context.libraryPath, options, context.waitForCompletion === true);
   return Object.freeze({ libraryPath: result.libraryPath, items: cloneComments(result.item.comments) });
 }
 function matchAttempt(attempt, data) {

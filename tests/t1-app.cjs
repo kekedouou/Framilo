@@ -10,6 +10,8 @@ function harness(settings = {}) {
   const session = {
     loadSelected(options) { log.push({ type: 'selected', options }); return Promise.resolve(); },
     libraryChanged() { log.push({ type: 'library' }); return Promise.resolve(); },
+    setCommentsVisible(visible) { log.push({ type: 'comment-visibility', visible }); },
+    refreshComments() { log.push({ type: 'comment-refresh' }); return Promise.resolve(); },
     close() { closed++; return settings.closeSession ? settings.closeSession() : Promise.resolve(); },
     snapshot() { return { epoch: 3, libraryEpoch: 1, sourceIdentity: { itemId: 'fixed', sha256: 'a'.repeat(64) } }; }
   };
@@ -27,7 +29,7 @@ function harness(settings = {}) {
     'frame-index.cjs': {}
   };
   modules['task-client.cjs'] = { createTaskClient: options => require('./support/task-client-model.cjs').createModel(modules, options) };
-  const eagle = Object.fromEntries(['onPluginCreate', 'onPluginRun', 'onLibraryChanged', 'onPluginBeforeExit'].map(name => [name, callback => { hooks[name] = callback; }]));
+  const eagle = Object.fromEntries(['onPluginCreate', 'onPluginRun', 'onLibraryChanged', 'onPluginBeforeExit', 'onPluginShow', 'onPluginHide'].map(name => [name, callback => { hooks[name] = callback; }]));
   function requestClose() {
     closeAttempts++;
     if (settings.deferNativeAck && nativeCloseBusy) { mergedCloseAttempts++; return { merged: true }; }
@@ -74,6 +76,15 @@ async function bounded(pending) {
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 async function main() {
+  {
+    const h = harness(); await h.hooks.onPluginCreate({ path: h.root });
+    h.hooks.onPluginHide(); h.hooks.onPluginShow();
+    assert.deepEqual(h.log.filter(value => value.type.startsWith('comment-')), [
+      { type: 'comment-visibility', visible: false }, { type: 'comment-visibility', visible: true }, { type: 'comment-refresh' }]);
+    await h.hooks.onPluginBeforeExit(); const before = h.log.length;
+    h.hooks.onPluginShow(); h.hooks.onPluginHide(); assert.equal(h.log.length, before);
+    console.log('E-07 visibility: native host show/hide routes sync visibility and refresh, never reviving a closed session');
+  }
   {
     let finish; const pending = new Promise(resolve => { finish = resolve; });
     const h = harness({ closeSession: () => pending, deferNativeAck: true });
