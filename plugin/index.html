@@ -33,7 +33,7 @@
           <button id="play" type="button" title="播放 / 暂停（空格）" disabled>播放</button>
           <button id="previous" type="button" title="上一帧（【 / [）" disabled>上一帧</button>
           <button id="next" type="button" title="下一帧（】 / ]）" disabled>下一帧</button>
-          <label class="speed-control" title="Z还原1×，X减速，V加速；调整步长在设置中应用">速度 <select id="playbackRate" aria-label="播放速度" disabled><option value="0.1">0.1×</option><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option><option id="customPlaybackRate" value="custom" hidden disabled>当前速度</option></select></label>
+          <label class="speed-control" title="Z还原1×，X减速，C加速；调整步长在设置中应用">速度 <select id="playbackRate" aria-label="播放速度" disabled><option value="0.1">0.1×</option><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option><option id="customPlaybackRate" value="custom" hidden disabled>当前速度</option></select></label>
           <span class="time-readout"><output id="frameReadout" class="frame-readout">帧：—</output><span><output id="currentTime">0:00.000</output><span class="muted"> / </span><output id="duration">0:00.000</output></span></span>
         </div>
         <div class="loop-controls" aria-label="片段循环">
@@ -42,7 +42,7 @@
           <label title="L开启循环并展开片段，关闭恢复整段、保留范围"><input id="loopEnabled" type="checkbox" disabled>循环（L）</label>
           <output id="loopRange" class="muted">未设置范围</output>
           <details class="shortcut-help"><summary title="查看现有操作和快捷键">操作提示</summary>
-            <div class="shortcut-panel">空格：播放／暂停<br>Z：还原1×；X：减速；V：加速<br>【／】：前后逐帧；画面或时间轴滚轮：逐帧<br>R短按：选择／确认／清除片段<br>长按R：暂停并临时查看整段、拖动端点；松开确认，Esc取消<br>L：循环并展开片段／关闭并查看整段<br>N：添加标注；S：导出当前画面；E：导出所选片段<br>标注输入：Enter保存，Shift+Enter换行</div>
+            <div class="shortcut-panel">空格：播放／暂停<br>Z：还原1×；X：减速；C：加速<br>【／】：前后逐帧；画面或时间轴滚轮：逐帧<br>R短按：选择／确认／清除片段<br>长按R：暂停并临时查看整段、拖动端点；松开确认，Esc取消<br>L：循环并展开片段／关闭并查看整段<br>N：添加标注；S：导出当前画面；E：导出所选片段<br>标注输入：Enter保存，Shift+Enter换行</div>
           </details>
         </div>
       </div>
@@ -66,7 +66,7 @@
         <p class="muted">画面或时间轴上滚上一帧、下滚下一帧；选择时微调当前端点。点击应用生效。</p>
         <label for="rateStep">倍速调整步长</label>
         <select id="rateStep" aria-label="倍速调整步长" disabled><option value="0.1" selected>0.1× / 次</option><option value="0.2">0.2× / 次</option><option value="0.25">0.25× / 次</option><option value="0.5">0.5× / 次</option></select>
-        <p class="muted">X减速、V加速，范围0.1×～4×；Z还原1×。点击应用生效。</p>
+        <p class="muted">X减速、C加速，范围0.1×～4×；Z还原1×。点击应用生效。</p>
         <label for="memoryMiB">视频缓存内存上限</label>
         <div class="memory-controls"><select id="memoryMiB" aria-label="视频缓存内存上限" disabled>
           <option value="512">512 MB</option><option value="1024">1 GB</option><option value="2048">2 GB</option>

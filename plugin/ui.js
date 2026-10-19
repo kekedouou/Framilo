@@ -364,7 +364,7 @@
       if (event.key === 'Escape' && selection.snapshot().editing) { event.preventDefault(); clearGesture(); selection.cancel(); return; }
       if (letterKey(event, 'R')) { if (interactive() && !gesture) { event.preventDefault(); selection.keyDown(); } return; }
       if (letterKey(event, 'L')) { if (interactive() && !gesture) { event.preventDefault(); selection.toggleLoop(); } return; }
-      for (const key of ['Z', 'X', 'V']) if (letterKey(event, key)) {
+      for (const key of ['Z', 'X', 'C']) if (letterKey(event, key)) {
         if (shortcutReady()) { event.preventDefault(); requestRate(key === 'Z' ? 1 : undefined, key === 'Z' ? undefined : key === 'X' ? -1 : 1); }
         return;
       }
