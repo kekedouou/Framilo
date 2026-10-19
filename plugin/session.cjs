@@ -21,7 +21,11 @@ function createSession(options) {
   const emptyComments = () => Object.freeze({ status: 'idle', items: Object.freeze([]), libraryPath: null, message: '', syncMessage: '', draft: null });
   let comments = emptyComments(), draftSequence = 0;
   const writes = new Map(), annotationReceipts = [];
-  const commentClock = options.commentTimers || { setTimeout, clearTimeout };
+  // A Window timer cannot be called with this plain clock object as receiver.
+  // Keep ordinary global calls; injected test clocks retain their own methods.
+  const commentClock = options.commentTimers || {
+    setTimeout: (callback, delay) => setTimeout(callback, delay), clearTimeout: handle => clearTimeout(handle)
+  };
   let commentsVisible = false, commentTimer = null, commentRead = null, queuedCommentLoad = null, commentWriteRevision = 0, commentFailures = 0;
   function commentChange(value) { comments = Object.freeze({ ...comments, ...value }); notify(); }
   function snapshot() {

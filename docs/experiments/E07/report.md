@@ -1,5 +1,17 @@
 # E-07 实施与验证记录
 
+## 最新：修复默认Window计时器导致无法打开（2026-10-19）
+
+用户在43893ea的真实Eagle开发窗口截图报告Illegal invocation：素材名已捕获，视频还未准备，标注停在读取中。根因为Session把浏览器原生setTimeout/clearTimeout直接放入普通commentClock对象，再通过对象方法调用，Window接收者检查拒绝；该同步异常从loadComments传播到runLoad，在media.prepare之前中断。修复保留缓存和完整同步行为。
+
+最小修复仅将默认两项包装为普通全局调用，注入测试时钟仍按其自身方法调用。初始读取提醒、每秒同步、隐藏清理、关闭清理四处因此统一恢复，不改变同步间隔/退出机制或产品行为。此前自动检查使用Node计时器/注入时钟，HTML入口又替代了Session，未覆盖原生Window调用者约束；这是已确认的验证缺口。
+
+- 新增tests/window-session-timers.cjs，使用实际Session和严格Window计时器语义。修复前复现与截图相同的PREPARATION_FAILED/Illegal invocation且未进入媒体准备，失败原件为verification-runs/e07-timer-fix/run-b01f82ba731670b7.json；修复后启动、轮询/隐藏/返回、关闭以及读取中关闭四项通过。它是宿主约束模型，不冒充真实Eagle运行。
+- 实际Chrome155无界面验证原生计时器，旧对象调用确实Illegal invocation，直接取本次源码默认包装后定时触发/取消均正确。原件run-06ff810bdf1e79e4.json含User-Agent、浏览器原始DOM及文件/退出核对；自有HTML/独立配置170文件、4628461B在浏览器退出/独占检查和逐文件身份/SHA核对后清理，tests/window-timer-scratch已空。此项不是Eagle108或完整播放器验收。
+- 修复后默认全量159脚本/全部根tests、42文档/498链接、Eagle Node16十一组及Git差异检查通过；原始压缩输出、源指纹、冻结ZIP与临时目录清理复核见run-6ac47416f71d83e2.json（timer-fix-final-checks）。记录独立e07-timer-fix，4文件/单份64KiB/总256KiB；原已满e07-local不扩额、不覆写。没有生成媒体、读取/写入真实素材库或改冻结Beta；仍需用户重开原开发入口确认真实启动及继续标注集中体验，未把本次故障记作人工通过。
+
+相关API背景见[MDN Window计时器](https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout)；根因依据是相同Session失败复现和原生浏览器前后对照，不能仅凭文档或报错名称猜测。下方为此前交付/检查记录。
+
 ## 最新补充：原生标注同步与Enter保存（2026-10-19）
 
 用户反馈后批准继续完善，起点07a6610、工作区干净。现有plugin增加当前视频原生时间点标注的只读自动同步，以及新增/修改输入框Enter保存、Shift+Enter换行；没有新增插件入口、运行依赖、素材写入权限或更改冻结Beta。侧栏设置控件操作后仍占键盘的通用焦点问题，按用户意见列入功能包3整体UI，本轮不全局解除输入/下拉框的键盘保护。
