@@ -479,5 +479,5 @@ function createMedia(options) {
   }
   return Object.freeze({ prepare });
 }
-module.exports = { createMedia, LIMITS,
+module.exports = { createMedia, LIMITS, previewRgbFilter,
   _test: { COLOR_VERSION, previewColor, previewRgbFilter, boundedAdd, snapshotCopy, JpegParser, patchWav, videoEnd, resolveVideoEnd, validateProbe, validateDecodedSpan, ffmpegArgs, ratioSeconds, ratioSubtract, ratio } };

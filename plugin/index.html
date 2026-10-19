@@ -77,6 +77,18 @@
       <p id="status" class="status" role="status">等待素材</p>
       <p id="error" class="error" role="alert" hidden></p>
       <button id="retry" type="button" hidden>重试</button>
+      <section class="exports" aria-label="导出画面和片段">
+        <h2 class="settings-heading">导出</h2>
+        <label for="exportDestination">保存位置</label>
+        <select id="exportDestination"><option value="local">本地文件夹</option><option value="eagle">Eagle资料库文件夹</option></select>
+        <div id="exportFolderArea" hidden>
+          <select id="exportFolder" aria-label="Eagle目标文件夹"><option value="">选择Eagle文件夹</option></select>
+          <button id="exportFolderRefresh" type="button">读取文件夹</button>
+        </div>
+        <div class="export-actions"><button id="exportFrame" type="button" disabled>导出当前画面</button><button id="exportClip" type="button" disabled>导出所选片段</button></div>
+        <button id="exportCancel" type="button" hidden>取消导出</button><button id="exportCheck" type="button" hidden>核对导入结果</button>
+        <p id="exportStatus" class="muted" role="status">从原视频导出，预览画质不影响结果。</p>
+      </section>
       <section class="comments" aria-label="视频标注">
         <div class="comment-heading"><h2>标注</h2><button id="commentAdd" type="button" disabled>添加</button></div>
         <p id="commentStatus" class="muted" role="status"></p>

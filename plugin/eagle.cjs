@@ -52,7 +52,97 @@ function createEagleAdapter(eagleApi, options = {}) {
     discoverTools: () => discoverTools(eagleApi, options),
     readComments: (source, context) => readComments(eagleApi, source, context, options),
     saveComment: (proposal, settings) => saveComment(eagleApi, proposal, settings, options),
-    verifyComment: attempt => verifyComment(eagleApi, attempt, options) });
+    verifyComment: attempt => verifyComment(eagleApi, attempt, options),
+    exportFolders: () => exportFolders(eagleApi, options),
+    exportDestination: proposal => exportDestination(eagleApi, proposal, options),
+    importExport: (proposal, settings) => importExport(eagleApi, proposal, settings, options),
+    verifyExport: attempt => verifyExport(eagleApi, attempt, options) });
+}
+
+async function exportFolders(api, options) {
+  const context = libraryPath(api);
+  if (!api.folder || typeof api.folder.getAll !== 'function') throw commentError('EXPORT_FOLDER_API', '当前Eagle无法读取资料库文件夹。');
+  const roots = await commentDeadline(api.folder.getAll(), options), values = [], seen = new Set();
+  const walk = (rows, prefix, depth) => {
+    if (!Array.isArray(rows) || depth > 32) throw commentError('EXPORT_FOLDERS', '文件夹结构无效或层级过深。');
+    for (const folder of rows) {
+      if (typeof folder.id !== 'string' || !folder.id || typeof folder.name !== 'string') throw commentError('EXPORT_FOLDERS', '文件夹缺少可靠身份。');
+      if (seen.has(folder.id)) continue;
+      seen.add(folder.id); if (seen.size > 4096) throw commentError('EXPORT_FOLDERS', '文件夹数量超过本次可显示范围。');
+      const label = prefix ? prefix + ' / ' + folder.name : folder.name;
+      values.push(Object.freeze({ id: folder.id, label }));
+      if (folder.children != null) walk(folder.children, label, depth + 1);
+    }
+  };
+  walk(roots, '', 0); guardLibrary(api, context);
+  return { libraryPath: context, items: Object.freeze(values) };
+}
+async function exportDestination(api, proposal, options) {
+  const context = guardLibrary(api, proposal.libraryPath);
+  if (proposal.destination === 'eagle') {
+    if (typeof proposal.folderId !== 'string' || !proposal.folderId || !api.folder || typeof api.folder.getById !== 'function')
+      throw commentError('EXPORT_FOLDER', '请先选择Eagle资料库文件夹。');
+    const folder = await commentDeadline(api.folder.getById(proposal.folderId), options);
+    guardLibrary(api, context);
+    if (!folder || folder.id !== proposal.folderId) throw commentError('EXPORT_FOLDER', '所选文件夹已不存在，请重新读取。');
+    return { kind: 'eagle', libraryPath: context, folderId: folder.id };
+  }
+  if (proposal.destination !== 'local' || !api.dialog || typeof api.dialog.showSaveDialog !== 'function')
+    throw commentError('EXPORT_DIALOG', '当前Eagle没有可用的保存对话框。');
+  const extension = proposal.kind === 'frame' ? 'png' : 'mp4';
+  const response = await api.dialog.showSaveDialog({ title: proposal.kind === 'frame' ? '导出当前画面' : '导出所选片段',
+    defaultPath: proposal.name + '.' + extension, filters: [{ name: extension.toUpperCase(), extensions: [extension] }] });
+  guardLibrary(api, context);
+  if (response && response.canceled === true) return { kind: 'cancelled' };
+  if (!response || typeof response.filePath !== 'string' || !path.isAbsolute(response.filePath))
+    throw commentError('EXPORT_DIALOG', '没有取得可靠的本地保存路径。');
+  return { kind: 'local', libraryPath: context, filePath: response.filePath };
+}
+async function importCandidates(api, attempt, options) {
+  guardLibrary(api, attempt.libraryPath);
+  let items;
+  if (attempt.returnedId) items = [await commentDeadline(api.item.getById(attempt.returnedId), options)];
+  else {
+    if (!api.item || typeof api.item.get !== 'function') throw commentError('EXPORT_IMPORT_VERIFY', '当前Eagle缺少导入结果核对接口。');
+    items = await commentDeadline(api.item.get({ keywords: [attempt.name], folders: [attempt.folderId] }), options);
+  }
+  guardLibrary(api, attempt.libraryPath);
+  if (!Array.isArray(items) || items.length > 32) throw commentError('EXPORT_IMPORT_VERIFY', '导入查询结果过多或无效，未猜测成功。');
+  return items.filter(item => item && typeof item.id === 'string' && item.name === attempt.name &&
+    Array.isArray(item.folders) && item.folders.includes(attempt.folderId));
+}
+async function verifyExport(api, attempt, options = {}) {
+  try {
+    const candidates = (await importCandidates(api, attempt, options)).filter(item => !attempt.beforeIds.includes(item.id));
+    if (candidates.length !== 1) throw new Error('没有唯一对应的新素材');
+    const item = candidates[0];
+    if (typeof item.filePath !== 'string' || !path.isAbsolute(item.filePath)) throw new Error('新素材文件路径不明');
+    const actual = await require('./export.cjs')._test.fingerprint(item.filePath);
+    guardLibrary(api, attempt.libraryPath);
+    if (actual.sha256 !== attempt.sha256) throw new Error('新素材内容与导出文件不一致');
+    return { status: 'saved', itemId: item.id, attempt, message: '已保存到选定的Eagle文件夹。' };
+  } catch (error) { return { status: 'unknown', attempt, message: '导入结果尚未确认：' + error.message + '。临时文件已保留，请核对，勿重复导入。' }; }
+}
+async function importExport(api, proposal, settings = {}, options = {}) {
+  let attempt = null, issued = false;
+  try {
+    if (!/^[0-9a-f]{64}$/.test(proposal.sha256 || '') || !api.item || typeof api.item.addFromPath !== 'function')
+      throw commentError('EXPORT_IMPORT_API', '当前Eagle无法导入已核对的导出文件。');
+    const context = await exportDestination(api, { ...proposal, destination: 'eagle' }, options);
+    const input = await require('./export.cjs')._test.fingerprint(proposal.filePath);
+    if (input.sha256 !== proposal.sha256) throw commentError('EXPORT_IMPORT_CHANGED', '导出文件在导入前发生变化，未发送导入。');
+    const seed = { name: proposal.name, folderId: context.folderId, libraryPath: context.libraryPath, returnedId: null };
+    const before = await importCandidates(api, seed, options);
+    attempt = Object.freeze({ ...seed, token: proposal.token, sha256: proposal.sha256, beforeIds: before.map(item => item.id) });
+    const guard = () => { guardLibrary(api, attempt.libraryPath); if (settings.isCurrent && !settings.isCurrent()) throw new Error('原导出会话已失效'); };
+    guard(); if (settings.onIssued) settings.onIssued(attempt); guard();
+    issued = true;
+    try {
+      const id = await commentDeadline(api.item.addFromPath(proposal.filePath, { name: proposal.name, folders: [context.folderId] }), options);
+      if (typeof id === 'string' && id) attempt = Object.freeze({ ...attempt, returnedId: id });
+    } catch (_) { /* A committed import can have a lost IPC response. Never resend. */ }
+    return verifyExport(api, attempt, options);
+  } catch (error) { return { status: issued ? 'unknown' : 'failed', attempt: issued ? attempt : null, message: error.message }; }
 }
 
 function commentError(code, message) { const error = new Error(message); error.code = code; return error; }
@@ -82,7 +172,9 @@ function cloneComments(value) {
     const id = item && item.id, time = item && item.duration, text = item && item.annotation;
     if (typeof id !== 'string' || !id || ids.has(id) || !Number.isFinite(time) || time < 0 || typeof text !== 'string')
       throw commentError('COMMENTS_INVALID', 'Eagle标注缺少可靠的ID、时间或文字，已停止添加。');
-    ids.add(id); return Object.freeze({ id, time, text });
+    const revision = item.lastModified;
+    ids.add(id); return Object.freeze({ id, time, text,
+      ...(Number.isFinite(revision) || typeof revision === 'string' && /^\d+$/.test(revision) ? { revision: String(revision) } : {}) });
   }).sort((a, b) => a.time - b.time || a.id.localeCompare(b.id)));
 }
 async function commentItem(api, source, expectedLibrary, options) {
@@ -100,6 +192,13 @@ async function readComments(api, source, context = {}, options = {}) {
   return Object.freeze({ libraryPath: result.libraryPath, items: cloneComments(result.item.comments) });
 }
 function matchAttempt(attempt, data) {
+  if (attempt.kind === 'edit' || attempt.kind === 'delete') {
+    const target = data.items.find(item => item.id === attempt.commentId);
+    const verified = attempt.kind === 'delete' ? !target : target && target.text === attempt.text && target.time === attempt.time;
+    return verified ? { status: 'saved', commentId: attempt.commentId, items: data.items, attempt,
+      message: attempt.kind === 'delete' ? '标注已删除。' : '标注文字已修改，时间保持不变。' }
+      : { status: 'unknown', attempt, message: '操作结果尚未确认。请先核对，勿重复修改或删除。' };
+  }
   const candidates = data.items.filter(item => !attempt.beforeIds.includes(item.id) &&
     (!attempt.returnedId || item.id === attempt.returnedId) && item.text === attempt.text && Math.abs(item.time - attempt.time) <= .001);
   return candidates.length === 1 ? { status: 'saved', commentId: candidates[0].id, items: data.items, attempt,
@@ -111,6 +210,7 @@ async function verifyComment(api, attempt, options = {}) {
   catch (error) { return { status: 'unknown', attempt, message: '无法核对保存结果：' + error.message }; }
 }
 async function saveComment(api, proposal, settings = {}, options = {}) {
+  if (proposal && ['edit', 'delete'].includes(proposal.kind)) return mutateComment(api, proposal, settings, options);
   let attempt = null;
   try {
     if (!proposal || typeof proposal.text !== 'string' || !proposal.text.trim() || !Number.isFinite(proposal.time) || proposal.time < 0)
@@ -138,6 +238,40 @@ async function saveComment(api, proposal, settings = {}, options = {}) {
     return await verifyComment(api, attempt, options);
   } catch (error) {
     return { status: attempt ? 'unknown' : 'failed', attempt, message: error.message || '标注操作失败，文字已保留。' };
+  }
+}
+async function mutateComment(api, proposal, settings, options) {
+  let attempt = null, issued = false;
+  try {
+    const original = proposal.original;
+    if (!original || typeof original.id !== 'string' || !original.id || typeof original.text !== 'string' ||
+        !Number.isFinite(original.time) || original.time < 0 || proposal.time !== original.time ||
+        proposal.kind === 'edit' && (typeof proposal.text !== 'string' || !proposal.text.trim()))
+      throw commentError('COMMENT_PROPOSAL_INVALID', '缺少原标注身份、时间或文字，操作未发送。');
+    const result = await commentItem(api, proposal.source, proposal.libraryPath, options);
+    const before = cloneComments(result.item.comments), target = before.find(item => item.id === original.id);
+    if (!target || target.text !== original.text || target.time !== original.time ||
+        original.revision !== undefined && target.revision !== original.revision)
+      return { status: 'failed', items: before, message: '这条标注已被其他操作修改或删除。列表已刷新，请取消后重新选择。' };
+    const method = proposal.kind === 'edit' ? result.item.updateComment : result.item.removeComment;
+    if (typeof method !== 'function') throw commentError('COMMENT_WRITE_UNAVAILABLE', '当前Eagle没有可用的标注修改或删除接口。');
+    const guard = () => {
+      guardLibrary(api, proposal.libraryPath);
+      if (settings.isCurrent && !settings.isCurrent()) throw commentError('COMMENT_SUPERSEDED', '原标注操作已失效，未发送修改。');
+    };
+    guard();
+    attempt = Object.freeze({ kind: proposal.kind, source: Object.freeze({ ...proposal.source }), libraryPath: result.libraryPath,
+      commentId: original.id, time: original.time, text: proposal.text, original: Object.freeze({ ...original }) });
+    if (settings.onIssued) settings.onIssued(attempt);
+    guard();
+    issued = true;
+    try {
+      await commentDeadline(proposal.kind === 'edit' ? method.call(result.item, original.id, { annotation: proposal.text })
+        : method.call(result.item, original.id), options);
+    } catch (_) { /* The SDK may commit before its response is lost. Never resend. */ }
+    return await verifyComment(api, attempt, options);
+  } catch (error) {
+    return { status: issued ? 'unknown' : 'failed', attempt: issued ? attempt : null, message: error.message || '标注操作失败。' };
   }
 }
 function validateSnapshot(value) {

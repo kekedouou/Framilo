@@ -33,6 +33,7 @@ const identity = { self: () => { const value = base.self(); if (!value) throw ne
   } };
 const cache = require('./cache.cjs').createCache({ pluginRoot: root, taskOwner, processIdentity: identity, packFrames: true });
 const handles = new Map(), controllers = new Map();
+let sourceExports = null;
 let tail = Promise.resolve(), stopping = false, shutdownTask = null;
 function send(value) { const text = JSON.stringify(value); if (Buffer.byteLength(text) > 8 * 1024 ** 2) throw new Error('Control response exceeds 8MiB.'); process.stdout.write(text + '\n'); }
 function response(id, result, error) { send({ type: 'response', id, ...(error ? { error: { code: error.code || 'TASK_FAILED', message: String(error.message).slice(0, 2048) } } : { result }) }); }
@@ -61,6 +62,17 @@ async function execute(message, controller) {
     await cache.release(info); handles.delete(message.leaseId); return true;
   }
   if (message.method === 'clearOther') return cache.clearOther(message.settings);
+  if (['export', 'publishExport', 'discardExport'].includes(message.method)) {
+    if (!sourceExports) sourceExports = require('./export.cjs').createExportStore({ pluginRoot: root });
+    if (message.method === 'export') {
+      const info = handles.get(message.leaseId);
+      if (!info) throw new Error('导出对应的视频会话已失效。');
+      return sourceExports.create(info, message.request, { tools: message.tools, signal: controller.signal,
+        onProgress: value => send({ type: 'progress', id: message.id, value }) });
+    }
+    if (message.method === 'publishExport') return sourceExports.publish(message.token, message.destination, { signal: controller.signal });
+    return sourceExports.discard(message.token);
+  }
   if (message.method === 'ping') return { node: process.versions.node, pid: process.pid, taskOwner };
   throw new Error('Unknown task method.');
 }

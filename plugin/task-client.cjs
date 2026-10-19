@@ -113,6 +113,15 @@ function createTaskClient(options) {
     })(); closing.catch(() => {}); return closing;
   }
   function beginClose() { if (host && !ended && host.stdin.writable) write({ type: 'guard', event: 'closing' }); }
-  return Object.freeze({ media, cache, beginClose, close, ping: () => ask('ping'), get stopped() { return ended; } });
+  const exports = {
+    async create(info, request, settings = {}) {
+      if (!leases.has(info)) throw issue('EXPORT_SESSION', '导出会话已失效。');
+      const tools = await options.discoverTools(settings.signal);
+      return ask('export', { leaseId: info.leaseId, request, tools }, settings);
+    },
+    publish: (token, destination, settings) => ask('publishExport', { token, destination }, settings),
+    discard: token => ask('discardExport', { token })
+  };
+  return Object.freeze({ media, cache, exports, beginClose, close, ping: () => ask('ping'), get stopped() { return ended; } });
 }
 module.exports = { createTaskClient, verifyGuard };

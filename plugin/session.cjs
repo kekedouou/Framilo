@@ -16,6 +16,8 @@ function createSession(options) {
   let state = 'empty', source = null, duration = 0, playback = null, error = null, progress = null, loadMetrics = null;
   let memoryResume = null;
   let cleanupError = null;
+  let activeExport = null, exportSequence = 0;
+  let exportState = Object.freeze({ status: 'idle', message: '' }), exportFolders = Object.freeze({ status: 'idle', items: [] });
   const emptyComments = () => Object.freeze({ status: 'idle', items: Object.freeze([]), libraryPath: null, message: '', draft: null });
   let comments = emptyComments(), draftSequence = 0;
   const writes = new Map(), annotationReceipts = [];
@@ -30,7 +32,7 @@ function createSession(options) {
       sourceIdentity: source ? Object.freeze({ libraryEpoch, itemId: source.id, filePath: source.filePath, sha256: source.sha256 || null }) : null,
       playback: observed ? { ...observed, frame: observed.frameId, time: observed.time } : null,
       error: error ? { ...error } : null, progress: progress ? { ...progress } : null,
-      loadMetrics: loadMetrics ? { ...loadMetrics } : null, comments,
+      loadMetrics: loadMetrics ? { ...loadMetrics } : null, comments, exportState, exportFolders,
       preview: owner && owner.ready && owner.epoch === epoch && owner.info.preview ? owner.info.preview : null,
       previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : '720p',
       forwardPredecode: !!(options.memoryPreferences && typeof options.memoryPreferences.forwardPredecode === 'function' && options.memoryPreferences.forwardPredecode()),
@@ -69,6 +71,7 @@ function createSession(options) {
   }
   function invalidate() {
     const token = ++epoch, previous = controller; controller = null;
+    if (activeExport) activeExport.controller.abort();
     if (previous) previous.abort(); startDispose(owner);
     return token;
   }
@@ -196,6 +199,7 @@ function createSession(options) {
   }
   function loadSelected(settings = {}) { return startLoad(settings); }
   async function clearOtherCaches() {
+    if (activeExport) throw issue('EXPORT_BUSY', '请等待导出结束或取消。');
     if (closed || state === 'preparing' || comments.draft || !source || !owner || !owner.ready)
       throw issue('CACHE_CLEAN_BUSY', '请等待视频就绪，并先保存或取消标注。');
     if (typeof cache.clearOther !== 'function') throw issue('CACHE_CLEAN_UNAVAILABLE', '当前入口没有缓存清理接口。');
@@ -206,6 +210,7 @@ function createSession(options) {
     return closed || token !== epoch ? { status: 'superseded' } : { status: 'cleared', ...result };
   }
   async function setPlaybackSettings({ ramMiB, previewQuality, forwardPredecode, wheelFrames, showCacheStrip } = {}, trigger = 'playback-settings') {
+    if (activeExport) throw issue('EXPORT_BUSY', '请等待导出结束或取消。');
     const preferences = options.memoryPreferences;
     if (!preferences) throw issue('MEMORY_SETTINGS_UNAVAILABLE', '当前入口没有内存设置接口。');
     if (previewQuality !== undefined) quality(previewQuality);
@@ -240,6 +245,7 @@ function createSession(options) {
   }
   function setMemoryMiB(ramMiB) { return setPlaybackSettings({ ramMiB }, 'memory-settings'); }
   function control(method, args, allowed) {
+    if (activeExport) return Promise.reject(issue('EXPORT_BUSY', '正在导出固定画面或片段，请等待完成或取消。'));
     const owned = owner, token = epoch;
     if (comments.draft) return Promise.reject(issue('COMMENT_FRAME_FIXED', '标注时间已固定，请先保存或取消标注。'));
     if (closed || !owned || !owned.ready || owned.epoch !== token || !allowed.includes(state))
@@ -258,6 +264,7 @@ function createSession(options) {
     if (kind === 'closed' || token === epoch) {
       state = kind === 'closed' ? 'closed' : 'empty'; source = null; duration = 0; playback = null; error = null; loadMetrics = null;
       comments = emptyComments();
+      if (kind !== 'closed') exportFolders = Object.freeze({ status: 'idle', items: [] });
       progress = kind === 'closed' ? null : { stage: 'library-changed', message: '素材库已变化，请重新调用插件。' }; notify();
     }
     return enqueue(async () => {
@@ -267,7 +274,7 @@ function createSession(options) {
         await releaseOwner();
         // Dispatched writes cannot be cancelled with the player. They finish
         // read-back against their own identity, without updating another item.
-        if (kind === 'closed') await Promise.all([...writes.values()].map(value => value.promise).filter(Boolean));
+        if (kind === 'closed') await Promise.all([...writes.values()].map(value => value.promise).filter(Boolean).concat(activeExport && activeExport.promise || []));
         return { status: kind === 'closed' ? 'closed' : 'empty' };
       }
       catch (failure) {
@@ -299,6 +306,7 @@ function createSession(options) {
       ? Object.freeze({ ...record.draft, status: 'obsolete', message: '原提案未发送，视频已切换。文字已保留，请复制后取消，再固定新画面。' }) : record.draft });
   }
   async function beginComment() {
+    if (activeExport) return { status: 'ignored' };
     const owned = owner, token = epoch;
     if (closed || !owned || !owned.ready || comments.status !== 'ready' || comments.draft || !['paused', 'playing'].includes(state))
       return { status: 'ignored' };
@@ -320,9 +328,29 @@ function createSession(options) {
       return { status: 'failed', message: failure.message };
     }
   }
+  async function beginCommentMutation(id, kind) {
+    if (activeExport) return { status: 'ignored' };
+    const owned = owner, token = epoch, item = comments.items.find(value => value.id === id);
+    if (!['edit', 'delete'].includes(kind) || closed || !owned || !owned.ready || comments.status !== 'ready' || comments.draft ||
+        !item || !['paused', 'playing'].includes(state)) return { status: 'ignored' };
+    const draft = Object.freeze({ id: ++draftSequence, kind, status: 'pausing', source, libraryPath: comments.libraryPath,
+      libraryEpoch, frameId: null, time: item.time, text: item.text, original: Object.freeze({ ...item }), attempt: null,
+      message: '正在暂停播放…' });
+    commentChange({ draft });
+    try {
+      await owned.player.pause();
+      if (!liveDraft(draft.id, token)) return { status: 'superseded' };
+      commentChange({ draft: Object.freeze({ ...draft, status: 'editing', message: kind === 'delete'
+        ? '确认删除下面这条标注？此操作会从Eagle资料库删除。' : '修改文字，原标注时间保持不变。' }) });
+      return { status: 'editing' };
+    } catch (failure) {
+      if (liveDraft(draft.id, token)) commentChange({ draft: null, message: failure.message });
+      return { status: 'failed', message: failure.message };
+    }
+  }
   function setCommentText(text) {
     const draft = comments.draft;
-    if (!draft || !['editing', 'failed'].includes(draft.status) || typeof text !== 'string') return { status: 'ignored' };
+    if (!draft || draft.kind === 'delete' || !['editing', 'failed'].includes(draft.status) || typeof text !== 'string') return { status: 'ignored' };
     commentChange({ draft: Object.freeze({ ...draft, text, status: 'editing', message: '' }) }); return { status: 'editing' };
   }
   function cancelComment() {
@@ -334,7 +362,7 @@ function createSession(options) {
   function saveComment() {
     const draft = comments.draft, token = epoch;
     if (!draft || !['editing', 'failed'].includes(draft.status)) return Promise.resolve({ status: 'ignored' });
-    if (!draft.text.trim()) { commentChange({ draft: Object.freeze({ ...draft, message: '请填写标注文字。' }) }); return Promise.resolve({ status: 'failed' }); }
+    if (draft.kind !== 'delete' && !draft.text.trim()) { commentChange({ draft: Object.freeze({ ...draft, message: '请填写标注文字。' }) }); return Promise.resolve({ status: 'failed' }); }
     if (typeof eagleAdapter.saveComment !== 'function' || writes.size >= 32) {
       commentChange({ draft: Object.freeze({ ...draft, status: 'failed', message: '保存接口不可用或待核对记录已达上限，请先在Eagle核对。' }) });
       return Promise.resolve({ status: 'failed' });
@@ -355,7 +383,7 @@ function createSession(options) {
     record.result = result;
     record.draft = Object.freeze({ ...record.draft, status: result.status, attempt: result.status === 'failed' ? null : result.attempt || record.draft.attempt, message: result.message });
     annotationReceipts.push(Object.freeze({ source: record.draft.source, libraryPath: record.draft.libraryPath,
-      frameId: record.draft.frameId, time: record.draft.time, text: record.draft.text, status: result.status,
+      frameId: record.draft.frameId, time: record.draft.time, text: record.draft.text, kind: record.draft.kind || 'add', status: result.status,
       commentId: result.commentId || null, message: result.message }));
     if (annotationReceipts.length > 32) annotationReceipts.shift();
     if (result.status !== 'unknown') writes.delete(key);
@@ -366,7 +394,7 @@ function createSession(options) {
     if (liveDraft(id, token) || sameDraft) {
       if (result.status === 'saved') commentChange({ items: result.items, draft: null, message: result.message });
       else if (token !== epoch && result.status === 'failed') { restoreWrite(record); notify(); }
-      else commentChange({ draft: record.draft });
+      else commentChange({ ...(result.items ? { items: result.items } : {}), draft: record.draft });
     }
     return result;
   }
@@ -375,12 +403,109 @@ function createSession(options) {
     if (!draft || draft.status !== 'unknown' || !draft.attempt || typeof eagleAdapter.verifyComment !== 'function') return Promise.resolve({ status: 'ignored' });
     const key = writeKey(draft), record = writes.get(key);
     if (!record) return Promise.resolve({ status: 'ignored' });
-    record.draft = Object.freeze({ ...draft, status: 'checking', message: '正在核对原保存结果，不会再次添加…' });
+    record.draft = Object.freeze({ ...draft, status: 'checking', message: '正在核对原操作结果，不会再次写入…' });
     commentChange({ draft: record.draft });
     record.promise = Promise.resolve().then(() => eagleAdapter.verifyComment(draft.attempt))
       .catch(failure => ({ status: 'unknown', attempt: draft.attempt, message: failure.message }))
       .then(result => finishComment(record, key, result, draft.id, token));
     return record.promise;
+  }
+  function exportChange(value) { exportState = Object.freeze(value); notify(); }
+  async function loadExportFolders() {
+    if (closed || activeExport || typeof eagleAdapter.exportFolders !== 'function') return { status: 'ignored' };
+    const token = libraryEpoch;
+    exportFolders = Object.freeze({ status: 'loading', items: [] }); notify();
+    try {
+      const result = await eagleAdapter.exportFolders();
+      if (closed || token !== libraryEpoch) return { status: 'superseded' };
+      exportFolders = Object.freeze({ status: 'ready', ...result }); notify(); return result;
+    } catch (error) {
+      if (!closed && token === libraryEpoch) { exportFolders = Object.freeze({ status: 'failed', items: [], message: error.message }); notify(); }
+      return { status: 'failed', message: error.message };
+    }
+  }
+  function waitExport(work, signal) {
+    return new Promise((resolve, reject) => {
+      const abort = () => reject(issue('EXPORT_CANCELLED', '导出已取消。'));
+      signal.addEventListener('abort', abort, { once: true }); if (signal.aborted) abort();
+      Promise.resolve(work).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+    });
+  }
+  function beginExport(kind, settings = {}) {
+    const owned = owner, token = epoch;
+    if (closed || activeExport || exportState.status === 'unknown' || comments.draft || !owned || !owned.ready ||
+        !['paused', 'playing'].includes(state) || !options.exports || typeof eagleAdapter.exportDestination !== 'function')
+      return Promise.resolve({ status: 'ignored' });
+    const job = { controller: new AbortController(), promise: null, issued: false, id: ++exportSequence };
+    activeExport = job;
+    const valid = () => !closed && epoch === token && owner === owned && !job.controller.signal.aborted;
+    exportChange({ status: 'busy', message: '正在固定导出画面和范围…' });
+    job.promise = (async () => {
+      let generated = null, retain = false;
+      try {
+        await owned.player.pause();
+        if (!valid()) throw issue('EXPORT_CANCELLED', '导出已取消。');
+        const actual = owned.player.snapshot(), frame = owned.info.frames[actual.frameOrdinal];
+        if (actual.state !== 'paused' || actual.pendingTargets > 0 || !frame || frame.id !== actual.frameId || frame.time !== actual.time)
+          throw issue('EXPORT_FRAME', '画面尚未准确定位，请完成定位后再导出。');
+        const transport = typeof owned.player.transportSnapshot === 'function' ? owned.player.transportSnapshot() : actual.transport;
+        const loop = transport && transport.loop;
+        if (kind === 'clip' && (!loop || !loop.valid)) throw issue('EXPORT_RANGE', '请先用现有头尾端点选定片段。');
+        if (!['frame', 'clip'].includes(kind)) throw issue('EXPORT_KIND', '导出类型无效。');
+        const request = kind === 'frame' ? { kind, frameOrdinal: actual.frameOrdinal }
+          : { kind, firstOrdinal: loop.startOrdinal, lastOrdinal: loop.endOrdinal };
+        const label = source.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80);
+        const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 17);
+        const name = label + (kind === 'frame' ? '_帧' + (actual.frameOrdinal + 1) : '_片段') + '_' + stamp;
+        const proposal = { ...settings, kind, name, libraryPath: comments.libraryPath || exportFolders.libraryPath };
+        const destination = await waitExport(eagleAdapter.exportDestination(proposal), job.controller.signal);
+        if (!valid() || destination.kind === 'cancelled') return { status: 'cancelled', message: '已取消保存。' };
+        generated = await options.exports.create(owned.info, request, { signal: job.controller.signal,
+          onProgress: value => { if (valid()) exportChange({ status: 'busy', message: value.message || '正在导出…' }); } });
+        if (!valid()) throw issue('EXPORT_CANCELLED', '导出已取消。');
+        let result;
+        if (destination.kind === 'local') {
+          result = await options.exports.publish(generated.token, destination, { signal: job.controller.signal });
+          generated = null;
+          return { ...result, message: result.message || '已保存到本地，未覆盖任何已有文件。' };
+        }
+        exportChange({ status: 'busy', message: '正在保存到Eagle并核对结果…' });
+        result = await eagleAdapter.importExport({ ...generated, ...destination, name }, { isCurrent: valid,
+          onIssued() { job.issued = true; if (valid()) exportChange({ status: 'busy', cancellable: false, message: '保存已发往Eagle，正在核对结果…' }); } });
+        retain = result.status === 'unknown';
+        return { ...result, generated: retain ? generated : null };
+      } catch (error) {
+        retain = job.issued;
+        return { status: retain ? 'unknown' : job.controller.signal.aborted ? 'cancelled' : 'failed', generated: retain ? generated : null,
+          message: error.code === 'ENOSPC' ? '保存位置空间不足，导出未完成。' : ['EACCES', 'EPERM'].includes(error.code)
+            ? '保存位置无法写入或文件正在使用，请选择其他位置。' : error.message };
+      } finally {
+        if (generated && !retain) {
+          try { await options.exports.discard(generated.token); }
+          catch (error) { job.cleanupWarning = '临时文件清理未完成：' + error.message; }
+        }
+      }
+    })().then(result => {
+      if (job.cleanupWarning) result = { ...result, message: (result.message || '操作已结束') + '；' + job.cleanupWarning };
+      if (activeExport === job) activeExport = null;
+      if (closed) exportState = Object.freeze(result);
+      else if (token === epoch || result.status === 'unknown') exportChange(result);
+      else exportChange({ status: 'idle', message: result.status === 'saved' ? '上个视频的导出已保存。' : '上个视频的导出已结束。' });
+      return result;
+    });
+    return job.promise;
+  }
+  async function checkExport() {
+    const previous = exportState;
+    if (closed || activeExport || previous.status !== 'unknown' || !previous.attempt || typeof eagleAdapter.verifyExport !== 'function')
+      return { status: 'ignored' };
+    let result = await eagleAdapter.verifyExport(previous.attempt);
+    if (result.status === 'saved' && previous.generated) {
+      try { await options.exports.discard(previous.generated.token); }
+      catch (error) { result = { ...result, message: (result.message || '已保存') + '；临时文件清理未完成：' + error.message }; }
+    }
+    if (!closed) exportChange({ ...result, generated: result.status === 'unknown' ? previous.generated : null });
+    return result;
   }
   return Object.freeze({ loadSelected, retry: settings => loadSelected({ ...settings, trigger: 'retry' }),
     play: () => control('play', [], ['paused']), pause: () => control('pause', [], ['paused', 'playing', 'seeking']),
@@ -394,12 +519,14 @@ function createSession(options) {
     applyLoopRange: range => control('applyLoopRange', [range], ['paused', 'playing', 'seeking']),
     loopFrameAt: (time, bounds) => !closed && owner && owner.ready && owner.epoch === epoch && !comments.draft &&
       ['paused', 'playing', 'seeking'].includes(state) && typeof owner.player.loopFrameAt === 'function' ? owner.player.loopFrameAt(time, bounds) : null,
-    beginComment, setCommentText, saveComment, cancelComment, checkComment,
+    beginComment, editComment: id => beginCommentMutation(id, 'edit'), deleteComment: id => beginCommentMutation(id, 'delete'),
+    setCommentText, saveComment, cancelComment, checkComment,
     seekComment: id => {
       const item = comments.items.find(value => value.id === id);
       return item && item.time <= duration ? control('seek', [item.time, { kind: 'annotation', final: true, inputAt: now() }], ['paused', 'playing', 'seeking']) : Promise.resolve({ status: 'ignored' });
     },
     annotationHistory: () => Object.freeze(annotationReceipts.slice()), setMemoryMiB, setPlaybackSettings, clearOtherCaches,
+    beginExport, loadExportFolders, checkExport, cancelExport: () => { if (activeExport && !activeExport.issued) activeExport.controller.abort(); },
     libraryChanged: () => clear('library-changed'), close: () => clear('closed'), snapshot, memorySnapshot, cacheCoverageSnapshot });
 }
 module.exports = { createSession };

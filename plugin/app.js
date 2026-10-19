@@ -72,7 +72,9 @@
         }
         return preparedMedia.prepare(snapshot, options);
       } };
-      session = createSession({ eagleAdapter: sessionAdapter, media, cache, now, memoryPreferences: preferences,
+      const exports = { create: (...args) => backend.exports.create(...args), publish: (...args) => backend.exports.publish(...args),
+        discard: (...args) => backend.exports.discard(...args) };
+      session = createSession({ eagleAdapter: sessionAdapter, media, cache, now, memoryPreferences: preferences, exports,
         createPlayer: options => {
           const value = session.snapshot(), identity = value.sourceIdentity;
           const binding = Object.freeze({ sessionEpoch: value.epoch, libraryEpoch: value.libraryEpoch,

@@ -49,7 +49,8 @@
       'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentText', 'commentSave', 'commentCancel',
       'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality',
       'forwardPredecode', 'decodedCache', 'cacheStatus', 'playbackRate', 'loopSelect', 'loopCancel', 'loopEnabled', 'loopRange',
-      'loopBand', 'loopHandleStart', 'loopHandleEnd', 'loopHelp', 'wheelFrames', 'showCacheStrip'];
+      'loopBand', 'loopHandleStart', 'loopHandleEnd', 'loopHelp', 'wheelFrames', 'showCacheStrip',
+      'exportDestination', 'exportFolder', 'exportFolderArea', 'exportFolderRefresh', 'exportFrame', 'exportClip', 'exportCancel', 'exportCheck', 'exportStatus'];
     const el = Object.fromEntries(ids.map(id => [id, doc.getElementById(id)]));
     if (ids.some(id => !el[id])) throw new Error('播放器界面缺少必要元素。');
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
@@ -158,13 +159,13 @@
       finally { cleaning = false; if (session === active) updateMemorySettings(); }
     });
     on(win, 'resize', () => { coverageKey = null; coverageSize = null; refreshCoverage(); });
-    const interactive = () => !!session && !state.comments?.draft && ['paused', 'playing', 'seeking'].includes(state.state);
+    const interactive = () => !!session && !state.comments?.draft && state.exportState?.status !== 'busy' && ['paused', 'playing', 'seeking'].includes(state.state);
     const invoke = fn => {
       try { Promise.resolve(fn()).catch(() => {}); } catch (_) { /* session publishes operation errors */ }
     };
     const selection = selectionAPI.createSelection({ getSession: () => session, getState: () => state,
       setTimeout: (fn, ms) => (win.setTimeout || setTimeout)(fn, ms), clearTimeout: id => (win.clearTimeout || clearTimeout)(id),
-      changed() { updateTransport(); updateMemorySettings(); updateComments(); } });
+      changed() { updateTransport(); updateMemorySettings(); updateComments(); updateExports(); } });
     let transportBusy = false;
     async function transportAction(method, value) {
       if (!session || transportBusy || selection.snapshot().editing || selection.snapshot().busy || !interactive() || !['paused', 'playing'].includes(state.state) || gesture) return;
@@ -310,13 +311,57 @@
     const commentButtons = [], markerButtons = [];
     function seekComment(event) {
       const button = event.target && event.target.closest && event.target.closest('button[data-comment-id]');
-      if (button && interactive() && !selection.snapshot().editing) { clearHint(); invoke(() => session.seekComment(button.dataset.commentId)); }
+      if (button && !button.disabled && interactive() && !selection.snapshot().editing) {
+        clearHint();
+        const action = button.dataset.commentAction;
+        invoke(() => action === 'edit' ? session.editComment(button.dataset.commentId)
+          : action === 'delete' ? session.deleteComment(button.dataset.commentId) : session.seekComment(button.dataset.commentId));
+      }
     }
     on(el.commentMarkers, 'click', seekComment); on(el.commentList, 'click', seekComment);
     on(el.commentAdd, 'click', () => { if (interactive() && !gesture && !selection.snapshot().editing) invoke(() => session.beginComment()); });
     on(el.commentText, 'input', () => { if (session) invoke(() => session.setCommentText(el.commentText.value)); });
     on(el.commentSave, 'click', () => { if (session) invoke(() => state.comments?.draft?.status === 'unknown' ? session.checkComment() : session.saveComment()); });
     on(el.commentCancel, 'click', () => { if (session) invoke(() => session.cancelComment()); });
+    on(el.exportDestination, 'change', () => {
+      updateExports();
+      if (session && el.exportDestination.value === 'eagle') invoke(() => session.loadExportFolders());
+    });
+    on(el.exportFolderRefresh, 'click', () => { if (session) invoke(() => session.loadExportFolders()); });
+    const exportSelected = kind => {
+      if (session && interactive() && !gesture && !selection.snapshot().editing) invoke(() => session.beginExport(kind,
+        { destination: el.exportDestination.value === 'eagle' ? 'eagle' : 'local', folderId: el.exportFolder.value }));
+    };
+    on(el.exportFrame, 'click', () => exportSelected('frame')); on(el.exportClip, 'click', () => exportSelected('clip'));
+    on(el.exportCancel, 'click', () => { if (session) invoke(() => session.cancelExport()); });
+    on(el.exportCheck, 'click', () => { if (session) invoke(() => session.checkExport()); });
+    let renderedFolders = null;
+    function updateExports() {
+      const value = state.exportState || {}, folders = state.exportFolders || {}, busy = value.status === 'busy';
+      const eagleDestination = el.exportDestination.value === 'eagle';
+      const ready = interactive() && ['paused', 'playing'].includes(state.state) && !gesture && !selection.snapshot().editing &&
+        !selection.snapshot().busy && !memoryBusy && !cleaning && value.status !== 'unknown';
+      if (Array.isArray(folders.items) && folders.items !== renderedFolders) {
+        renderedFolders = folders.items;
+        const selected = el.exportFolder.value;
+        el.exportFolder.replaceChildren();
+        const placeholder = doc.createElement('option'); placeholder.value = ''; placeholder.textContent = '选择Eagle文件夹'; el.exportFolder.appendChild(placeholder);
+        for (const folder of folders.items || []) {
+          const option = doc.createElement('option'); option.value = folder.id; option.textContent = folder.label; el.exportFolder.appendChild(option);
+        }
+        el.exportFolder.value = (folders.items || []).some(folder => folder.id === selected) ? selected : '';
+      }
+      set(el.exportFolderArea, 'hidden', !eagleDestination);
+      set(el.exportDestination, 'disabled', busy); set(el.exportFolder, 'disabled', busy || folders.status !== 'ready');
+      set(el.exportFolderRefresh, 'disabled', busy || folders.status === 'loading');
+      const destinationReady = !eagleDestination || folders.status === 'ready' && !!el.exportFolder.value;
+      set(el.exportFrame, 'disabled', !ready || !destinationReady);
+      set(el.exportClip, 'disabled', !ready || !destinationReady || !state.playback?.transport?.loop?.valid);
+      set(el.exportCancel, 'hidden', !busy); set(el.exportCheck, 'hidden', value.status !== 'unknown');
+      set(el.exportCancel, 'disabled', value.cancellable === false);
+      set(el.exportStatus, 'textContent', value.message || folders.message || (folders.status === 'loading' ? '正在读取文件夹…' : '从原视频导出，预览画质不影响结果。'));
+    }
+    on(el.exportFolder, 'change', updateExports);
     function updateComments() {
       const value = state.comments, draft = value && value.draft, ready = interactive() && !selection.snapshot().editing && !selection.snapshot().busy && !gesture;
       const items = value && value.items;
@@ -331,7 +376,14 @@
           const button = doc.createElement('button'); button.type = 'button'; button.dataset.commentId = item.id;
           button.className = 'comment-item'; button.textContent = formatTime(item.time) + '  ' + item.text;
           button.title = inRange ? '定位到此标注' : '此标注超出当前视频时长，不能可靠定位';
-          el.commentList.appendChild(button); commentButtons.push({ button, inRange });
+          const row = doc.createElement('div'); row.className = 'comment-row'; row.appendChild(button);
+          const actions = doc.createElement('div'); actions.className = 'comment-row-actions';
+          for (const [action, label] of [['edit', '修改'], ['delete', '删除']]) {
+            const control = doc.createElement('button'); control.type = 'button'; control.dataset.commentId = item.id;
+            control.dataset.commentAction = action; control.textContent = label; control.title = label + '此标注';
+            actions.appendChild(control); commentButtons.push({ button: control, inRange: true });
+          }
+          row.appendChild(actions); el.commentList.appendChild(row); commentButtons.push({ button, inRange });
           if (inRange && state.duration > 0) {
             const marker = doc.createElement('button'); marker.type = 'button'; marker.dataset.commentId = item.id;
             marker.className = 'comment-marker'; marker.style.left = clamp(item.time / state.duration) * 100 + '%';
@@ -351,13 +403,13 @@
       set(el.commentStatus, 'textContent', draft?.message || value?.message || (value?.status === 'ready' && !items.length ? '暂无标注' : ''));
       set(el.commentEditor, 'hidden', !draft);
       if (!draft) { editorId = null; set(el.commentText, 'value', ''); return; }
-      const editable = ['editing', 'failed'].includes(draft.status);
+      const editable = ['editing', 'failed'].includes(draft.status), deleting = draft.kind === 'delete';
       set(el.commentTime, 'textContent', Number.isFinite(draft.time) ? (editable ? '固定时间 ' : '原保存时间 ') + formatTime(draft.time) : '正在固定画面…');
-      set(el.commentText, 'disabled', draft.status === 'pausing'); set(el.commentText, 'readOnly', !editable); set(el.commentText, 'value', draft.text);
-      set(el.commentSave, 'textContent', draft.status === 'unknown' ? '核对保存结果' : '保存');
+      set(el.commentText, 'disabled', draft.status === 'pausing'); set(el.commentText, 'readOnly', !editable || deleting); set(el.commentText, 'value', draft.text);
+      set(el.commentSave, 'textContent', draft.status === 'unknown' ? '核对保存结果' : deleting ? '确认删除' : '保存');
       set(el.commentSave, 'disabled', !editable && draft.status !== 'unknown');
       set(el.commentCancel, 'disabled', !['editing', 'failed', 'pausing', 'obsolete'].includes(draft.status));
-      if (editable && editorId !== draft.id) { editorId = draft.id; el.commentText.focus(); }
+      if (editable && editorId !== draft.id) { editorId = draft.id; if (!deleting) el.commentText.focus(); }
     }
     function update(snapshot) {
       state = snapshot;
@@ -387,6 +439,7 @@
       if (!gesture) thumb(time);
       if (hintEpoch !== null) hint(time); // Includes final release settlement; only actual submitted frame time.
       updateComments();
+      updateExports();
       updateMemorySettings();
       updateTransport();
       const hideStrip = state.interactionSettings?.showCacheStrip === false;
