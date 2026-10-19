@@ -4,6 +4,7 @@
 const path = require('path');
 const { quality } = require('./preview-profile.cjs');
 const { interactionValue, DEFAULT_INTERACTION } = require('./preferences.cjs');
+const { createDrawingSession } = require('./drawing-session.cjs');
 function issue(code, message) { const error = new Error(message); error.code = code; return error; }
 function createSession(options) {
   const { eagleAdapter, media, cache, createPlayer } = options || {};
@@ -20,6 +21,16 @@ function createSession(options) {
   let exportState = Object.freeze({ status: 'idle', message: '' }), exportFolders = Object.freeze({ status: 'idle', items: [] });
   const emptyComments = () => Object.freeze({ status: 'idle', items: Object.freeze([]), libraryPath: null, message: '', syncMessage: '', draft: null });
   let comments = emptyComments(), draftSequence = 0;
+  const drawings = createDrawingSession({ store: options.annotationStore, onChange: () => notify() });
+  let mergedCommentSource = null, mergedCommentItems = null, mergedComments = null;
+  function observedComments() {
+    const items = drawings.list(comments.items);
+    if (items === comments.items) return comments;
+    if (mergedCommentSource !== comments || mergedCommentItems !== items) {
+      mergedCommentSource = comments; mergedCommentItems = items; mergedComments = Object.freeze({ ...comments, items });
+    }
+    return mergedComments;
+  }
   const writes = new Map(), annotationReceipts = [];
   // A Window timer cannot be called with this plain clock object as receiver.
   // Keep ordinary global calls; injected test clocks retain their own methods.
@@ -38,7 +49,8 @@ function createSession(options) {
       sourceIdentity: source ? Object.freeze({ libraryEpoch, itemId: source.id, filePath: source.filePath, sha256: source.sha256 || null }) : null,
       playback: observed ? { ...observed, frame: observed.frameId, time: observed.time } : null,
       error: error ? { ...error } : null, progress: progress ? { ...progress } : null,
-      loadMetrics: loadMetrics ? { ...loadMetrics } : null, comments, exportState, exportFolders,
+      loadMetrics: loadMetrics ? { ...loadMetrics } : null,
+      comments: observedComments(), drawings: drawings.snapshot(), exportState, exportFolders,
       preview: owner && owner.ready && owner.epoch === epoch && owner.info.preview ? owner.info.preview : null,
       previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : '720p',
       forwardPredecode: !!(options.memoryPreferences && typeof options.memoryPreferences.forwardPredecode === 'function' && options.memoryPreferences.forwardPredecode()),
@@ -124,6 +136,7 @@ function createSession(options) {
       if (request.previewQuality !== undefined && (!info.preview || info.preview.quality !== request.previewQuality))
         throw issue('PREVIEW_QUALITY_MISMATCH', '准备结果的画质与本次选择不一致。');
       source = Object.freeze({ ...selected, sha256: info.source.sha256 }); duration = info.duration;
+      drawings.open({ libraryPath: request.drawingLibrary || comments.libraryPath, itemId: source.id, sourceSha256: source.sha256 });
       progress = { stage: 'player-initialize', message: '正在初始化画面与声音' }; notify();
       if (!current(request)) { await releaseOwner(owned); return { status: 'superseded' }; }
       const player = createPlayer({ experimentMode: 'compressed-ram',
@@ -190,6 +203,8 @@ function createSession(options) {
   }
   function startLoad(settings = {}, retainedSource = null) {
     if (closed) return Promise.resolve({ status: 'ignored', reason: 'closed' });
+    if (drawings.snapshot().draft) return Promise.resolve({ status: 'drawing-blocked', message: '请先保存或取消圈画。' });
+    drawings.deactivate();
     if (!['memory-settings', 'playback-settings'].includes(settings.trigger)) memoryResume = null;
     const startedAt = Number.isFinite(settings.startedAt) ? settings.startedAt : now();
     const request = { epoch: invalidate(), controller: new AbortController(), captured: null, startedAt, trigger: settings.trigger || 'selected-load',
@@ -197,6 +212,7 @@ function createSession(options) {
       previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : undefined };
     if (!current(request)) return Promise.resolve({ status: 'superseded' });
     controller = request.controller;
+    try { request.drawingLibrary = typeof eagleAdapter.drawingLibrary === 'function' ? eagleAdapter.drawingLibrary() : comments.libraryPath; } catch (_) { /* Drawing load reports its own missing context. */ }
     // Start the single official API call now, before the disposal/preparation queue.
     let response; try { response = retainedSource || eagleAdapter.captureSelected(); } catch (failure) { response = Promise.reject(failure); }
     request.captured = Promise.resolve(response).then(value => ({ value }), failure => ({ error: failure }));
@@ -206,10 +222,10 @@ function createSession(options) {
     progress = { stage: 'selection', message: '正在读取 Eagle 选中的视频' }; notify();
     return enqueue(() => runLoad(request));
   }
-  function loadSelected(settings = {}) { return startLoad(settings); }
+  function loadSelected(settings = {}, capturedSource = null) { return startLoad(settings, capturedSource); }
   async function clearOtherCaches() {
     if (activeExport) throw issue('EXPORT_BUSY', '请等待导出结束或取消。');
-    if (closed || state === 'preparing' || comments.draft || !source || !owner || !owner.ready)
+    if (closed || state === 'preparing' || comments.draft || drawings.snapshot().draft || !source || !owner || !owner.ready)
       throw issue('CACHE_CLEAN_BUSY', '请等待视频就绪，并先保存或取消标注。');
     if (typeof cache.clearOther !== 'function') throw issue('CACHE_CLEAN_UNAVAILABLE', '当前入口没有缓存清理接口。');
     const token = epoch, retained = source;
@@ -229,7 +245,7 @@ function createSession(options) {
       showCacheStrip === undefined ? previousInteraction.showCacheStrip : showCacheStrip,
       rateStep === undefined ? previousInteraction.rateStep : rateStep);
     preferences.preview(ramMiB);
-    if (closed || state === 'preparing' || comments.draft) throw issue('MEMORY_SETTINGS_BUSY', '请等待准备完成，并先保存或取消标注。');
+    if (closed || state === 'preparing' || comments.draft || drawings.snapshot().draft) throw issue('MEMORY_SETTINGS_BUSY', '请等待准备完成，并先保存或取消标注。');
     const token = epoch, retained = source;
     const onlyControls = (forwardPredecode !== undefined || wheelFrames !== undefined || showCacheStrip !== undefined || rateStep !== undefined) && preferences.snapshot().ramMiB === ramMiB &&
       (previewQuality === undefined || typeof preferences.quality === 'function' && previewQuality === preferences.quality());
@@ -255,6 +271,7 @@ function createSession(options) {
   }
   function setMemoryMiB(ramMiB) { return setPlaybackSettings({ ramMiB }, 'memory-settings'); }
   function control(method, args, allowed) {
+    if (drawings.snapshot().draft) return Promise.reject(issue('DRAWING_FRAME_FIXED', '圈画已固定当前帧，请先保存或取消。'));
     if (activeExport) return Promise.reject(issue('EXPORT_BUSY', '正在导出固定画面或片段，请等待完成或取消。'));
     const owned = owner, token = epoch;
     if (comments.draft) return Promise.reject(issue('COMMENT_FRAME_FIXED', '标注时间已固定，请先保存或取消标注。'));
@@ -267,6 +284,7 @@ function createSession(options) {
     });
   }
   function clear(kind) {
+    if (drawings.snapshot().draft) return Promise.resolve({ status: 'drawing-blocked', message: '请先保存或取消圈画。' });
     if (closed) return tail.then(() => error ? { status: 'error', error: { ...error } } : { status: 'closed' });
     if (kind === 'closed') { closed = true; commentsVisible = false; } else libraryEpoch++;
     memoryResume = null;
@@ -274,6 +292,7 @@ function createSession(options) {
     if (kind === 'closed' || token === epoch) {
       state = kind === 'closed' ? 'closed' : 'empty'; source = null; duration = 0; playback = null; error = null; loadMetrics = null;
       comments = emptyComments();
+      drawings.deactivate();
       if (kind !== 'closed') exportFolders = Object.freeze({ status: 'idle', items: [] });
       progress = kind === 'closed' ? null : { stage: 'library-changed', message: '素材库已变化，请重新调用插件。' }; notify();
     }
@@ -389,7 +408,7 @@ function createSession(options) {
       ? Object.freeze({ ...record.draft, status: 'obsolete', message: '原提案未发送，视频已切换。文字已保留，请复制后取消，再固定新画面。' }) : record.draft });
   }
   async function beginComment() {
-    if (activeExport) return { status: 'ignored' };
+    if (activeExport || drawings.snapshot().draft) return { status: 'ignored' };
     const owned = owner, token = epoch;
     if (closed || !owned || !owned.ready || comments.status !== 'ready' || comments.draft || !['paused', 'playing'].includes(state))
       return { status: 'ignored' };
@@ -413,7 +432,7 @@ function createSession(options) {
     }
   }
   async function beginCommentMutation(id, kind) {
-    if (activeExport) return { status: 'ignored' };
+    if (activeExport || drawings.snapshot().draft) return { status: 'ignored' };
     const owned = owner, token = epoch, item = comments.items.find(value => value.id === id);
     if (!['edit', 'delete'].includes(kind) || closed || !owned || !owned.ready || comments.status !== 'ready' || comments.draft ||
         !item || !['paused', 'playing'].includes(state)) return { status: 'ignored' };
@@ -481,6 +500,10 @@ function createSession(options) {
     // and library path as well as the source, never just a reused content hash.
     const sameDraft = !closed && comments.draft && comments.draft.id === id && comments.libraryPath === record.draft.libraryPath &&
       source && source.id === record.draft.source.id && source.filePath === record.draft.source.filePath && source.sha256 === record.draft.source.sha256;
+    if (sameDraft && result.status === 'saved' && record.draft.kind === 'delete') {
+      const cleanup = drawings.nativeDeleted(record.draft.original.id);
+      if (cleanup.status === 'failed') result = { ...result, message: '原生文字已删除，但圈画仍保留：' + cleanup.message };
+    }
     if (liveDraft(id, token) || sameDraft) {
       if (result.status === 'saved') commentChange({ items: result.items, draft: null, message: result.message });
       else if (token !== epoch && result.status === 'failed') { restoreWrite(record); notify(); }
@@ -524,7 +547,7 @@ function createSession(options) {
   }
   function beginExport(kind, settings = {}) {
     const owned = owner, token = epoch;
-    if (closed || activeExport || exportState.status === 'unknown' || comments.draft || !owned || !owned.ready ||
+    if (closed || activeExport || exportState.status === 'unknown' || comments.draft || drawings.snapshot().draft || !owned || !owned.ready ||
         !['paused', 'playing'].includes(state) || !options.exports || typeof eagleAdapter.exportDestination !== 'function')
       return Promise.resolve({ status: 'ignored' });
     const job = { controller: new AbortController(), promise: null, issued: false, id: ++exportSequence };
@@ -599,7 +622,41 @@ function createSession(options) {
     if (!closed) exportChange({ ...result, generated: result.status === 'unknown' ? previous.generated : null });
     return result;
   }
+  async function beginDrawing(id = null, kind = 'edit') {
+    const owned = owner, token = epoch;
+    if (closed || comments.draft || activeExport || exportState.status === 'unknown' || !owned || !owned.ready || !['paused', 'playing'].includes(state)) return { status: 'ignored' };
+    let target;
+    try { target = drawings.resolve(id, comments.items); } catch (failure) { drawings.fail(failure); return { status: 'failed' }; }
+    const reservation = drawings.reserve(); if (reservation === null) return { status: 'ignored' };
+    const valid = () => !closed && token === epoch && owner === owned && drawings.snapshot().draft?.id === reservation;
+    try {
+      await owned.player.pause(); if (!valid()) return { status: 'superseded' };
+      if (target.note || target.row) {
+        const time = target.note ? target.note.time : target.row.time;
+        const index = target.note ? target.note.frameOrdinal : undefined;
+        if (target.note && (!owned.info.frames[index] || owned.info.frames[index].id !== target.note.frameId || owned.info.frames[index].time !== time))
+          throw issue('DRAWING_FRAME_CHANGED', '圈画源帧不一致，旧圈画已保留。');
+        await owned.player.seek(time, { index, kind: 'annotation', final: true, inputAt: now() });
+        if (!valid()) return { status: 'superseded' };
+      }
+      const actual = owned.player.snapshot(), frame = owned.info.frames[actual.frameOrdinal];
+      if (actual.state !== 'paused' || actual.pendingTargets > 0 || !frame || frame.id !== actual.frameId || frame.time !== actual.time)
+        throw issue('DRAWING_FRAME_NOT_READY', '当前源帧尚未准确显示，请完成定位后重试。');
+      drawings.begin(reservation, { frameId: actual.frameId, frameOrdinal: actual.frameOrdinal, time: actual.time }, target, kind);
+      return { status: 'editing' };
+    } catch (failure) { if (valid()) drawings.fail(failure); return { status: 'failed', message: failure.message }; }
+  }
+  async function clearDrawing(id) {
+    const owned = owner, token = epoch;
+    if (closed || comments.draft || drawings.snapshot().draft || activeExport || !owned || !owned.ready || !['paused', 'playing'].includes(state)) return { status: 'ignored' };
+    await control('pause', [], ['paused', 'playing']);
+    if (token !== epoch || closed || owner !== owned) return { status: 'superseded' };
+    return drawings.remove(id);
+  }
   return Object.freeze({ loadSelected, retry: settings => loadSelected({ ...settings, trigger: 'retry' }),
+    beginDrawing, clearDrawing, setDrawingObjects: drawings.objects, touchDrawing: drawings.touch,
+    saveDrawing: drawings.save, cancelDrawing: drawings.discard, setDrawingsVisible: drawings.setVisible,
+    hasDrawingDraft: () => !!drawings.snapshot().draft,
     play: () => control('play', [], ['paused']), pause: () => control('pause', [], ['paused', 'playing', 'seeking']),
     toggle: () => state === 'playing' ? control('pause', [], ['playing']) : control('play', [], ['paused']),
     seek: (time, settings = {}) => control('seek', [time, { ...settings, inputAt: settings.inputAt === undefined ? now() : settings.inputAt }], ['paused', 'playing', 'seeking']),
@@ -614,8 +671,8 @@ function createSession(options) {
     beginComment, editComment: id => beginCommentMutation(id, 'edit'), deleteComment: id => beginCommentMutation(id, 'delete'),
     setCommentText, saveComment, cancelComment, checkComment, refreshComments, setCommentsVisible,
     seekComment: id => {
-      const item = comments.items.find(value => value.id === id);
-      return item && item.time <= duration ? control('seek', [item.time, { kind: 'annotation', final: true, inputAt: now() }], ['paused', 'playing', 'seeking']) : Promise.resolve({ status: 'ignored' });
+      const item = drawings.list(comments.items).find(value => value.id === id);
+      return item && item.time <= duration ? control('seek', [item.time, { kind: 'annotation', index: item.drawingFrameOrdinal, final: true, inputAt: now() }], ['paused', 'playing', 'seeking']) : Promise.resolve({ status: 'ignored' });
     },
     annotationHistory: () => Object.freeze(annotationReceipts.slice()), setMemoryMiB, setPlaybackSettings, clearOtherCaches,
     beginExport, loadExportFolders, checkExport, cancelExport: () => { if (activeExport && !activeExport.issued) activeExport.controller.abort(); },

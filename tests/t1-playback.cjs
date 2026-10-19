@@ -17,6 +17,7 @@ function element(id) {
     fire(type, values = {}) { const event = { target: this, pointerId: 1, button: 0, buttons: 1, clientX: 100,
       preventDefault() { this.prevented = true; }, ...values }; for (const fn of listeners.get(type) || []) fn(event); return event; },
     setAttribute(name, value) { this.attributes[name] = value; },
+    replaceChildren(...children) { this.children = children; },
     closest(selector) { return this.attributes.role === 'slider' && selector.includes('[role="slider"]') ? this : null; },
     getBoundingClientRect() { return { left: 100, width: 200 }; },
     focus() {}, setPointerCapture(id) { this.capture = id; }, hasPointerCapture(id) { return this.capture === id; }, releasePointerCapture() { this.capture = null; } };

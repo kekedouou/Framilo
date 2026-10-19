@@ -49,6 +49,7 @@ async function discoverTools(eagleApi, options = {}) {
 }
 function createEagleAdapter(eagleApi, options = {}) {
   return Object.freeze({ captureSelected: settings => captureSelected(eagleApi, settings),
+    drawingLibrary: () => libraryPath(eagleApi),
     discoverTools: () => discoverTools(eagleApi, options),
     readComments: (source, context) => readComments(eagleApi, source, context, options),
     saveComment: (proposal, settings) => saveComment(eagleApi, proposal, settings, options),

@@ -19,6 +19,7 @@ async function check(mode) {
   const view = element('window'); view.document = doc;
   let selected = 'selected-A', snapshot = { epoch: 1, state: 'empty', duration: 0, playback: null };
   const modules = {
+    'drawing-store.cjs': { createAnnotationStore: () => null },
     'eagle.cjs': { createEagleAdapter: () => ({ async captureSelected() { captures.push(selected); return { id: selected, name: selected, filePath: path.join(root, selected + '.mp4') }; } }) },
     'preferences.cjs': { createMemoryPreferences: () => ({ snapshot: () => ({ ramBytes: 1024 ** 3 }) }) },
     'diagnostics.cjs': { createDiagnostics: () => ({ public: {}, publish() {} }) },

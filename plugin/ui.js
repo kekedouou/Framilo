@@ -5,10 +5,11 @@
   // Page scripts must use the helper already loaded by index.html instead.
   const view = typeof window === 'object' && window ? window : root && root.document ? root : null;
   const api = factory(view ? view.EVALoopSelection : require('./loop-selection.js'),
-    view ? view.EVATimelineView : require('./timeline-view.js'), view ? view.EVAPlayer : require('./player.js'));
+    view ? view.EVATimelineView : require('./timeline-view.js'), view ? view.EVAPlayer : require('./player.js'),
+    view ? view.EVADrawingUI : require('./drawing-ui.js'));
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (view) view.EVAUI = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (selectionAPI, timelineAPI, playerAPI) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (selectionAPI, timelineAPI, playerAPI, drawingAPI) {
   'use strict';
   function formatTime(seconds) {
     const milliseconds = Math.max(0, Math.floor((Number(seconds) || 0) * 1000 + .00001));
@@ -53,6 +54,7 @@
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
     let viewRange = { start: 0, end: 0, focused: false }, timelineWidth = null, rulerKey = null;
     let rateRequest = null, noteRequest = null, exportRequest = null;
+    let drawingUI = null;
     const markerButtons = [], markerTimes = new WeakMap();
     const attributes = new Map();
     const loopAttributes = new WeakMap();
@@ -118,7 +120,7 @@
     let memoryBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null, shownPredecode = null, shownWheel = null, shownStrip = null, shownRateStep = null;
     function updateMemorySettings() {
       const memory = state.memorySettings;
-      const disabled = !session || !memory || memoryBusy || cleaning || transportBusy || !!noteRequest || !!exportRequest || state.state === 'preparing' || state.state === 'closed' || !!state.comments?.draft || selection.snapshot().editing;
+      const disabled = !session || !memory || memoryBusy || cleaning || transportBusy || !!noteRequest || !!exportRequest || state.state === 'preparing' || state.state === 'closed' || !!state.comments?.draft || !!state.drawings?.draft || selection.snapshot().editing;
       set(el.memoryApply, 'disabled', disabled); set(el.memoryMiB, 'disabled', disabled); set(el.qualitySelect, 'disabled', disabled);
       set(el.forwardPredecode, 'disabled', disabled);
       set(el.wheelFrames, 'disabled', disabled); set(el.showCacheStrip, 'disabled', disabled);
@@ -173,7 +175,7 @@
       finally { cleaning = false; if (session === active) updateMemorySettings(); }
     });
     on(win, 'resize', () => { coverageKey = null; coverageSize = null; timelineWidth = null; rulerKey = null; updateTransport(); refreshCoverage(); });
-    const interactive = () => !!session && !noteRequest && !exportRequest && !state.comments?.draft && state.exportState?.status !== 'busy' && ['paused', 'playing', 'seeking'].includes(state.state);
+    const interactive = () => !!session && !noteRequest && !exportRequest && !state.comments?.draft && !state.drawings?.draft && state.exportState?.status !== 'busy' && ['paused', 'playing', 'seeking'].includes(state.state);
     const invoke = fn => {
       try { Promise.resolve(fn()).catch(() => {}); } catch (_) { /* session publishes operation errors */ }
     };
@@ -395,6 +397,10 @@
       if (button && !button.disabled && interactive() && !selection.snapshot().editing) {
         clearHint();
         const action = button.dataset.commentAction;
+        const item = state.comments?.items.find(n => n.id === button.dataset.commentId);
+        if (action === 'drawing') { drawingUI.begin(button.dataset.commentId); return; }
+        if (action === 'clear-drawing') { invoke(() => session.clearDrawing(item.drawingId)); return; }
+        if (action === 'delete' && item?.localDrawing) { drawingUI.begin(item.id, 'delete'); return; }
         invoke(() => action === 'edit' ? session.editComment(button.dataset.commentId)
           : action === 'delete' ? session.deleteComment(button.dataset.commentId) : session.seekComment(button.dataset.commentId));
       }
@@ -483,11 +489,14 @@
         for (const item of items) {
           const inRange = item.time <= state.duration;
           const button = doc.createElement('button'); button.type = 'button'; button.dataset.commentId = item.id;
-          button.className = 'comment-item'; button.textContent = formatTime(item.time) + '  ' + item.text;
+          button.className = 'comment-item'; button.textContent = formatTime(item.time) + '  ' + item.text + (item.drawingId ? '  ◇圈画' : '');
           button.title = inRange ? '定位到此标注' : '此标注超出当前视频时长，不能可靠定位';
           const row = doc.createElement('div'); row.className = 'comment-row'; row.appendChild(button);
           const actions = doc.createElement('div'); actions.className = 'comment-row-actions';
-          for (const [action, label] of [['edit', '修改'], ['delete', '删除']]) {
+          const rowActions = item.localDrawing ? [['delete', '删除']] : [['edit', '修改'], ['delete', '删除']];
+          if (typeof session?.beginDrawing === 'function') rowActions.push(['drawing', item.drawingId ? '编辑圈画' : '添加圈画']);
+          if (item.drawingId) rowActions.push(['clear-drawing', '清除圈画']);
+          for (const [action, label] of rowActions) {
             const control = doc.createElement('button'); control.type = 'button'; control.dataset.commentId = item.id;
             control.dataset.commentAction = action; control.textContent = label; control.title = label + '此标注';
             actions.appendChild(control); commentButtons.push({ button: control, inRange: true });
@@ -568,11 +577,15 @@
       updateExports();
       updateMemorySettings();
       updateTransport();
+      if (drawingUI) drawingUI.update(state);
       const hideStrip = state.interactionSettings?.showCacheStrip === false;
       if (el.decodedCache.hidden !== hideStrip) { set(el.decodedCache, 'hidden', hideStrip); coverageKey = null; }
     }
-    return { canvas: el.picture, bindSession(value) {
+    drawingUI = drawingAPI.createDrawingUI({ document: doc, window: win, getSession: () => session, getState: () => state,
+      canBegin: () => shortcutReady() && !transportBusy && state.exportState?.status !== 'unknown', isKey: letterKey });
+    return { canvas: el.picture, confirmDrawingExit: () => drawingUI.confirmExit(), bindSession(value) {
       if (session !== value) {
+        drawingUI.reset();
         rateRequest = noteRequest = exportRequest = null; transportBusy = false;
         selection.destroy();
         if (session && typeof session.setCommentsVisible === 'function') session.setCommentsVisible(false);
@@ -583,6 +596,7 @@
       if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
     }, update,
       destroy() {
+        drawingUI.destroy();
         rateRequest = noteRequest = exportRequest = null; transportBusy = false;
         if (session && typeof session.setCommentsVisible === 'function') session.setCommentsVisible(false);
         if (memoryTimer !== null) { win.clearInterval(memoryTimer); memoryTimer = null; }

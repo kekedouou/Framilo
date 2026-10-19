@@ -11,6 +11,19 @@
     <section class="player-pane" aria-label="视频播放器">
       <div id="screen" class="screen">
         <canvas id="picture" width="1280" height="720" aria-label="当前视频画面"></canvas>
+        <svg id="drawingLayer" class="drawing-layer" xmlns="http://www.w3.org/2000/svg" aria-label="当前帧屏幕标注" tabindex="0" hidden></svg>
+        <div id="drawingPanel" class="drawing-panel" role="region" aria-label="圈画工具" hidden>
+          <div class="drawing-tools">
+            <select id="drawingTool" aria-label="圈画工具"><option value="pen">手写</option><option value="select">选择／移动／缩放</option><option value="arrow">箭头</option><option value="rect">矩形</option><option value="ellipse">椭圆</option><option value="text">文字</option></select>
+            <select id="drawingColor" aria-label="圈画颜色"><option value="#ffd54f">黄色</option><option value="#ff5252">红色</option><option value="#69d785">绿色</option><option value="#65b6ff">蓝色</option><option value="#ffffff">白色</option><option value="#222222">黑色</option></select>
+            <select id="drawingWidth" aria-label="线条粗细"><option value="0.002">细线</option><option value="0.004" selected>中线</option><option value="0.008">粗线</option></select>
+            <select id="drawingSize" aria-label="画面文字大小"><option value="0.025">小字</option><option value="0.04" selected>中字</option><option value="0.065">大字</option></select>
+            <button id="drawingUndo" type="button" title="Ctrl+Z">撤销</button><button id="drawingRedo" type="button" title="Ctrl+Y">重做</button><button id="drawingDelete" type="button" title="Delete删除选中对象">删除对象</button>
+            <button id="drawingSave" type="button">保存（Enter）</button><button id="drawingCancel" type="button">退出（Esc）</button>
+          </div>
+          <textarea id="drawingText" rows="2" aria-label="画面文字" placeholder="点击画面放置文字；Shift+Enter换行" hidden></textarea>
+          <p id="drawingMessage" class="muted" role="status"></p>
+        </div>
         <div id="notice" class="notice" role="status">在 Eagle 中单选 MP4 后打开插件</div>
         <p id="loopHelp" class="loop-help" role="status" hidden></p>
       </div>
@@ -42,7 +55,7 @@
           <label title="L开启循环并展开片段，关闭恢复整段、保留范围"><input id="loopEnabled" type="checkbox" disabled>循环（L）</label>
           <output id="loopRange" class="muted">未设置范围</output>
           <details class="shortcut-help"><summary title="查看现有操作和快捷键">操作提示</summary>
-            <div class="shortcut-panel">空格：播放／暂停<br>Z：还原1×；X：减速；C：加速<br>【／】：前后逐帧；画面或时间轴滚轮：逐帧<br>R短按：选择／确认／清除片段<br>长按R：暂停并临时查看整段、拖动端点；松开确认，Esc取消<br>L：循环并展开片段／关闭并查看整段<br>N：添加标注；S：导出当前画面；E：导出所选片段<br>标注输入：Enter保存，Shift+Enter换行</div>
+            <div class="shortcut-panel">空格：播放／暂停<br>Z：还原1×；X：减速；C：加速<br>【／】：前后逐帧；画面或时间轴滚轮：逐帧<br>R短按：选择／确认／清除片段<br>长按R：暂停并临时查看整段、拖动端点；松开确认，Esc取消<br>L：循环并展开片段／关闭并查看整段<br>N：添加文字；D：新建圈画；H：屏幕标注显隐<br>绘图中：Enter保存，Esc退出，Ctrl+Z／Y撤销重做<br>S：导出当前画面；E：导出所选片段<br>标注输入：Enter保存，Shift+Enter换行</div>
           </details>
         </div>
       </div>
@@ -59,6 +72,8 @@
         <select id="qualitySelect" aria-label="预览画质" disabled><option value="720p">720p</option><option value="1080p">1080p</option></select>
         <p class="muted">保持比例，不放大小视频。JPEG轻量预览。</p>
         <label class="predecode-option"><input id="forwardPredecode" type="checkbox" checked disabled> 提前解压周围画面</label>
+        <label class="predecode-option"><input id="showDrawings" type="checkbox" checked> 显示屏幕标注（H）</label>
+        <p class="muted">立即生效并记住选择，不删除标注，不需点击应用。</p>
         <p class="muted">优先准备光标附近，自动替换远处画面。绿条表示已解压；未覆盖处首次拖动可能等待。</p>
         <label class="predecode-option"><input id="showCacheStrip" type="checkbox" checked disabled> 显示缓存绿条</label>
         <label for="wheelFrames">滚轮灵敏度</label>
@@ -97,7 +112,8 @@
         <p id="exportStatus" class="muted" role="status">从原视频导出，预览画质不影响结果。</p>
       </section>
       <section class="comments" aria-label="视频标注">
-        <div class="comment-heading"><h2>标注</h2><button id="commentAdd" type="button" disabled>添加</button></div>
+        <div class="comment-heading"><h2>标注</h2><button id="commentAdd" type="button" title="N添加文字标注" disabled>文字</button><button id="drawingNew" type="button" title="D新建本帧圈画；已有条目从列表编辑" disabled>圈画（D）</button></div>
+        <p id="drawingStatus" class="muted" role="status"></p>
         <p id="commentStatus" class="muted" role="status"></p>
         <div id="commentEditor" hidden>
           <p id="commentTime" class="muted"></p>
@@ -110,9 +126,14 @@
       </section>
     </aside>
   </main>
+  <div id="drawingExit" class="drawing-exit" role="dialog" aria-modal="true" aria-label="未保存圈画" hidden>
+    <div><p id="drawingExitMessage"></p><button id="drawingExitSave" type="button">保存后继续</button><button id="drawingExitDiscard" type="button">放弃修改</button><button id="drawingExitReturn" type="button">返回编辑</button></div>
+  </div>
   <script src="player.js"></script>
   <script src="loop-selection.js"></script>
   <script src="timeline-view.js"></script>
+  <script src="drawing-model.js"></script>
+  <script src="drawing-ui.js"></script>
   <script src="ui.js"></script>
   <script src="app.js"></script>
 </body>

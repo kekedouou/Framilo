@@ -8,7 +8,8 @@ function harness(settings = {}) {
   const nativeTasks = [];
   const ui = { canvas: {}, bindSession() {}, update(value) { updates.push(value); }, destroy() { destroyed++; } };
   const session = {
-    loadSelected(options) { log.push({ type: 'selected', options }); return Promise.resolve(); },
+    hasDrawingDraft: () => !!settings.drawingDraft,
+    loadSelected(options, captured) { log.push({ type: 'selected', options, captured }); return Promise.resolve(); },
     libraryChanged() { log.push({ type: 'library' }); return Promise.resolve(); },
     setCommentsVisible(visible) { log.push({ type: 'comment-visibility', visible }); },
     refreshComments() { log.push({ type: 'comment-refresh' }); return Promise.resolve(); },
@@ -22,6 +23,7 @@ function harness(settings = {}) {
   const modules = {
     'cache.cjs': { createCache(options) { assert.strictEqual(options.pluginRoot, root); return { readAsset() {}, release() {} }; } },
     'eagle.cjs': { createEagleAdapter() { return Object.freeze(adapter); } },
+    'drawing-store.cjs': { createAnnotationStore: () => null },
     'preferences.cjs': { createMemoryPreferences() { return { forwardPredecode:()=>true, snapshot: () => ({ ramBytes: 1024 ** 3, compressedRamBytes: 128 * 1024 ** 2, percent: 2.5 }) }; } },
     'session.cjs': { createSession(options) { config = options; return settings.realSession ? require('../plugin/session.cjs').createSession(options) : session; } },
     'diagnostics.cjs': { createDiagnostics: require('../plugin/diagnostics.cjs').createDiagnostics },
@@ -67,7 +69,7 @@ function harness(settings = {}) {
       while (nativeTasks.length) { nativeTasks.shift()(); await microtasks(); }
     },
     windowState: () => ({ destroyed: windowDestroyed, attempts: closeAttempts, merged: mergedCloseAttempts }), get config() { return config; },
-    counts: () => ({ discovered, prepared, closed, destroyed }) };
+    counts: () => ({ discovered, prepared, closed, destroyed }), session, settings };
 }
 async function bounded(pending) {
   let timer;

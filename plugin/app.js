@@ -5,6 +5,7 @@
   let ui = window.EVAUI.createUI();
   let session = null, diagnostics = null, initializing = false, closed = false;
   let closeTask = null, allowUnload = false, exitScheduled = false;
+  let drawingCloseIntent = null, drawingLoadSequence = 0;
   let backend = null, adapter = null, lastPlugin = null, pendingOpen = null, initialSelection = null;
   let entryOverride = null;
   const now = () => performance.now();
@@ -22,7 +23,16 @@
     });
   }
   async function loadSelected(settings) {
-    const result = await session.loadSelected(settings);
+    let captured = null;
+    if (session.hasDrawingDraft && session.hasDrawingDraft()) {
+      const active = session, request = ++drawingLoadSequence;
+      const library = adapter.drawingLibrary ? adapter.drawingLibrary() : null;
+      try { captured = Promise.resolve(adapter.captureSelected()); } catch (error) { captured = Promise.reject(error); }
+      captured.catch(() => {});
+      if (!ui.confirmDrawingExit || !await ui.confirmDrawingExit()) return { status: 'cancelled' };
+      if (session !== active || closed || request !== drawingLoadSequence || library && adapter.drawingLibrary() !== library) return { status: 'superseded' };
+    }
+    const result = await session.loadSelected(settings, captured);
     if (diagnostics) diagnostics.publish('load-result', result);
     return result;
   }
@@ -39,7 +49,9 @@
       const { createSession } = require(path.join(root, 'session.cjs'));
       const { createDiagnostics } = require(path.join(root, 'diagnostics.cjs'));
       const { createMemoryPreferences } = require(path.join(root, 'preferences.cjs'));
+      const { createAnnotationStore } = require(path.join(root, 'drawing-store.cjs'));
       const preferences = createMemoryPreferences({ pluginRoot: root });
+      const annotationStore = createAnnotationStore({ pluginRoot: root });
       const frameIndex = require(path.join(root, 'frame-index.cjs'));
       if (!diagnostics) {
         diagnostics = createDiagnostics({ snapshot: () => session ? { ...session.snapshot(),
@@ -74,7 +86,7 @@
       } };
       const exports = { create: (...args) => backend.exports.create(...args), publish: (...args) => backend.exports.publish(...args),
         discard: (...args) => backend.exports.discard(...args) };
-      session = createSession({ eagleAdapter: sessionAdapter, media, cache, now, memoryPreferences: preferences, exports,
+      session = createSession({ eagleAdapter: sessionAdapter, media, cache, now, memoryPreferences: preferences, annotationStore, exports,
         createPlayer: options => {
           const value = session.snapshot(), identity = value.sourceIdentity;
           const binding = Object.freeze({ sessionEpoch: value.epoch, libraryEpoch: value.libraryEpoch,
@@ -91,6 +103,7 @@
   }
   function close() {
     if (closeTask) return closeTask;
+    if (session && session.hasDrawingDraft && session.hasDrawingDraft()) return Promise.resolve({ status: 'cancelled' });
     closed = true;
     try { closeTask = (async () => {
       let result, failure;
@@ -111,6 +124,14 @@
     });
     closeTask.catch(() => {});
     ui.destroy(); ui.update({ state: 'closing', source: null, duration: 0, playback: null, error: null }); return closeTask;
+  }
+  function requestClose() {
+    if (closeTask) return closeTask;
+    if (!session || !session.hasDrawingDraft || !session.hasDrawingDraft()) return close();
+    if (drawingCloseIntent) return drawingCloseIntent;
+    const intent = Promise.resolve(ui.confirmDrawingExit ? ui.confirmDrawingExit() : false).then(ok => ok ? close() : { status: 'cancelled' })
+      .finally(() => { if (drawingCloseIntent === intent) drawingCloseIntent = null; });
+    drawingCloseIntent = intent; return intent;
   }
   function run() {
     if (session && !closed) return loadSelected({ startedAt: now(), trigger: 'plugin-run' }).catch(() => {});
@@ -144,14 +165,16 @@
     if (typeof event.preventDefault === 'function') event.preventDefault();
     if (exitScheduled) return;
     exitScheduled = true;
-    const closing = close(); closing.then(result => {
+    const closing = requestClose(); closing.then(result => {
+      if (result && ['cancelled', 'drawing-blocked'].includes(result.status)) { exitScheduled = false; return; }
       if (result && result.status === 'error') throw new Error(result.error && result.error.message || '资源释放未完成');
+      const completedClose = closeTask;
       // A settled ready/empty session can finish entirely in microtasks. Asking
       // Electron to close again there can reach the browser before its first
       // cancelled-beforeunload ACK, so Chromium merges that second request.
       // A new task lets the cancellation finish before making the real close.
       setTimeout(() => {
-        if (closeTask !== closing || pendingOpen) return;
+        if (closeTask !== completedClose || pendingOpen) return;
         try { allowUnload = true; window.close(); }
         catch (error) { closeFailed(error); }
       }, 0);
@@ -164,9 +187,14 @@
       if (session && !closed) { session.setCommentsVisible(true); session.refreshComments().catch(() => {}); }
     });
     if (typeof eagle.onPluginHide === 'function') eagle.onPluginHide(() => { if (session && !closed) session.setCommentsVisible(false); });
-    if (typeof eagle.onLibraryChanged === 'function') eagle.onLibraryChanged(() => session && !closed ? session.libraryChanged().catch(startupError) : undefined);
-    if (typeof eagle.onPluginBeforeExit === 'function') eagle.onPluginBeforeExit(close);
+    if (typeof eagle.onLibraryChanged === 'function') eagle.onLibraryChanged(async () => {
+      if (!session || closed) return;
+      const active = session;
+      if (active.hasDrawingDraft && active.hasDrawingDraft() && (!ui.confirmDrawingExit || !await ui.confirmDrawingExit())) return;
+      if (session === active && !closed) return session.libraryChanged().catch(startupError);
+    });
+    if (typeof eagle.onPluginBeforeExit === 'function') eagle.onPluginBeforeExit(requestClose);
     window.addEventListener('beforeunload', beforeUnload);
-    window.addEventListener('pagehide', close);
+    window.addEventListener('pagehide', requestClose);
   } else startupError(new Error('请从 Eagle 打开视频分析插件。'));
 })();
