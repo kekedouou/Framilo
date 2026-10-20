@@ -390,22 +390,37 @@
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); step(event.key === 'ArrowLeft' ? -1 : 1); }
     });
     let renderedItems = null, renderedDuration = null, renderedComments = null, renderedInteractive = null, editorId = null, editorEpoch = null;
+    let selectedComment = null;
+    const commentRows = [];
+    function showCommentActions(id) {
+      selectedComment = id;
+      for (const entry of commentRows) {
+        entry.actions.hidden = entry.id !== id;
+        entry.row.dataset.selected = String(entry.id === id);
+        entry.button.setAttribute('aria-expanded', String(entry.id === id));
+      }
+    }
     let commentComposing = false, commentCompositionEnd = -Infinity;
     const commentButtons = [];
     function seekComment(event) {
       const button = event.target && event.target.closest && event.target.closest('button[data-comment-id]');
       if (button && !button.disabled && interactive() && !selection.snapshot().editing) {
         clearHint();
+        showCommentActions(button.dataset.commentId);
         const action = button.dataset.commentAction;
         const item = state.comments?.items.find(n => n.id === button.dataset.commentId);
         if (action === 'drawing') { drawingUI.begin(button.dataset.commentId); return; }
         if (action === 'clear-drawing') { invoke(() => session.clearDrawing(item.drawingId)); return; }
         if (action === 'delete' && item?.localDrawing) { drawingUI.begin(item.id, 'delete'); return; }
+        if (!action && item?.time > state.duration) return; // Still expose management of an out-of-range note.
         invoke(() => action === 'edit' ? session.editComment(button.dataset.commentId)
           : action === 'delete' ? session.deleteComment(button.dataset.commentId) : session.seekComment(button.dataset.commentId));
       }
     }
     on(el.commentMarkers, 'click', seekComment); on(el.commentList, 'click', seekComment);
+    on(win, 'pointerdown', event => {
+      if (selectedComment && !state.comments?.draft && !state.drawings?.draft && !event.target?.closest?.('.comment-row')) showCommentActions(null);
+    });
     async function beginNote() {
       if (!shortcutReady() || transportBusy || el.commentAdd.disabled) return;
       const job = noteRequest = { session, epoch: state.epoch }; update(state);
@@ -485,15 +500,16 @@
       if (items && (items !== renderedItems || renderedDuration !== state.duration)) {
         renderedItems = items; renderedDuration = state.duration;
         rebuilt = true;
-        el.commentList.replaceChildren(); el.commentMarkers.replaceChildren(); commentButtons.length = 0; markerButtons.length = 0;
+        el.commentList.replaceChildren(); el.commentMarkers.replaceChildren(); commentButtons.length = 0; markerButtons.length = 0; commentRows.length = 0;
+        if (!items.some(item => item.id === selectedComment)) selectedComment = null;
         for (const item of items) {
           const inRange = item.time <= state.duration;
           const button = doc.createElement('button'); button.type = 'button'; button.dataset.commentId = item.id;
           button.className = 'comment-item'; button.textContent = formatTime(item.time) + '  ' + item.text + (item.drawingId ? '  ◇圈画' : '');
-          button.title = inRange ? '定位到此标注' : '此标注超出当前视频时长，不能可靠定位';
+          button.title = inRange ? '定位到此标注并展开操作' : '此标注超出当前时长，点击展开管理，不定位视频';
           const row = doc.createElement('div'); row.className = 'comment-row'; row.appendChild(button);
           const actions = doc.createElement('div'); actions.className = 'comment-row-actions';
-          const rowActions = item.localDrawing ? [['delete', '删除']] : [['edit', '修改'], ['delete', '删除']];
+          const rowActions = item.localDrawing ? [['delete', '删除整条']] : [['edit', '修改文字'], ['delete', '删除整条']];
           if (typeof session?.beginDrawing === 'function') rowActions.push(['drawing', item.drawingId ? '编辑圈画' : '添加圈画']);
           if (item.drawingId) rowActions.push(['clear-drawing', '清除圈画']);
           for (const [action, label] of rowActions) {
@@ -501,7 +517,8 @@
             control.dataset.commentAction = action; control.textContent = label; control.title = label + '此标注';
             actions.appendChild(control); commentButtons.push({ button: control, inRange: true });
           }
-          row.appendChild(actions); el.commentList.appendChild(row); commentButtons.push({ button, inRange });
+          row.appendChild(actions); el.commentList.appendChild(row); commentButtons.push({ button, inRange: true });
+          commentRows.push({ row, button, actions, id: item.id });
           if (inRange && state.duration > 0) {
             const marker = doc.createElement('button'); marker.type = 'button'; marker.dataset.commentId = item.id;
             marker.className = 'comment-marker'; markerTimes.set(marker, item.time);
@@ -510,6 +527,7 @@
           }
         }
         positionMarkers();
+        showCommentActions(selectedComment);
       }
       if (rebuilt || renderedInteractive !== ready) {
         for (const entry of commentButtons) set(entry.button, 'disabled', !ready || !entry.inRange);
@@ -541,6 +559,7 @@
       if (editable && editorId !== draft.id) { editorId = draft.id; editorEpoch = state.epoch; if (!deleting) el.commentText.focus(); }
     }
     function update(snapshot) {
+      if (state.epoch !== snapshot.epoch) showCommentActions(null);
       state = snapshot;
       if ([rateRequest, noteRequest, exportRequest].some(job => job && (job.epoch !== state.epoch || ['closed', 'closing'].includes(state.state)))) {
         rateRequest = noteRequest = exportRequest = null; transportBusy = false;
@@ -585,6 +604,7 @@
       canBegin: () => shortcutReady() && !transportBusy && state.exportState?.status !== 'unknown', isKey: letterKey });
     return { canvas: el.picture, confirmDrawingExit: () => drawingUI.confirmExit(), bindSession(value) {
       if (session !== value) {
+        showCommentActions(null);
         drawingUI.reset();
         rateRequest = noteRequest = exportRequest = null; transportBusy = false;
         selection.destroy();

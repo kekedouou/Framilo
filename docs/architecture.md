@@ -1,5 +1,7 @@
 # 技术架构：阶段 3B 已批准
 
+2026-10-20 E-10交互补充：同类命中/四角及箭头端点、无重做的有界历史和样式校验放drawing-model；瞬态空文字/拖动预览不混入已提交对象，drawing-ui只经Session发操作。drawing-session协调共享颜色/逐工具宽度及字号，drawing-store新增独立styles修订（color/widths/size，严格校验、默认懒读、原子提交），仍用现有owner协议；旧视频记录/visibility格式原样兼容，不重写旧数据。工具设置失败保留旧版并提示，不重建视频缓存。坐标换算使用CSS实际显示矩形，工具栏/属性与就地文本绝对定位不改变picture布局；侧栏只控制展开状态。真实文件/Session/DOM验证见[E-10报告](experiments/E10/report.md)。
+
 2026-10-19 E-10实施边界：新增纯绘图模型、独立SVG透明绘图UI、Session协调与注入的永久存储；Eagle SDK仍只在eagle.cjs。annotation-data与cache/export-work分离，发布/Git排除。持久记录以库上下文+itemID隔离，绑定源SHA及源帧，不将平均FPS或请求时间当显示帧；更换源内容保留旧记录而不套新画面。不更改既有颜色/播放器/导出管线。持久化owner=eva-drawing-store-v1，严格字段/源帧与原生时间分开校验，以排他硬链接提交修订并保留最新两份，无长期写锁；文档和显隐配置均由drawing-store唯一读取/写入。绘图、移库/重载/关闭和未知删除均有保护，实际结果见[E-10报告](experiments/E10/report.md)。 详见[实施计划](experiments/E10/plan.md)。
 
 2026-10-19：加速键V改为C，仅调整UI键位/帮助及测试；无Session/Player/缓存/偏好结构变化。上下视频要求读取Eagle当前视图及排序，公开接口不足以保证，内部读取方案经说明后用户明确暂缓；未引入该依赖或更改既有适配边界，详见[E-09记录](experiments/E09/report.md)。

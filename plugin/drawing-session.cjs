@@ -1,13 +1,15 @@
 'use strict';
 // Annotation state only. Persistence is injected; no SDK, filesystem or DOM.
 const { randomUUID } = require('crypto');
-const { validate } = require('./drawing-model.js');
+const { validate, defaultStyles, validateStyles } = require('./drawing-model.js');
 function createDrawingSession({ store, onChange = () => {} } = {}) {
   let binding = null, document = { records: [], token: null }, records = Object.freeze([]), draft = null;
   let status = store ? 'idle' : 'disabled', message = '', visible = true, preferenceToken = null;
   let listKey = null, merged = null, serial = 0;
+  let styles = Object.freeze(defaultStyles()), stylesToken = null, stylesReadError = '';
   const notify = () => { onChange(); };
   if (store) try { const p = store.readVisibility(); visible = p.visible; preferenceToken = p.token; } catch (error) { message = '显隐设置未读取：' + error.message; }
+  if (store?.readStyles) try { const p = store.readStyles(); styles = Object.freeze(validateStyles(p.styles)); stylesToken = p.token; } catch (error) { stylesReadError = '工具设置未读取：' + error.message; }
   function refreshRecords() { records = Object.freeze(document.records.filter(n => n.sourceSha256 === binding.sourceSha256).map(n => Object.freeze(n))); listKey = null; }
   function open(next) {
     if (!store) return;
@@ -89,9 +91,17 @@ function createDrawingSession({ store, onChange = () => {} } = {}) {
     try { const p = store.saveVisibility(next, preferenceToken); preferenceToken = p.token; visible = p.visible; notify(); return { status: 'saved' }; }
     catch (error) { message = '显隐设置未保存：' + error.message; notify(); return { status: 'failed', message }; }
   }
+  function setStyles(next) {
+    if (!store?.saveStyles) return { status: 'ignored' };
+    try {
+      next = validateStyles(next);
+      if (JSON.stringify(styles) === JSON.stringify(next)) return { status: 'saved' };
+      const p = store.saveStyles(next, stylesToken); stylesToken = p.token; styles = Object.freeze(validateStyles(p.styles)); stylesReadError = ''; notify(); return { status: 'saved' };
+    } catch (error) { message = '工具设置未保存：' + error.message; notify(); return { status: 'failed', message }; }
+  }
   function deactivate() { if (draft) return false; binding = null; records = Object.freeze([]); document = { records: [], token: null }; status = store ? 'idle' : 'disabled'; listKey = null; return true; }
-  return Object.freeze({ open, list, resolve, reserve, begin, objects, touch, discard, fail, save, remove, nativeDeleted, setVisible, deactivate,
-    snapshot: () => Object.freeze({ status, records, draft, visible, message }),
+  return Object.freeze({ open, list, resolve, reserve, begin, objects, touch, discard, fail, save, remove, nativeDeleted, setVisible, setStyles, deactivate,
+    snapshot: () => Object.freeze({ status, records, draft, visible, styles, message: message || stylesReadError }),
     atFrame: (ordinal, id) => records.filter(n => n.frameOrdinal === ordinal && n.frameId === id).flatMap(n => n.objects) });
 }
 module.exports = { createDrawingSession };

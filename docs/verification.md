@@ -1,5 +1,10 @@
 # 验证协议与验收映射：阶段 3C
 
+## E-10交互补充验证（2026-10-20）
+
+引用R-03/05/08、P-04与[E-10计划](experiments/E10/plan.md)。检查同类边线命中/空心内画/角点端点、3屏幕像素误点、临时空文字/已有文字删空、单步撤销与无绘图重做、中文选字/Shift+Enter、共享颜色/分工具属性持久重开和失败保留、侧栏单条展开/超时长管理、H/固定帧/退出保护及区域不缩小。默认node scripts/check.cjs --without-prepared-host只读模型及隔离存储，不生成媒体/加载Eagle；可选node tests/support/drawing-browser.cjs运行隔离Chrome真实DOM并清理本轮目录，Session/视频仍为测试替身，不能冒充真实Eagle或性能。只在获批e10-interaction预算中保存新证据，旧e10-drawing不改；最后同一入口集中体验一次，原长期内存/性能缺口不改判通过。
+
+
 ## E-07功能包验证（2026-10-19）
 
 启动回归补缺：tests/window-session-timers.cjs执行真实Session默认路径，计时器严格检查Window接收者，不能只注入Node/假时钟或替代Session。应覆盖初始提醒、轮询/隐藏/返回清理、关闭以及读取中关闭；旧错误先复现留证，修复后运行。同源默认计时器片段已做真实Chrome原生调用前后对照，范围仍不等于真实Eagle108/播放器验收；细节及独立有界记录见E-07最新报告，不恢复旧媒体/长期测试。

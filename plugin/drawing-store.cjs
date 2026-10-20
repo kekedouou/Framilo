@@ -48,17 +48,18 @@ function createAnnotationStore({ pluginRoot, io = fs } = {}) {
     if (JSON.parse(readFile(path.join(root, 'owner.json'), 1024).data).owner !== OWNER) throw Error('圈画数据目录归属不明，未修改。');
     return true;
   }
-  function target(scope) { return scope === 'visibility' ? { key: 'visibility', scope: null } : { key: hash(JSON.stringify(validateScope(scope))), scope: validateScope(scope) }; }
+  function target(scope) { return ['visibility', 'styles'].includes(scope) ? { key: scope, scope: null } : { key: hash(JSON.stringify(validateScope(scope))), scope: validateScope(scope) }; }
   function validateBody(value, info) {
-    if (!value || Object.keys(value).sort().join(',') !== (info.key === 'visibility' ? 'key,owner,revision,scope,visible' : 'key,owner,records,revision,scope')) throw Error('圈画文档包含未知字段，原件已保留。');
+    if (!value || Object.keys(value).sort().join(',') !== (info.key === 'visibility' ? 'key,owner,revision,scope,visible' : info.key === 'styles' ? 'key,owner,revision,scope,styles' : 'key,owner,records,revision,scope')) throw Error('圈画文档包含未知字段，原件已保留。');
     if (value.owner !== OWNER || value.key !== info.key || !Number.isSafeInteger(value.revision) || value.revision < 1 ||
         JSON.stringify(value.scope) !== JSON.stringify(info.scope)) throw Error('圈画文档身份或版本不符。');
     if (info.key === 'visibility') { if (typeof value.visible !== 'boolean') throw Error('屏幕标注显示设置无效。'); }
+    else if (info.key === 'styles') value.styles = model.validateStyles(value.styles);
     else value.records = validateRecords(value.records);
     return value;
   }
   function read(scope) {
-    const info = target(scope), empty = { revision: 0, token: null, records: [], visible: true, scope: info.scope };
+    const info = target(scope), empty = { revision: 0, token: null, records: [], visible: true, styles: model.defaultStyles(), scope: info.scope };
     if (!checkRoot()) return empty;
     const dir = path.join(root, info.key); if (!exists(dir)) return empty; directory(dir);
     const names = io.readdirSync(dir), revisions = names.filter(n => /^r-\d{12}\.json$/.test(n)).sort();
@@ -115,6 +116,7 @@ function createAnnotationStore({ pluginRoot, io = fs } = {}) {
     }
   }
   return Object.freeze({ read, save: (scope, records, token) => commit(scope, { records: validateRecords(records) }, token),
-    readVisibility: () => read('visibility'), saveVisibility: (visible, token) => commit('visibility', { visible }, token), root });
+    readVisibility: () => read('visibility'), saveVisibility: (visible, token) => commit('visibility', { visible }, token),
+    readStyles: () => read('styles'), saveStyles: (styles, token) => commit('styles', { styles: model.validateStyles(styles) }, token), root });
 }
 module.exports = { createAnnotationStore, validateRecords, MAX_BYTES, OWNER };

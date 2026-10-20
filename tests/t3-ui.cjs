@@ -17,7 +17,7 @@ function harness(settings={}){
  ui.bindSession(session);ui.update(s);return {ui,doc,win,calls,session,el:id=>doc.getElementById(id),get state(){return s;},update:patch=>{s={...s,...patch};ui.update(s);}};
 }
 function test(name,fn){fn();count++;console.log('ok '+name);}
-test('Comment list and markers use literal text and actual seconds; out-of-range data stays visible but disabled',()=>{const h=harness();assert.equal(h.el('commentList').children.length,2);assert(h.el('commentList').children[0].children[0].textContent.includes('<img onerror=bad>'));assert.equal(h.el('commentMarkers').children.length,1);assert.equal(h.el('commentMarkers').children[0].style.left,'20%');assert.equal(h.el('commentList').children[1].children[0].disabled,true);h.ui.destroy();});
+test('Comment list and markers use literal text and actual seconds; out-of-range data permits management without a seek',()=>{const h=harness();assert.equal(h.el('commentList').children.length,2);assert(h.el('commentList').children[0].children[0].textContent.includes('<img onerror=bad>'));assert.equal(h.el('commentMarkers').children.length,1);assert.equal(h.el('commentMarkers').children[0].style.left,'20%');const row=h.el('commentList').children[1];assert(!row.children[0].disabled);h.el('commentList').fire('click',{target:row.children[0]});assert(!row.children[1].hidden);assert.equal(h.calls.length,0);h.ui.destroy();});
 test('Normal per-frame updates never rebuild the annotation DOM',()=>{const h=harness(),list=h.el('commentList'),replacements=list.replacements,first=list.children[0];for(let i=0;i<120;i++)h.update({playback:{time:i/60,frameId:i}});assert.equal(list.replacements,replacements);assert.strictEqual(list.children[0],first);h.ui.destroy();});
 test('Clicking a marker or list item invokes only annotation seek',()=>{const h=harness();h.el('commentMarkers').fire('click',{target:h.el('commentMarkers').children[0]});h.el('commentList').fire('click',{target:h.el('commentList').children[0].children[0]});assert.deepEqual(h.calls,[['seekComment','note'],['seekComment','note']]);h.ui.destroy();});
 test('A fixed proposal disables playback/drag, focuses editor and protects typing spaces',()=>{const h=harness();const draft={id:1,status:'editing',time:2,text:'中文 空格',message:''};h.update({comments:{...h.state.comments,draft}});assert.equal(h.el('play').disabled,true);assert.equal(h.el('previous').disabled,true);assert.equal(h.el('commentText').value,'中文 空格');assert.equal(h.doc.activeElement,h.el('commentText'));assert.equal(h.el('commentEditor').hidden,false);assert(h.el('commentTime').textContent.includes('0:02.000'));h.win.fire('keydown',{code:'Space',target:h.el('commentText')});assert.equal(h.calls.length,0);h.el('commentText').value='新的 空格';h.el('commentText').fire('input');assert.deepEqual(h.calls[0],['setCommentText','新的 空格']);h.el('commentSave').fire('click');assert.deepEqual(h.calls[1],['saveComment']);h.ui.destroy();});
@@ -68,5 +68,12 @@ test('Visibility/focus signals stop or resume session synchronization and are re
  h.doc.hidden=true;h.doc.fire('visibilitychange');assert.deepEqual(h.calls,[['visible',false]]);h.calls.length=0;
  h.doc.hidden=false;h.win.fire('focus');assert.deepEqual(h.calls,[['visible',true],['refresh']]);h.calls.length=0;
  h.ui.destroy();assert.deepEqual(h.calls,[['visible',false]]);h.calls.length=0;h.win.fire('focus');h.doc.fire('visibilitychange');assert.equal(h.calls.length,0);
+});
+test('Actions expand one row at a time, stay open during editing, and collapse on outside click or source change',()=>{
+ const h=harness(),row=h.el('commentList').children[0],action=row.children[1];assert(action.hidden);
+ h.el('commentList').fire('click',{target:row.children[0]});assert(!action.hidden);assert.equal(row.children[0].attributes['aria-expanded'],'true');
+ h.update({comments:{...h.state.comments,draft:{id:99,status:'editing',time:2,text:'编辑'}}});h.win.fire('pointerdown');assert(!action.hidden);
+ h.update({comments:{...h.state.comments,draft:null}});h.win.fire('pointerdown');assert(action.hidden);
+ h.el('commentList').fire('click',{target:row.children[0]});assert(!action.hidden);h.update({epoch:2});assert(action.hidden);h.ui.destroy();
 });
 console.log('T3 UI checks: '+count+'; DOM model only, no actual Eagle layout/input');

@@ -8,43 +8,78 @@
   'use strict';
   function createDrawingUI({ document: doc, window: win, getSession, getState, canBegin, isKey }) {
     const ids = ['screen', 'picture', 'drawingLayer', 'drawingPanel', 'drawingTool', 'drawingColor', 'drawingWidth', 'drawingSize',
-      'drawingText', 'drawingUndo', 'drawingRedo', 'drawingDelete', 'drawingSave', 'drawingCancel', 'drawingMessage', 'drawingNew',
+      'drawingToolPen', 'drawingToolArrow', 'drawingToolRect', 'drawingToolEllipse', 'drawingToolText',
+      'drawingColorButton', 'drawingOptions', 'drawingProperties', 'drawingPalette', 'drawingWidthLabel', 'drawingSizeLabel',
+      'drawingText', 'drawingDelete', 'drawingSave', 'drawingCancel', 'drawingMessage', 'drawingNew',
       'showDrawings', 'drawingStatus', 'drawingExit', 'drawingExitMessage', 'drawingExitSave', 'drawingExitDiscard', 'drawingExitReturn'];
     const el = Object.fromEntries(ids.map(id => [id, doc.getElementById(id)]));
     if (ids.some(id => !el[id])) throw Error('圈画界面缺少必要元素。');
-    const listeners = [], on = (node, type, fn, options) => { node.addEventListener(type, fn, options); listeners.push([node, type, fn, options]); };
-    let editor = null, editorKey = null, selected = null, drag = null, work = null, temporaryVisible = true;
-    let snapshot = null, geometry = null, width = 1280, height = 720, normalKey = null;
+    const listeners = [], on = (n, t, f, options) => { n.addEventListener(t, f, options); listeners.push([n, t, f, options]); };
+    const buttons = Object.fromEntries(model.KINDS.map(k => [k, el['drawingTool' + k[0].toUpperCase() + k.slice(1)]]));
+    let editor = null, committed = [], editorKey = null, selected = null, drag = null, work = null, textDraft = null, temporaryVisible = true;
+    let snapshot = null, geometry = null, width = 1280, height = 720, normalKey = null, tool = 'pen', styles = model.defaultStyles(), stylesRef = null;
     let composing = false, compositionEnd = -Infinity, exitResolve = null, exitPromise = null, destroyed = false;
-    const session = () => getSession();
-    const draft = () => snapshot?.drawings?.draft;
-    const set = (node, key, value) => { if (node[key] !== value) node[key] = value; };
+    const session = () => getSession(), draft = () => snapshot?.drawings?.draft;
+    const set = (n, k, v) => { if (n[k] !== v) n[k] = v; };
     const now = () => win.performance && typeof win.performance.now === 'function' ? win.performance.now() : Date.now();
+    const objects = () => work || committed;
+    const current = () => textDraft?.object || objects().find(o => o.id === selected);
     function hideLayer(hidden) {
-      // SVGElement has no reflected HTMLElement.hidden property in Chromium.
       el.drawingLayer.hidden = hidden;
-      if (hidden) el.drawingLayer.setAttribute('hidden', '');
-      else el.drawingLayer.removeAttribute?.('hidden');
+      if (hidden) el.drawingLayer.setAttribute('hidden', ''); else el.drawingLayer.removeAttribute?.('hidden');
     }
     function node(tag, attrs = {}) {
       const n = doc.createElementNS ? doc.createElementNS('http://www.w3.org/2000/svg', tag) : doc.createElement(tag);
-      for (const [key, value] of Object.entries(attrs)) n.setAttribute(key, String(value)); return n;
+      for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v)); return n;
     }
+    function message(text) { set(el.drawingMessage, 'textContent', text); }
     function layout() {
       const canvas = el.picture.getBoundingClientRect(), screen = el.screen.getBoundingClientRect();
       width = Number(el.picture.width) || 1280; height = Number(el.picture.height) || 720;
       geometry = model.imageRect(canvas, width, height); if (!geometry) return;
       Object.assign(el.drawingLayer.style, { left: geometry.left - screen.left + 'px', top: geometry.top - screen.top + 'px', width: geometry.width + 'px', height: geometry.height + 'px' });
       el.drawingLayer.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+      // CSS layout quantizes fractional image-fit dimensions. Pointer positions
+      // must use the actually displayed SVG rectangle, not the unrounded plan.
+      const displayed = el.drawingLayer.getBoundingClientRect();
+      if (displayed.width > 0 && displayed.height > 0) geometry = { left: displayed.left, top: displayed.top, width: displayed.width, height: displayed.height };
+      geometry.sourceWidth = width;
+      layoutText();
     }
-    function point(event) { return geometry ? { x: Math.max(0, Math.min(1, (event.clientX - geometry.left) / geometry.width)), y: Math.max(0, Math.min(1, (event.clientY - geometry.top) / geometry.height)) } : null; }
-    const allObjects = () => work || editor && editor.snapshot() || [];
-    function message(text) { set(el.drawingMessage, 'textContent', text); }
-    function render(objects) {
+    function point(e) { return geometry ? { x: Math.max(0, Math.min(1, (e.clientX - geometry.left) / geometry.width)), y: Math.max(0, Math.min(1, (e.clientY - geometry.top) / geometry.height)) } : null; }
+    function layoutText() {
+      if (!textDraft || !geometry) return;
+      const o = textDraft.object, font = o.size * Math.min(width, height) * geometry.width / width;
+      const lines = el.drawingText.value.split('\n'), longest = Math.max(4, ...lines.map(s => [...s].reduce((n, c) => n + (c.charCodeAt(0) > 255 ? 1 : .6), 0)));
+      Object.assign(el.drawingText.style, { left: parseFloat(el.drawingLayer.style.left) + o.a.x * geometry.width - 4 + 'px',
+        top: parseFloat(el.drawingLayer.style.top) + o.a.y * geometry.height - 4 + 'px',
+        width: Math.min(Math.max(80, longest * font + 16), Math.max(36, (1 - o.a.x) * geometry.width + 4)) + 'px',
+        height: Math.min(Math.max(font * 1.25 + 10, lines.length * font * 1.25 + 10), Math.max(36, (1 - o.a.y) * geometry.height + 4)) + 'px',
+        fontSize: font + 'px', color: o.color });
+    }
+    function properties() {
+      const o = current();
+      for (const [k, button] of Object.entries(buttons)) button.setAttribute('aria-pressed', String(k === tool));
+      el.drawingTool.setAttribute('data-tool', tool);
+      el.drawingColor.value = o?.color || styles.color; el.drawingColorButton.style.color = el.drawingColor.value;
+      el.drawingWidth.value = o && o.kind !== 'text' ? o.width : styles.widths[tool] || .004;
+      el.drawingSize.value = o?.kind === 'text' ? o.size : styles.size;
+      el.drawingWidthLabel.hidden = tool === 'text'; el.drawingSizeLabel.hidden = tool !== 'text';
+      el.drawingDelete.hidden = !o || !!textDraft && !el.drawingText.value.trim(); el.drawingDelete.disabled = !editor || !o;
+      el.drawingOptions.setAttribute('aria-expanded', String(!el.drawingProperties.hidden));
+      el.drawingColorButton.setAttribute('aria-expanded', String(!el.drawingPalette.hidden));
+    }
+    function closeProperties() { el.drawingProperties.hidden = el.drawingPalette.hidden = true; properties(); }
+    function handles(o) {
+      if (o.kind === 'arrow') return [['a', o.a], ['b', o.b]];
+      const b = model.bounds(o); return [['nw', { x: b.x, y: b.y }], ['ne', { x: b.right, y: b.y }], ['sw', { x: b.x, y: b.bottom }], ['se', { x: b.right, y: b.bottom }]];
+    }
+    function render(value) {
       const nodes = [], scale = Math.min(width, height);
-      for (const o of objects) {
-        const g = node('g', { 'data-object-id': o.id, fill: 'none', stroke: o.color, 'stroke-width': o.width * scale, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
-        const box = model.bounds(o), x = o.a?.x * width, y = o.a?.y * height, x2 = o.b?.x * width, y2 = o.b?.y * height;
+      for (const o of value) {
+        if (textDraft?.object.id === o.id) continue;
+        const g = node('g', { 'data-object-id': o.id, fill: 'none', stroke: o.color, 'stroke-width': o.width * scale, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'pointer-events': 'none' });
+        const x = o.a?.x * width, y = o.a?.y * height, x2 = o.b?.x * width, y2 = o.b?.y * height;
         if (o.kind === 'pen') {
           if (o.points.length === 1) g.appendChild(node('circle', { cx: o.points[0].x * width, cy: o.points[0].y * height, r: o.width * scale / 2, fill: o.color }));
           else g.appendChild(node('polyline', { points: o.points.map(p => p.x * width + ',' + p.y * height).join(' ') }));
@@ -54,97 +89,160 @@
         if (o.kind === 'arrow') {
           const angle = Math.atan2(y2 - y, x2 - x), size = Math.max(12, o.width * scale * 5);
           g.appendChild(node('line', { x1: x, y1: y, x2, y2 }));
-          g.appendChild(node('polyline', { points: [x2 - Math.cos(angle - .45) * size, y2 - Math.sin(angle - .45) * size, x2, y2, x2 - Math.cos(angle + .45) * size, y2 - Math.sin(angle + .45) * size].reduce((a, v, i, xs) => i % 2 ? a : a.concat(v + ',' + xs[i + 1]), []).join(' ') }));
+          g.appendChild(node('polyline', { points: [[x2 - Math.cos(angle - .45) * size, y2 - Math.sin(angle - .45) * size], [x2, y2], [x2 - Math.cos(angle + .45) * size, y2 - Math.sin(angle + .45) * size]].map(p => p.join(',')).join(' ') }));
         }
         if (o.kind === 'text') {
           const text = node('text', { x, y, fill: o.color, stroke: 'none', 'font-size': o.size * scale, 'font-family': 'Segoe UI, Microsoft YaHei UI, sans-serif', 'dominant-baseline': 'hanging' });
           o.text.split('\n').forEach((line, i) => { const span = node('tspan', { x, dy: i ? o.size * scale * 1.25 : 0 }); span.textContent = line || ' '; text.appendChild(span); }); g.appendChild(text);
         }
         nodes.push(g);
-        if (editor && selected === o.id) {
-          const w = Math.max(.015, box.right - box.x) * width, h = Math.max(.015, box.bottom - box.y) * height;
-          const rect = node('rect', { x: box.x * width, y: box.y * height, width: w, height: h, fill: 'transparent', stroke: '#ffffff', 'stroke-width': Math.max(1, scale * .001), 'stroke-dasharray': '5 4', 'data-object-id': o.id });
-          nodes.push(rect, node('rect', { x: box.x * width + w - 5, y: box.y * height + h - 5, width: 10, height: 10, fill: '#ffffff', stroke: '#222222', 'data-object-id': o.id, 'data-resize': 'true' }));
-        }
       }
-      el.drawingLayer.replaceChildren(...nodes);
-      set(el.drawingUndo, 'disabled', !editor || !editor.canUndo()); set(el.drawingRedo, 'disabled', !editor || !editor.canRedo());
-      set(el.drawingDelete, 'disabled', !editor || !selected);
+      const o = value.find(v => v.id === selected);
+      if (editor && o && !textDraft && temporaryVisible && draft()?.kind !== 'delete') for (const [handle, p] of handles(o)) {
+        // Constant screen-size handles. No visible or invisible bounding rectangle.
+        const rx = 4.5 * width / Math.max(1, geometry?.width || width), ry = 4.5 * height / Math.max(1, geometry?.height || height);
+        nodes.push(node('ellipse', { cx: p.x * width, cy: p.y * height, rx, ry, fill: '#e8e8e8', stroke: '#262626', 'stroke-width': width / Math.max(1, geometry?.width || width),
+          'data-object-id': o.id, 'data-handle': handle, 'pointer-events': 'all', cursor: ['a', 'b'].includes(handle) ? 'crosshair' : ['nw', 'se'].includes(handle) ? 'nwse-resize' : 'nesw-resize' }));
+      }
+      el.drawingLayer.replaceChildren(...nodes); properties(); layoutText();
     }
     function publish(next) {
-      try { if (!editor.replace(next)) { session()?.setDrawingObjects(editor.snapshot()); render(editor.snapshot()); return; }
-        session()?.setDrawingObjects(editor.snapshot()); render(editor.snapshot()); }
-      catch (error) { work = null; message(error.message); render(editor.snapshot()); }
+      try {
+        editor.replace(next); committed = editor.snapshot(); session()?.setDrawingObjects(committed); render(committed); return true;
+      } catch (error) { work = null; message(error.message); render(committed); return false; }
     }
-    function syncText() {
-      if (!editor || !selected) return;
-      const objects = editor.snapshot(), o = objects.find(n => n.id === selected);
-      if (!o || o.kind !== 'text') return;
-      if (!el.drawingText.value.trim()) throw Error('画面文字不能为空；可删除该文字对象。');
-      if (o.text !== el.drawingText.value) {
-        const text = el.drawingText.value, lines = text.split('\n'), size = o.size * Math.min(width, height);
-        const b = { x: Math.min(1, o.a.x + Math.max(...lines.map(line => [...line].reduce((n, c) => n + (c.charCodeAt(0) > 255 ? 1 : .6), 0))) * size / width),
-          y: Math.min(1, o.a.y + lines.length * size * 1.25 / height) };
-        publish(objects.map(n => n.id === selected ? { ...n, text, b } : n));
-      }
+    function textObject(object, value) {
+      if (value.length > 4096) throw Error('画面文字超过4096字，请缩短后保存。');
+      const lines = value.split('\n'), size = object.size * Math.min(width, height);
+      const length = Math.max(...lines.map(s => [...s].reduce((n, c) => n + (c.charCodeAt(0) > 255 ? 1 : .6), 0)));
+      return { ...object, text: value, b: { x: Math.min(1, object.a.x + length * size / width), y: Math.min(1, object.a.y + lines.length * size * 1.25 / height) } };
+    }
+    function commitText() {
+      if (!textDraft) return;
+      if (composing) throw Error('请先完成中文选字，再保存或切换工具。');
+      const before = textDraft, value = el.drawingText.value;
+      const next = committed.filter(o => o.id !== before.object.id);
+      if (value.trim()) next.push(textObject(before.object, value));
+      // Preserve original stacking order when editing an existing text.
+      if (!before.fresh && value.trim()) { const index = committed.findIndex(o => o.id === before.object.id); const o = next.pop(); next.splice(index, 0, o); }
+      textDraft = null; el.drawingText.hidden = true;
+      if (!publish(next)) { textDraft = before; el.drawingText.hidden = false; throw Error(el.drawingMessage.textContent); }
+      if (!value.trim()) selected = null;
     }
     function finish(event = null) {
       if (!drag || event && event.pointerId !== drag.pointerId) return;
-      const pointer = drag.pointerId, next = work; drag = null; work = null;
-      try { if (el.drawingLayer.hasPointerCapture?.(pointer)) el.drawingLayer.releasePointerCapture(pointer); } catch (_) { /* Cancelled host pointer. */ }
-      if (next) publish(next);
+      const before = drag, next = work; drag = null; work = null;
+      try { if (el.drawingLayer.hasPointerCapture?.(before.pointerId)) el.drawingLayer.releasePointerCapture(before.pointerId); } catch (_) { /* Cancelled host pointer. */ }
+      const o = next?.find(n => n.id === before.object.id);
+      const valid = !before.creating || before.moved && o && (['pen', 'arrow'].includes(o.kind) || Math.abs(o.a.x - o.b.x) * geometry.width >= 1 && Math.abs(o.a.y - o.b.y) * geometry.height >= 1);
+      if (next && valid) publish(next); else { session()?.setDrawingObjects(committed); render(committed); }
     }
-    function flush() { finish(); syncText(); }
-    on(el.drawingLayer, 'pointerdown', event => {
-      if (!editor || draft()?.status === 'pausing' || draft()?.kind === 'delete' || !temporaryVisible || event.button !== 0 || exitPromise) return;
-      layout(); const p = point(event); if (!p) return; event.preventDefault();
-      el.drawingLayer.focus?.({ preventScroll: true });
-      const target = event.target.closest?.('[data-object-id]'), objects = editor.snapshot();
-      if (el.drawingTool.value === 'select') {
-        selected = target && target.getAttribute('data-object-id');
-        const object = objects.find(o => o.id === selected);
-        if (object) { drag = { pointerId: event.pointerId, start: p, original: objects, object, resize: event.target.getAttribute?.('data-resize') === 'true' };
-          set(el.drawingText, 'hidden', object.kind !== 'text'); if (object.kind === 'text') el.drawingText.value = object.text; }
-        render(objects);
-      } else {
-        const kind = el.drawingTool.value, id = 'o-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
-        const object = { id, kind, color: el.drawingColor.value, width: Number(el.drawingWidth.value) || .004,
-          ...(kind === 'pen' ? { points: [p] } : { a: p, b: p }), ...(kind === 'text' ? { text: '文字', size: Number(el.drawingSize.value) || .04,
-            b: { x: Math.min(1, p.x + .15), y: Math.min(1, p.y + .08) } } : {}) };
-        selected = id;
-        if (kind === 'text') { publish([...objects, object]); el.drawingText.hidden = false; el.drawingText.value = object.text; el.drawingText.focus(); el.drawingText.select?.(); return; }
-        drag = { pointerId: event.pointerId, start: p, original: objects, object, creating: true };
-        work = [...objects, object]; render(work);
+    function flush() { finish(); commitText(); }
+    function editText(object, fresh = false) {
+      selected = object.id; textDraft = { object: { ...object }, fresh }; el.drawingText.value = fresh ? '' : object.text;
+      el.drawingText.hidden = false; render(committed); layoutText(); el.drawingText.focus();
+      if (!fresh) el.drawingText.select?.();
+    }
+    function chooseTool(kind) {
+      if (!editor || composing || exitPromise || draft()?.kind === 'delete') return;
+      try { flush(); } catch (error) { message(error.message); return; }
+      if (tool !== kind) selected = null; tool = kind;
+      el.drawingProperties.hidden = false; el.drawingPalette.hidden = true; render(committed); el.drawingLayer.focus?.({ preventScroll: true });
+    }
+    for (const [kind, button] of Object.entries(buttons)) on(button, 'click', () => chooseTool(kind));
+    on(el.drawingOptions, 'click', () => { el.drawingProperties.hidden = !el.drawingProperties.hidden; el.drawingPalette.hidden = true; properties(); });
+    on(el.drawingColorButton, 'click', () => { el.drawingPalette.hidden = !el.drawingPalette.hidden; el.drawingProperties.hidden = true; properties(); });
+    function changeStyle(field, value) {
+      if (!editor || draft()?.kind === 'delete') return;
+      const next = model.validateStyles(styles);
+      if (field === 'color') next.color = value; else if (field === 'size') next.size = Number(value); else next.widths[tool] = Number(value);
+      try { model.validateStyles(next); } catch (error) { message(error.message); return; }
+      const o = current();
+      if (o) {
+        let changed = { ...o, [field]: field === 'color' ? value : Number(value) };
+        if (changed.kind === 'text' && field === 'size' && !textDraft) changed = textObject(changed, changed.text);
+        if (textDraft) { textDraft.object = changed; if (el.drawingText.value.trim()) session()?.touchDrawing(); layoutText(); }
+        else if (!publish(committed.map(n => n.id === o.id ? changed : n))) return;
       }
-      if (drag) { session()?.touchDrawing(); try { el.drawingLayer.setPointerCapture?.(event.pointerId); } catch (_) { /* Window still owns pointerup. */ } }
+      styles = next;
+      const result = session()?.setDrawingStyles?.(next);
+      if (result?.status === 'failed') message(result.message);
+      render(objects());
+    }
+    on(el.drawingColor, 'change', () => changeStyle('color', el.drawingColor.value));
+    on(el.drawingWidth, 'change', () => changeStyle('width', el.drawingWidth.value));
+    on(el.drawingSize, 'change', () => changeStyle('size', el.drawingSize.value));
+    on(el.drawingPalette, 'click', event => {
+      const swatch = event.target.closest?.('[data-drawing-color]'); if (!swatch) return;
+      changeStyle('color', swatch.getAttribute('data-drawing-color')); el.drawingPalette.hidden = true; properties();
+      if (!textDraft) el.drawingLayer.focus?.({ preventScroll: true });
+    });
+    on(el.drawingLayer, 'pointerdown', event => {
+      if (!editor || draft()?.status === 'pausing' || draft()?.kind === 'delete' || !temporaryVisible || event.button !== 0 || exitPromise || composing) return;
+      layout(); const p = point(event); if (!p) return;
+      const handle = event.target.getAttribute?.('data-handle'), handleId = event.target.getAttribute?.('data-object-id');
+      try { flush(); } catch (error) { message(error.message); return; }
+      event.preventDefault(); el.drawingLayer.focus?.({ preventScroll: true }); closeProperties();
+      const hit = handle && selected === handleId ? committed.find(o => o.id === handleId && o.kind === tool) : model.hitTest(committed, tool, p, geometry);
+      if (hit) {
+        selected = hit.id; drag = { pointerId: event.pointerId, start: p, original: committed, object: hit, handle: handle && hit.id === handleId ? handle : false, moved: false };
+        el.drawingProperties.hidden = false; render(committed);
+      } else {
+        const id = 'o-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+        const object = { id, kind: tool, color: styles.color, width: styles.widths[tool] || .004,
+          ...(tool === 'pen' ? { points: [p] } : { a: p, b: p }), ...(tool === 'text' ? { text: '', size: styles.size } : {}) };
+        selected = null;
+        if (tool === 'text') { editText(object, true); return; }
+        drag = { pointerId: event.pointerId, start: p, original: committed, object, creating: true, moved: false }; render(committed);
+      }
+      try { el.drawingLayer.setPointerCapture?.(event.pointerId); } catch (_) { /* Window still owns pointerup. */ }
+    });
+    on(el.drawingLayer, 'dblclick', event => {
+      if (!editor || tool !== 'text' || composing || !temporaryVisible || exitPromise) return;
+      layout(); const hit = model.hitTest(committed, 'text', point(event), geometry);
+      if (hit) { finish(); editText(hit); event.preventDefault(); }
     });
     on(win, 'pointermove', event => {
-      if (!drag || event.pointerId !== drag.pointerId || !temporaryVisible) return;
-      event.preventDefault(); const p = point(event); if (!p) return;
+      if (!editor || !temporaryVisible) return;
+      const p = point(event); if (!p) return;
+      if (!drag) {
+        if (event.target === el.drawingLayer) el.drawingLayer.style.cursor = model.hitTest(committed, tool, p, geometry) ? 'move' : tool === 'text' ? 'text' : 'crosshair';
+        return;
+      }
+      if (event.pointerId !== drag.pointerId) return;
+      event.preventDefault();
+      const moved = Math.hypot((p.x - drag.start.x) * geometry.width, (p.y - drag.start.y) * geometry.height) >= 3;
+      if (!drag.moved && !moved) return;
+      const firstMove = !drag.moved; drag.moved = true;
       let o = drag.object;
-      if (!drag.creating) o = model.transform(o, drag.start, p, drag.resize);
+      if (!drag.creating) o = model.transform(o, drag.start, p, drag.handle);
       else if (o.kind === 'pen') {
         const points = work?.find(n => n.id === o.id)?.points || o.points, last = points[points.length - 1];
-        if (Math.hypot(p.x - last.x, p.y - last.y) < .0008) return;
+        if (Math.hypot((p.x - last.x) * geometry.width, (p.y - last.y) * geometry.height) < .5) return;
         if (points.length >= 2048) { finish(); message('这一笔达到长度上限，请分几笔继续。'); return; }
         o = { ...o, points: [...points, p] };
       } else o = { ...o, b: p };
-      work = drag.creating ? [...drag.original, o] : drag.original.map(n => n.id === o.id ? o : n); render(work);
+      selected = o.id; work = drag.creating ? [...drag.original, o] : drag.original.map(n => n.id === o.id ? o : n);
+      if (firstMove) session()?.touchDrawing(); render(work);
     });
     on(win, 'pointerup', finish); on(win, 'pointercancel', finish); on(win, 'blur', () => finish());
-    on(win, 'resize', () => { if (snapshot?.drawings && (editor || !el.drawingLayer.hidden)) { finish(); layout(); render(editor ? editor.snapshot() : normalObjects()); } });
-    function history(kind) { if (!editor || draft()?.kind === 'delete' || !editor[kind]()) return; selected = null; session()?.setDrawingObjects(editor.snapshot()); render(editor.snapshot()); }
-    on(el.drawingUndo, 'click', () => history('undo')); on(el.drawingRedo, 'click', () => history('redo'));
-    function removeSelected() { if (!editor || !selected) return; publish(editor.snapshot().filter(o => o.id !== selected)); selected = null; el.drawingText.hidden = true; render(editor.snapshot()); }
-    on(el.drawingDelete, 'click', removeSelected);
-    on(el.drawingTool, 'change', () => { finish(); selected = null; el.drawingText.hidden = el.drawingTool.value !== 'text'; render(editor ? editor.snapshot() : []); });
-    for (const [control, field] of [[el.drawingColor, 'color'], [el.drawingWidth, 'width'], [el.drawingSize, 'size']]) on(control, 'change', () => {
+    on(win, 'resize', () => { if (snapshot?.drawings && (editor || !el.drawingLayer.hidden)) { finish(); layout(); render(editor ? committed : normalObjects()); } });
+    on(el.screen, 'wheel', event => { if (editor) event.preventDefault(); }, { passive: false });
+    function undo() {
+      if (!editor || draft()?.kind === 'delete') return;
+      try { flush(); } catch (error) { message(error.message); return; }
+      if (!editor.undo()) return;
+      committed = editor.snapshot(); selected = null; session()?.setDrawingObjects(committed); render(committed);
+    }
+    function removeSelected() {
       if (!editor || !selected) return;
-      publish(editor.snapshot().map(o => o.id !== selected || field === 'size' && o.kind !== 'text' ? o : { ...o, [field]: field === 'color' ? control.value : Number(control.value) }));
-    });
-    on(el.drawingText, 'input', () => { if (composing) return; session()?.touchDrawing(); try { syncText(); } catch (error) { message(error.message); } });
+      textDraft = null; el.drawingText.hidden = true;
+      if (publish(committed.filter(o => o.id !== selected))) selected = null; render(committed);
+    }
+    on(el.drawingDelete, 'click', removeSelected);
+    on(el.drawingText, 'input', () => { if (!textDraft) return; if (el.drawingText.value.trim() || !textDraft.fresh) session()?.touchDrawing(); layoutText(); });
     on(el.drawingText, 'compositionstart', () => { composing = true; });
-    on(el.drawingText, 'compositionend', () => { composing = false; compositionEnd = now(); session()?.touchDrawing(); try { syncText(); } catch (error) { message(error.message); } });
+    on(el.drawingText, 'compositionend', () => { composing = false; compositionEnd = now(); if (textDraft && el.drawingText.value.trim()) session()?.touchDrawing(); layoutText(); });
     function begin(id = null, kind = 'edit') { if (!canBegin() || !session()?.beginDrawing) return; session().beginDrawing(id, kind).catch(error => message(error.message)); }
     on(el.drawingNew, 'click', () => begin());
     async function save() {
@@ -159,7 +257,7 @@
       try { flush(); } catch (error) { message(error.message); }
       const value = getState().drawings?.draft;
       if (!value) return true;
-      if (!value.dirty) return session()?.cancelDrawing() !== false;
+      if (!value.dirty && !textDraft) return session()?.cancelDrawing() !== false;
       el.drawingExit.hidden = false; el.drawingExitMessage.textContent = '圈画尚未保存。' + reason + '前，请选择如何处理。';
       exitPromise = new Promise(resolve => { exitResolve = resolve; }); el.drawingExitReturn.focus(); return exitPromise;
     }
@@ -178,9 +276,7 @@
     on(win, 'keydown', event => {
       if (destroyed || event.defaultPrevented || event.isComposing || event.keyCode === 229 || composing || now() - compositionEnd < 50) return;
       if (exitPromise) { if (event.key === 'Escape') { event.preventDefault(); finishExit(false); } return; }
-      const toolChoice = editor && event.target?.closest?.('select') && el.drawingPanel.contains?.(event.target);
-      const hKey = isKey(event, 'H') || toolChoice && !event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey && !event.repeat && (event.code === 'KeyH' || String(event.key).toLowerCase() === 'h');
-      if (hKey) { if (session()) { event.preventDefault(); toggle(); } return; }
+      if (isKey(event, 'H')) { if (session()) { event.preventDefault(); toggle(); } return; }
       if (isKey(event, 'D')) { if (!editor && canBegin()) { event.preventDefault(); begin(); } return; }
       if (!editor || event.repeat || event.altKey || event.metaKey) return;
       const input = event.target?.isContentEditable || event.target?.closest?.('input,textarea,select,[contenteditable]');
@@ -190,7 +286,8 @@
         event.preventDefault(); save(); return;
       }
       if (input) return;
-      if (event.ctrlKey && !event.shiftKey && ['z', 'y'].includes(String(event.key).toLowerCase())) { event.preventDefault(); finish(); history(String(event.key).toLowerCase() === 'z' ? 'undo' : 'redo'); }
+      if (event.ctrlKey && !event.shiftKey && String(event.key).toLowerCase() === 'z') { event.preventDefault(); undo(); }
+      else if (event.ctrlKey && !event.shiftKey && String(event.key).toLowerCase() === 'y') event.preventDefault();
       else if (!event.ctrlKey && !event.shiftKey && event.key === 'Delete') { event.preventDefault(); removeSelected(); }
     });
     function normalObjects() {
@@ -198,37 +295,39 @@
       return snapshot?.drawings?.records?.filter(n => n.frameOrdinal === p?.frameOrdinal && n.frameId === p?.frameId && Math.abs(n.time - p.time) < .000001).flatMap(n => n.objects) || [];
     }
     function update(value) {
-      snapshot = value; const state = value.drawings, current = state?.draft;
-      const key = current ? value.epoch + ':' + current.id : null;
+      snapshot = value; const state = value.drawings, d = state?.draft;
+      if (state?.styles && state.styles !== stylesRef) { stylesRef = state.styles; styles = model.validateStyles(state.styles); }
+      const key = d ? value.epoch + ':' + d.id : null;
       if (key !== editorKey) {
-        editorKey = key; drag = null; work = null; selected = null; temporaryVisible = true; editor = null; composing = false; normalKey = null;
-        if (current && current.status !== 'pausing') editor = model.createEditor(current.objects);
-        el.drawingText.hidden = true; el.drawingLayer.replaceChildren();
-      } else if (current && !editor && current.status !== 'pausing') editor = model.createEditor(current.objects);
-      const active = !!current;
-      el.drawingPanel.hidden = !active; el.showDrawings.checked = state?.visible !== false;
-      el.showDrawings.disabled = active || !session();
-      el.drawingNew.disabled = !canBegin() || state?.status !== 'ready';
+        editorKey = key; drag = null; work = null; textDraft = null; selected = null; temporaryVisible = true; editor = null; committed = []; composing = false; normalKey = null;
+        if (d && d.status !== 'pausing') { editor = model.createEditor(d.objects); committed = editor.snapshot(); }
+        el.drawingText.hidden = true; el.drawingLayer.replaceChildren(); closeProperties();
+      } else if (d && !editor && d.status !== 'pausing') { editor = model.createEditor(d.objects); committed = editor.snapshot(); }
+      const active = !!d;
+      el.drawingPanel.hidden = el.drawingMessage.hidden = !active; el.showDrawings.checked = state?.visible !== false;
+      el.showDrawings.disabled = active || !session(); el.drawingNew.disabled = !canBegin() || state?.status !== 'ready';
       el.drawingStatus.textContent = state?.message || '';
       const shown = active ? temporaryVisible : state?.visible !== false;
-      el.drawingLayer.style.pointerEvents = active && shown && current.kind !== 'delete' ? 'auto' : 'none';
-      const objects = active ? allObjects() : normalObjects();
-      hideLayer(!shown || !active && !objects.length || !['paused', 'playing', 'seeking'].includes(value.state));
+      if (active && (!shown || d.kind === 'delete')) closeProperties();
+      el.drawingText.hidden = !textDraft || !shown;
+      el.drawingLayer.style.pointerEvents = active && shown && d.kind !== 'delete' ? 'auto' : 'none';
+      const valueObjects = active ? objects() : normalObjects();
+      hideLayer(!shown || !active && !valueObjects.length || !['paused', 'playing', 'seeking'].includes(value.state));
       if (active) {
         if (geometry === null || normalKey !== key) { layout(); normalKey = key; }
-        message(current.message || (shown ? current.kind === 'delete' ? '确认整条删除圈画；原始视频不变。' : '固定当前帧 · Enter保存 · Esc退出 · H对照原图' : '圈画已临时隐藏，按H恢复后继续绘图。'));
-        set(el.drawingSave, 'textContent', current.kind === 'delete' ? '确认删除' : '保存（Enter）');
-        set(el.drawingSave, 'disabled', !['editing', 'failed'].includes(current.status));
-        for (const control of [el.drawingTool, el.drawingColor, el.drawingWidth, el.drawingSize, el.drawingText]) control.disabled = !shown || current.kind === 'delete' || current.status === 'pausing';
-        render(objects);
+        message(d.message || (shown ? d.kind === 'delete' ? '确认删除这条圈画标注？' : '点击同类图形可调整 · Enter保存 · Esc退出 · Ctrl+Z撤销' : '圈画已临时隐藏，按H恢复后继续绘图。'));
+        set(el.drawingSave, 'textContent', d.kind === 'delete' ? '确认删除' : '保存');
+        set(el.drawingSave, 'disabled', !['editing', 'failed'].includes(d.status));
+        for (const control of [...Object.values(buttons), el.drawingColorButton, el.drawingOptions, el.drawingColor, el.drawingWidth, el.drawingSize, el.drawingText, el.drawingDelete]) control.disabled = !shown || d.kind === 'delete' || d.status === 'pausing';
+        render(valueObjects);
       } else {
-        const nextKey = objects.map(o => o.id).join('|') + ':' + (state?.visible !== false);
-        if (nextKey !== normalKey) { normalKey = nextKey; if (objects.length) layout(); render(objects); }
+        const nextKey = valueObjects.map(o => o.id).join('|') + ':' + (state?.visible !== false);
+        if (nextKey !== normalKey) { normalKey = nextKey; if (valueObjects.length) layout(); render(valueObjects); }
       }
     }
     return { update, begin, confirmExit, flush,
       destroy() { destroyed = true; listeners.forEach(([n, t, f, o]) => n.removeEventListener(t, f, o)); if (exitResolve) finishExit(false); },
-      reset() { editorKey = null; editor = null; drag = null; work = null; normalKey = null; if (exitResolve) finishExit(false); } };
+      reset() { editorKey = null; editor = null; committed = []; drag = null; work = null; textDraft = null; normalKey = null; if (exitResolve) finishExit(false); } };
   }
   return { createDrawingUI };
 });

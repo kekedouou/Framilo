@@ -1,79 +1,123 @@
-/* Actual browser SVG/DOM/input checks, no real video, SDK or user data. */
+/* Native DOM/SVG checks with a Session stand-in; no Eagle, source video or user data. */
 (async function () {
   'use strict';
   const results = [], el = id => document.getElementById(id), delay = (ms = 10) => new Promise(r => setTimeout(r, ms));
-  const check = (value, text) => { if (!value) throw Error(text); results.push(text); };
-  const clone = v => JSON.parse(JSON.stringify(v));
-  const state = { epoch: 1, state: 'paused', duration: 10, source: { name: '圈画检查（无真实视频）' },
+  const check = (ok, text) => { if (!ok) throw Error(text); results.push(text); }, copy = v => JSON.parse(JSON.stringify(v));
+  const state = { epoch: 1, state: 'paused', duration: 10, source: { name: '界面检查（无真实视频）' },
     playback: { time: 2, frameId: 20, frameOrdinal: 20, frameCount: 100, transport: { rate: 1, loop: { valid: false } } },
-    drawings: { status: 'ready', records: [], visible: true, draft: null, message: '' }, comments: { status: 'ready', items: [], draft: null } };
-  let ui, serial = 0, stored = [], failSave = false, changes = 0;
+    drawings: { status: 'ready', records: [], visible: true, styles: EVADrawingModel.defaultStyles(), draft: null, message: '' },
+    comments: { status: 'ready', items: [{ id: 'one', time: 2, text: '第一条文字' }, { id: 'two', time: 4, text: '第二条文字' }], draft: null } };
+  let ui, serial = 0, stored = [], failSave = false, changes = 0, seeks = 0, steps = 0, prepares = 0, savedPreferences = null;
   const publish = () => { changes++; ui.update({ ...state, drawings: { ...state.drawings } }); };
   const session = {
-    async beginDrawing() { state.state = 'paused'; state.drawings.draft = { id: ++serial, status: 'editing', frameId: 20, frameOrdinal: 20, time: 2, objects: [], dirty: false }; publish(); return { status: 'editing' }; },
-    setDrawingObjects(objects) { state.drawings.draft = { ...state.drawings.draft, objects: clone(objects), dirty: !!objects.length }; publish(); },
+    async beginDrawing(id) { state.state = 'paused'; const objects = id ? copy(stored) : []; state.drawings.draft = { id: ++serial, status: 'editing', frameId: 20, frameOrdinal: 20, time: 2, objects, original: JSON.stringify(objects), dirty: false }; publish(); return { status: 'editing' }; },
+    setDrawingObjects(objects) { EVADrawingModel.validate(objects); state.drawings.draft = { ...state.drawings.draft, objects: copy(objects), dirty: JSON.stringify(objects) !== state.drawings.draft.original }; publish(); },
     touchDrawing() { state.drawings.draft = { ...state.drawings.draft, dirty: true }; publish(); },
     saveDrawing() { if (failSave) { state.drawings.draft = { ...state.drawings.draft, status: 'failed', message: '模拟空间不足' }; publish(); return { status: 'failed' }; }
-      stored = clone(state.drawings.draft.objects); state.drawings.records = [{ id: 'saved', frameId: 20, frameOrdinal: 20, time: 2, objects: stored }]; state.drawings.draft = null; publish(); return { status: 'saved' }; },
+      stored = copy(state.drawings.draft.objects); state.drawings.records = [{ id: 'saved', frameId: 20, frameOrdinal: 20, time: 2, objects: stored }]; state.drawings.draft = null; publish(); return { status: 'saved' }; },
     cancelDrawing() { state.drawings.draft = null; publish(); return true; },
     setDrawingsVisible(visible) { state.drawings.visible = visible; publish(); return { status: 'saved' }; },
-    setCommentsVisible() {}, refreshComments: async () => {}, memorySnapshot: () => null
+    setDrawingStyles(styles) { savedPreferences = EVADrawingModel.validateStyles(styles); state.drawings.styles = copy(savedPreferences); publish(); return { status: 'saved' }; },
+    async seekComment() { seeks++; publish(); }, step() { steps++; }, setCommentsVisible() {}, refreshComments: async () => {}, memorySnapshot: () => null
   };
-  function key(value, extra = {}, target = document.activeElement === document.body ? window : document.activeElement || window) {
-    const event = new KeyboardEvent('keydown', { key: value, code: value.length === 1 ? 'Key' + value.toUpperCase() : value, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(event); return event;
-  }
+  const objects = () => state.drawings.draft.objects;
   const background = () => { el('picture').tabIndex = 0; el('picture').focus(); };
-  function pointer(target, type, x, y, id = 31) { target.dispatchEvent(new PointerEvent(type, { pointerId: id, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y, bubbles: true, cancelable: true })); }
-  function draw(kind, a = [.2, .3], b = [.55, .6]) {
-    el('drawingTool').value = kind; el('drawingTool').dispatchEvent(new Event('change'));
-    const r = el('drawingLayer').getBoundingClientRect(), x = r.left + r.width * a[0], y = r.top + r.height * a[1];
-    pointer(el('drawingLayer'), 'pointerdown', x, y);
-    if (kind !== 'text') { pointer(window, 'pointermove', r.left + r.width * b[0], r.top + r.height * b[1]); pointer(window, 'pointerup', r.left + r.width * b[0], r.top + r.height * b[1]); }
+  function key(value, extra = {}, target = document.activeElement === document.body ? window : document.activeElement || window) {
+    const e = new KeyboardEvent('keydown', { key: value, code: value.length === 1 ? 'Key' + value.toUpperCase() : value, bubbles: true, cancelable: true, ...extra }); target.dispatchEvent(e); return e;
   }
+  function pointer(target, type, p, id = 31) {
+    const r = el('drawingLayer').getBoundingClientRect();
+    target.dispatchEvent(new PointerEvent(type, { pointerId: id, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: r.left + r.width * p[0], clientY: r.top + r.height * p[1], bubbles: true, cancelable: true }));
+  }
+  const tool = kind => el('drawingTool' + kind[0].toUpperCase() + kind.slice(1)).click();
+  function stroke(kind, a, b) { tool(kind); pointer(el('drawingLayer'), 'pointerdown', a); if (b) pointer(window, 'pointermove', b); pointer(window, 'pointerup', b || a); }
+  function change(id, value) { el(id).value = value; el(id).dispatchEvent(new Event('change', { bubbles: true })); }
+  function input(value) { el('drawingText').value = value; el('drawingText').dispatchEvent(new Event('input', { bubbles: true })); }
+  function doubleText(p) { const r = el('drawingLayer').getBoundingClientRect(); el('drawingLayer').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: r.left + r.width * p[0], clientY: r.top + r.height * p[1] })); }
   try {
     ui = EVAUI.createUI(); ui.bindSession(session); publish(); background();
-    const screenBefore = el('screen').getBoundingClientRect(); key('d'); await delay();
-    check(!el('drawingPanel').hidden && el('play').disabled, 'D enters a paused editor and blocks normal transport');
-    const screenAfter = el('screen').getBoundingClientRect(); check(screenBefore.height === screenAfter.height && screenBefore.width === screenAfter.width, 'Opening drawing tools never shrinks the video area');
-    for (const kind of ['pen', 'arrow', 'rect', 'ellipse', 'text']) draw(kind);
-    check(state.drawings.draft.objects.length === 5, 'Five tools create five validated independent objects');
-    check(el('drawingLayer').querySelectorAll('polyline,rect,ellipse,text').length >= 5, 'Actual SVG renders all tools');
-    el('drawingText').value = '中文第一行\n第二行 <img onerror=bad>';
-    el('drawingText').dispatchEvent(new Event('compositionstart')); el('drawingText').dispatchEvent(new Event('input')); key('Enter', { isComposing: true }, el('drawingText'));
-    check(!!state.drawings.draft && stored.length === 0, 'IME confirmation cannot save the annotation');
+    const rows = () => [...document.querySelectorAll('.comment-row')];
+    check(rows().every(row => row.querySelector('.comment-row-actions').hidden), 'Sidebar actions start collapsed');
+    rows()[0].querySelector('.comment-item').click(); check(seeks === 1 && !rows()[0].querySelector('.comment-row-actions').hidden && rows()[1].querySelector('.comment-row-actions').hidden, 'Selecting one note seeks once and reveals only its actions');
+    rows()[1].querySelector('.comment-item').click(); check(rows()[0].querySelector('.comment-row-actions').hidden && !rows()[1].querySelector('.comment-row-actions').hidden, 'Selecting another row collapses the previous row');
+    window.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); check(rows().every(row => row.querySelector('.comment-row-actions').hidden), 'Clicking outside collapses row actions');
+    const before = el('screen').getBoundingClientRect(); background(); key('d'); await delay();
+    check(!el('drawingPanel').hidden && el('play').disabled, 'D enters a paused editor and blocks normal playback');
+    const after = el('screen').getBoundingClientRect(); check(before.width === after.width && before.height === after.height, 'Tools never shrink or resize the video area');
+    check(el('drawingPanel').getBoundingClientRect().height <= 42 && !el('drawingTool').querySelector('select') && !el('drawingUndo') && !el('drawingRedo'), 'Five compact tool buttons replace selection and undo/redo controls');
+    for (const kind of ['pen', 'arrow', 'rect', 'ellipse']) stroke(kind, [.85, .9]);
+    check(objects().length === 0 && !state.drawings.draft.dirty, 'Click-only strokes create no object or unsaved change');
+    stroke('pen', [.85, .9], [.851, .901]); check(objects().length === 0, 'Sub-threshold mouse jitter does not create a dot');
+    stroke('text', [.2, .7]); check(!el('drawingText').hidden && el('drawingText').value === '' && objects().length === 0, 'New text starts empty and stays outside saved objects');
+    stroke('text', [.4, .7]); check(objects().length === 0 && el('drawingText').value === '', 'A second blank click cancels the old empty text draft');
+    tool('rect'); check(el('drawingText').hidden && !state.drawings.draft.dirty, 'Changing tools discards an empty text box without dirtying the note');
+    background(); key('Escape'); await delay(); check(!state.drawings.draft && el('drawingExit').hidden, 'Misclick-only editing exits without an unsaved confirmation');
+    background(); key('d'); await delay(); stroke('rect', [.1, .2], [.5, .6]);
+    check(objects().length === 1 && !el('drawingLayer').querySelector('[stroke-dasharray]') && el('drawingLayer').querySelectorAll('[data-handle]').length === 4, 'Selected rectangle has four corner handles and no bounding frame');
+    stroke('rect', [.25, .3], [.4, .5]); check(objects().length === 2, 'Hollow rectangle interior allows a nested rectangle');
+    pointer(el('drawingLayer'), 'pointerdown', [.1, .4]); pointer(window, 'pointermove', [.15, .45]); pointer(window, 'pointerup', [.15, .45]);
+    check(Math.abs(objects()[0].a.x - .15) < 1e-6 && objects().length === 2, 'Same-type edge drag moves an existing shape instead of making another');
+    check(document.activeElement === el('drawingLayer'), 'Canvas interaction returns focus for immediate keyboard actions');
+    const corner = el('drawingLayer').querySelector('[data-handle="nw"]'); pointer(corner, 'pointerdown', [.15, .25]); pointer(window, 'pointermove', [.08, .15]); pointer(window, 'pointerup', [.08, .15]);
+    check(Math.abs(objects()[0].a.x - .08) < 1e-6 && Math.abs(objects()[0].b.x - .55) < 1e-6, 'Corner resize keeps the opposite corner fixed');
+    key('z', { ctrlKey: true }); check(Math.abs(objects()[0].a.x - .15) < 1e-6, 'One Ctrl+Z undoes one complete transform');
+    key('y', { ctrlKey: true }); check(Math.abs(objects()[0].a.x - .15) < 1e-6, 'Drawing Ctrl+Y does not redo an operation');
+    pointer(el('drawingLayer'), 'pointerdown', [.15, .4]); pointer(window, 'pointerup', [.15, .4]); key('Delete');
+    check(objects().length === 1 && state.comments.items[0].text === '第一条文字', 'Delete removes only the selected graphic');
+    stroke('arrow', [.6, .2], [.8, .4]); const tip = el('drawingLayer').querySelector('[data-handle="b"]');
+    pointer(tip, 'pointerdown', [.8, .4]); pointer(window, 'pointermove', [.85, .45]); pointer(window, 'pointerup', [.85, .45]);
+    check(Math.abs(objects().at(-1).b.x - .85) < 1e-6 && Math.abs(objects().at(-1).a.x - .6) < 1e-6, 'Arrow endpoints adjust independently');
+    change('drawingWidth', '.03'); const arrow = objects().at(-1), angle = Math.atan2((arrow.b.y - arrow.a.y) * 720, (arrow.b.x - arrow.a.x) * 1280), size = .03 * 720 * 5;
+    tool('rect'); tool('arrow'); const head = [arrow.b.x - Math.cos(angle + .45) * size / 1280, arrow.b.y - Math.sin(angle + .45) * size / 720], arrowCount = objects().length;
+    pointer(el('drawingLayer'), 'pointerdown', head); pointer(window, 'pointermove', [head[0] + .01, head[1] + .01]); pointer(window, 'pointerup', [head[0] + .01, head[1] + .01]);
+    check(objects().length === arrowCount && objects().at(-1).a.x > arrow.a.x, 'Clicking a thick arrowhead selects its existing arrow instead of creating another');
+    stroke('pen', [.65, .7], [.8, .8]); stroke('ellipse', [.55, .55], [.9, .85]);
+    const oldRectColor = objects()[0].color; change('drawingColor', '#ff5252');
+    check(objects().at(-1).color === '#ff5252' && objects()[0].color === oldRectColor, 'Color affects selected shape and shared defaults without recoloring other shapes');
+    tool('arrow'); change('drawingWidth', '.008'); tool('pen'); change('drawingWidth', '.015'); tool('arrow');
+    check(Number(el('drawingWidth').value) === .008 && savedPreferences.widths.pen === .015 && el('drawingColor').value === '#ff5252', 'Tool widths remain separate while color is shared');
+    tool('text'); check(el('drawingWidthLabel').hidden && !el('drawingSizeLabel').hidden, 'Text exposes font size without an irrelevant stroke control');
+    pointer(el('drawingLayer'), 'pointerdown', [.12, .68]); input('中文第一行\n第二行 <img onerror=bad>');
+    el('drawingText').dispatchEvent(new Event('compositionstart')); key('Enter', { isComposing: true }, el('drawingText'));
+    check(!!state.drawings.draft && stored.length === 0, 'IME candidate confirmation cannot save the annotation');
     el('drawingText').dispatchEvent(new Event('compositionend')); await delay(60);
-    check(state.drawings.draft.objects.at(-1).text.includes('第二行'), 'Chinese multiline text is preserved');
-    check(!el('drawingLayer').querySelector('img'), 'Text remains text and cannot create HTML');
-    key('Enter', { shiftKey: true }, el('drawingText')); check(!!state.drawings.draft, 'Shift+Enter remains text input rather than saving');
-    background(); const beforeUndo = state.drawings.draft.objects.length; key('z', { ctrlKey: true }); check(state.drawings.draft.objects.length <= beforeUndo, 'Ctrl+Z operates on drawing history outside text'); key('y', { ctrlKey: true });
-    const originalPreference = state.drawings.visible; key('h'); check(el('drawingLayer').hidden && state.drawings.visible === originalPreference, 'Editor H is temporary and does not overwrite the saved visibility preference');
-    const oldCount = state.drawings.draft.objects.length; draw('rect'); check(state.drawings.draft.objects.length === oldCount, 'Hidden overlay does not accept invisible strokes'); key('h');
-    const beforeRect = el('drawingLayer').getBoundingClientRect(); el('screen').style.maxHeight = '300px'; window.dispatchEvent(new Event('resize')); const afterRect = el('drawingLayer').getBoundingClientRect();
-    check(afterRect.height <= beforeRect.height && afterRect.width / afterRect.height > 1.7, 'Resize fits the same image aspect without stretching annotations'); el('screen').style.maxHeight = ''; window.dispatchEvent(new Event('resize'));
-    background(); key('Enter'); await delay(); check(!state.drawings.draft && stored.length === 5, 'Enter saves the complete drawing and exits editing');
-    key('h'); check(!state.drawings.visible && el('drawingLayer').hidden, 'Normal H updates the immediate visibility preference');
-    key('d'); await delay(); check(!el('drawingLayer').hidden && !state.drawings.visible, 'Entering from hidden temporarily shows editing without altering preference');
-    draw('rect'); background(); key('Escape'); await delay(); check(!el('drawingExit').hidden, 'Esc with changes opens the unsaved choice');
-    el('drawingExitReturn').click(); await delay(); check(!!state.drawings.draft && el('drawingExit').hidden, 'Return to editing preserves all unsaved objects');
+    check(!key('z', { ctrlKey: true }, el('drawingText')).defaultPrevented, 'Text input keeps native Ctrl+Z behavior');
+    key('Enter', { shiftKey: true }, el('drawingText')); check(!!state.drawings.draft, 'Shift+Enter remains text input');
+    tool('rect'); check(objects().at(-1).text.includes('第二行') && !el('drawingLayer').querySelector('img'), 'Ending text commits multiline safe text without interpreting HTML');
+    const textCount = objects().length; background(); key('z', { ctrlKey: true }); check(objects().length === textCount - 1, 'A complete text edit takes one drawing undo step');
+    stroke('text', [.12, .68]); input('画面标注\n第二行'); tool('rect');
+    tool('text'); doubleText([.13, .69]); check(!el('drawingText').hidden && el('drawingText').value.includes('画面标注'), 'Double click reopens existing text at its image location');
+    const textRect = el('drawingText').getBoundingClientRect(), image = el('drawingLayer').getBoundingClientRect();
+    check(textRect.left >= image.left - 5 && textRect.top >= image.top - 5 && textRect.right <= image.right + 1, 'Inline text stays aligned to the image instead of the toolbar');
+    input(''); tool('rect'); check(!objects().some(o => o.kind === 'text'), 'Clearing existing text removes its graphic object'); background(); key('z', { ctrlKey: true }); check(objects().some(o => o.kind === 'text'), 'Cleared existing text can be undone');
+    const wheel = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true }); el('screen').dispatchEvent(wheel);
+    for (const k of ['r', 'l', 'c', 'n', '[', ' ']) key(k);
+    check(wheel.defaultPrevented && steps === 0 && prepares === 0 && !!state.drawings.draft, 'Drawing does not trigger frame stepping or normal playback shortcuts');
+    background(); const preference = state.drawings.visible; key('h'); check(el('drawingLayer').hidden && state.drawings.visible === preference, 'Editor H only hides temporarily');
+    const count = objects().length; stroke('rect', [.05, .05], [.2, .15]); check(objects().length === count, 'Hidden drawing does not accept invisible strokes'); background(); key('h');
+    el('screen').style.maxHeight = '300px'; window.dispatchEvent(new Event('resize')); const fitted = el('drawingLayer').getBoundingClientRect();
+    check(Math.abs(fitted.width / fitted.height - 1280 / 720) < .01, 'Resized overlay retains the image aspect ratio'); el('screen').style.maxHeight = ''; window.dispatchEvent(new Event('resize'));
+    el('picture').width = 720; el('picture').height = 1280; window.dispatchEvent(new Event('resize')); const portrait = el('drawingLayer').getBoundingClientRect();
+    check(Math.abs(portrait.width / portrait.height - 720 / 1280) < .001, 'Portrait layout uses the same source-relative drawing coordinates');
+    el('picture').width = 1280; el('picture').height = 720; window.dispatchEvent(new Event('resize'));
+    background(); key('Enter'); await delay(); check(!state.drawings.draft && stored.length === 5 && new Set(stored.map(o => o.kind)).size === 5, 'Enter saves the complete five-tool drawing');
+    key('h'); check(!state.drawings.visible && el('drawingLayer').hidden, 'Normal H saves visibility immediately');
+    key('d'); await delay(); check(!el('drawingLayer').hidden && !state.drawings.visible, 'Editing temporarily shows annotations without changing hidden preference');
+    stroke('rect', [.1, .2], [.5, .6]); background(); key('Escape'); await delay(); check(!el('drawingExit').hidden, 'Changed drawing still requires an explicit exit decision');
+    el('drawingExitReturn').click(); await delay(); check(!!state.drawings.draft && el('drawingExit').hidden, 'Returning to edit preserves unsaved objects');
     const closing = ui.confirmDrawingExit(); await delay(); failSave = true; el('drawingExitSave').click(); await delay();
-    check(!el('drawingExit').hidden && state.drawings.draft && el('drawingExitMessage').textContent.includes('不足'), 'Save failure keeps the close dialog and shows the actual error');
-    failSave = false; el('drawingExitDiscard').click(); check(await closing, 'Explicit discard resolves the pending close intent');
-    check(!state.drawings.draft && !state.drawings.visible && el('drawingLayer').hidden, 'Exit restores original hidden preference without deleting saved notes');
-    state.playback = { ...state.playback, frameId: 21, frameOrdinal: 21 }; session.setDrawingsVisible(true); check(el('drawingLayer').hidden, 'Leaving the exact source frame hides its saved overlay');
-    state.playback = { ...state.playback, frameId: 20, frameOrdinal: 20 }; publish(); check(!el('drawingLayer').hidden, 'Returning to the source frame restores the saved overlay');
-    background(); key('d'); await delay(); draw('rect'); el('drawingTool').value = 'select'; el('drawingTool').dispatchEvent(new Event('change'));
-    el('drawingTool').focus();
-    const g = el('drawingLayer').querySelector('g'), r = el('drawingLayer').getBoundingClientRect();
-    pointer(g.firstElementChild, 'pointerdown', r.left + r.width * .3, r.top + r.height * .4); pointer(window, 'pointermove', r.left + r.width * .4, r.top + r.height * .5); pointer(window, 'pointerup', r.left + r.width * .4, r.top + r.height * .5);
-    check(state.drawings.draft.objects[0].a.x > .2, 'Selecting and dragging an SVG object changes normalized coordinates');
-    check(document.activeElement === el('drawingLayer'), 'Clicking the drawing returns focus from the tool selector for immediate hotkeys');
-    const handle = el('drawingLayer').querySelector('[data-resize]'); pointer(handle, 'pointerdown', r.left + r.width * .65, r.top + r.height * .7); pointer(window, 'pointermove', r.left + r.width * .8, r.top + r.height * .85); pointer(window, 'pointerup', r.left + r.width * .8, r.top + r.height * .85);
-    check(state.drawings.draft.objects[0].b.x > .65, 'Corner handle resizes the selected object');
-    key('Delete'); check(state.drawings.draft.objects.length === 0, 'Delete removes only the selected object without an extra focus click');
-    session.cancelDrawing(); ui.destroy();
-    const afterDestroy = changes; background(); key('d'); key('h'); check(changes === afterDestroy, 'Destroyed UI leaves no drawing hotkey listeners');
+    check(!el('drawingExit').hidden && state.drawings.draft && el('drawingExitMessage').textContent.includes('不足'), 'Failed save retains editor and explains the failure');
+    failSave = false; el('drawingExitDiscard').click(); check(await closing, 'Explicit discard releases the pending close intent');
+    check(!state.drawings.draft && el('drawingLayer').hidden && !state.drawings.visible, 'Exit restores the original hidden preference');
+    state.playback = { ...state.playback, frameId: 21, frameOrdinal: 21 }; session.setDrawingsVisible(true); check(el('drawingLayer').hidden, 'Leaving the exact source frame hides its drawing');
+    state.playback = { ...state.playback, frameId: 20, frameOrdinal: 20 }; publish(); check(!el('drawingLayer').hidden, 'Returning to the same source frame restores the drawing');
+    ui.destroy(); const beforeDestroy = changes; background(); key('d'); key('h'); check(changes === beforeDestroy, 'Destroy removes drawing keyboard listeners');
+    ui = EVAUI.createUI(); ui.bindSession(session); publish(); background(); key('d'); await delay(); tool('pen');
+    check(Number(el('drawingWidth').value) === .015 && el('drawingColor').value === '#ff5252', 'Recreated UI loads persisted tool preferences');
+    stroke('rect', [.12, .2], [.48, .5]); stroke('arrow', [.55, .25], [.78, .4]); stroke('text', [.17, .65]); input('精简标注工具'); tool('text');
+    window.EVAUXProof = { checks: results, state, session, ui };
     const out = document.createElement('pre'); out.id = 'drawing-results'; out.hidden = true; out.textContent = JSON.stringify({ passed: true, checks: results }); document.body.appendChild(out);
   } catch (error) {
-    ui?.destroy(); const out = document.createElement('pre'); out.id = 'drawing-results'; out.hidden = true; out.textContent = JSON.stringify({ passed: false, checks: results, error: error.stack }); document.body.appendChild(out);
+    ui?.destroy(); const out = document.createElement('pre'); out.id = 'drawing-results'; out.hidden = true; out.textContent = JSON.stringify({ passed: false, checks: results, objects: state.drawings.draft?.objects, error: error.stack }); document.body.appendChild(out);
   }
 })();

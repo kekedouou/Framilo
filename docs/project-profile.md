@@ -1,6 +1,6 @@
 # 项目说明
 
-2026-10-19 当前：E-10本地实现完成。新增drawing-model/ui/session/store四个模块，正式入口仍plugin；默认175脚本/85根测试、Eagle Node16十二入口及Chrome最终27项检查通过，真实Eagle体验待验。以下E-09/E-08“当前”标题保留历史记录，以本条为准。 见[E-10交付记录](experiments/E10/report.md)。
+2026-10-20 当前：E-10交互精简本地完成。沿用drawing-model/ui/session/store及plugin入口；五工具/同类变换/空草稿/紧凑属性/偏好记忆/侧栏按条展开已接通，去绘图重做和虚线框。默认176脚本/85根测试、Eagle Node16十三入口及Chrome52项通过，新交互真实Eagle集中体验待验；用户“暂未发现bug”只记首版实际反馈。新证据e10-interaction与旧e10-drawing分开，详情见[E-10记录](experiments/E10/report.md)。以下E-09/E-08及原待验标题为历史，不据此扩大验收或修改冻结Beta。
 
 2026-10-19最新决定：加速键已由V更正为C，V不再生效；用户要求上下视频严格跟随Eagle当前列表和排序，在说明未公开实现风险后明确选择暂缓，本轮只完成C键更正。实现/检查及已保留的切换规则见[E-09记录](experiments/E09/report.md)；先前E-08真实Eagle新快捷键/倍速体验仍未补记通过，不要求为本次改键单独陪测。
 

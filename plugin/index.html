@@ -13,17 +13,32 @@
         <canvas id="picture" width="1280" height="720" aria-label="当前视频画面"></canvas>
         <svg id="drawingLayer" class="drawing-layer" xmlns="http://www.w3.org/2000/svg" aria-label="当前帧屏幕标注" tabindex="0" hidden></svg>
         <div id="drawingPanel" class="drawing-panel" role="region" aria-label="圈画工具" hidden>
-          <div class="drawing-tools">
-            <select id="drawingTool" aria-label="圈画工具"><option value="pen">手写</option><option value="select">选择／移动／缩放</option><option value="arrow">箭头</option><option value="rect">矩形</option><option value="ellipse">椭圆</option><option value="text">文字</option></select>
-            <select id="drawingColor" aria-label="圈画颜色"><option value="#ffd54f">黄色</option><option value="#ff5252">红色</option><option value="#69d785">绿色</option><option value="#65b6ff">蓝色</option><option value="#ffffff">白色</option><option value="#222222">黑色</option></select>
-            <select id="drawingWidth" aria-label="线条粗细"><option value="0.002">细线</option><option value="0.004" selected>中线</option><option value="0.008">粗线</option></select>
-            <select id="drawingSize" aria-label="画面文字大小"><option value="0.025">小字</option><option value="0.04" selected>中字</option><option value="0.065">大字</option></select>
-            <button id="drawingUndo" type="button" title="Ctrl+Z">撤销</button><button id="drawingRedo" type="button" title="Ctrl+Y">重做</button><button id="drawingDelete" type="button" title="Delete删除选中对象">删除对象</button>
-            <button id="drawingSave" type="button">保存（Enter）</button><button id="drawingCancel" type="button">退出（Esc）</button>
+          <div class="drawing-tools" role="toolbar" aria-label="画面标注">
+            <div id="drawingTool" class="drawing-tool-group" role="group" aria-label="标注类型">
+              <button id="drawingToolPen" type="button" title="手写：画新笔画，点击同类笔画可移动" aria-label="手写" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 17-1 4 4-1L20 8l-3-3L5 17Zm10-10 3 3M4 21h6"/></svg></button>
+              <button id="drawingToolArrow" type="button" title="箭头：拖动绘制，点击同类箭头可调整" aria-label="箭头" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 19 5M8 5h11v11"/></svg></button>
+              <button id="drawingToolRect" type="button" title="矩形：拖动绘制，点击边线可移动" aria-label="矩形" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1"/></svg></button>
+              <button id="drawingToolEllipse" type="button" title="椭圆：拖动绘制，点击边线可移动" aria-label="椭圆" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="8" ry="7"/></svg></button>
+              <button id="drawingToolText" type="button" title="文字：点击空白输入，双击已有文字修改" aria-label="文字" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6V4h14v2M12 4v16M8 20h8"/></svg></button>
+            </div>
+            <span class="drawing-divider" aria-hidden="true"></span>
+            <button id="drawingColorButton" class="drawing-color-button" type="button" title="颜色：所有工具共用最近选择" aria-label="圈画颜色" aria-expanded="false"><span></span></button>
+            <button id="drawingOptions" type="button" title="当前工具属性" aria-label="当前工具属性" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h14M5 18h14"/><path d="M9 3v6M15 9v6M10 15v6"/></svg></button>
+            <button id="drawingDelete" type="button" title="删除选中对象（Delete）" aria-label="删除选中对象" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 10v7M14 10v7"/></svg></button>
+            <span class="drawing-divider" aria-hidden="true"></span>
+            <button id="drawingSave" class="drawing-save" type="button" title="保存整条标注（Enter）">保存</button><button id="drawingCancel" type="button" title="退出绘图（Esc）" aria-label="退出绘图"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
           </div>
-          <textarea id="drawingText" rows="2" aria-label="画面文字" placeholder="点击画面放置文字；Shift+Enter换行" hidden></textarea>
-          <p id="drawingMessage" class="muted" role="status"></p>
+          <div id="drawingProperties" class="drawing-popover" hidden>
+            <label id="drawingWidthLabel" for="drawingWidth">线宽 <input id="drawingWidth" type="range" min="0.001" max="0.05" step="0.001" value="0.004" aria-label="线条粗细"></label>
+            <label id="drawingSizeLabel" for="drawingSize" hidden>字号 <input id="drawingSize" type="range" min="0.01" max="0.2" step="0.001" value="0.04" aria-label="画面文字大小"></label>
+          </div>
+          <div id="drawingPalette" class="drawing-popover drawing-palette" aria-label="颜色选择" hidden>
+            <button type="button" data-drawing-color="#ffd54f" style="--swatch:#ffd54f" aria-label="黄色"></button><button type="button" data-drawing-color="#ff5252" style="--swatch:#ff5252" aria-label="红色"></button><button type="button" data-drawing-color="#69d785" style="--swatch:#69d785" aria-label="绿色"></button><button type="button" data-drawing-color="#65b6ff" style="--swatch:#65b6ff" aria-label="蓝色"></button><button type="button" data-drawing-color="#ffffff" style="--swatch:#ffffff" aria-label="白色"></button><button type="button" data-drawing-color="#222222" style="--swatch:#222222" aria-label="黑色"></button>
+            <input id="drawingColor" type="color" value="#ffd54f" title="自定义颜色" aria-label="自定义圈画颜色">
+          </div>
         </div>
+        <textarea id="drawingText" class="drawing-text" rows="2" aria-label="画面文字" spellcheck="false" hidden></textarea>
+        <p id="drawingMessage" class="drawing-message" role="status" hidden></p>
         <div id="notice" class="notice" role="status">在 Eagle 中单选 MP4 后打开插件</div>
         <p id="loopHelp" class="loop-help" role="status" hidden></p>
       </div>
@@ -55,7 +70,7 @@
           <label title="L开启循环并展开片段，关闭恢复整段、保留范围"><input id="loopEnabled" type="checkbox" disabled>循环（L）</label>
           <output id="loopRange" class="muted">未设置范围</output>
           <details class="shortcut-help"><summary title="查看现有操作和快捷键">操作提示</summary>
-            <div class="shortcut-panel">空格：播放／暂停<br>Z：还原1×；X：减速；C：加速<br>【／】：前后逐帧；画面或时间轴滚轮：逐帧<br>R短按：选择／确认／清除片段<br>长按R：暂停并临时查看整段、拖动端点；松开确认，Esc取消<br>L：循环并展开片段／关闭并查看整段<br>N：添加文字；D：新建圈画；H：屏幕标注显隐<br>绘图中：Enter保存，Esc退出，Ctrl+Z／Y撤销重做<br>S：导出当前画面；E：导出所选片段<br>标注输入：Enter保存，Shift+Enter换行</div>
+            <div class="shortcut-panel">空格：播放／暂停<br>Z：还原1×；X：减速；C：加速<br>【／】：前后逐帧；画面或时间轴滚轮：逐帧<br>R短按：选择／确认／清除片段<br>长按R：暂停并临时查看整段、拖动端点；松开确认，Esc取消<br>L：循环并展开片段／关闭并查看整段<br>N：添加文字；D：新建圈画；H：屏幕标注显隐<br>绘图中：Enter保存，Esc退出，Ctrl+Z撤销，Delete删除选中对象<br>S：导出当前画面；E：导出所选片段<br>标注输入：Enter保存，Shift+Enter换行</div>
           </details>
         </div>
       </div>

@@ -655,7 +655,7 @@ function createSession(options) {
   }
   return Object.freeze({ loadSelected, retry: settings => loadSelected({ ...settings, trigger: 'retry' }),
     beginDrawing, clearDrawing, setDrawingObjects: drawings.objects, touchDrawing: drawings.touch,
-    saveDrawing: drawings.save, cancelDrawing: drawings.discard, setDrawingsVisible: drawings.setVisible,
+    saveDrawing: drawings.save, cancelDrawing: drawings.discard, setDrawingsVisible: drawings.setVisible, setDrawingStyles: drawings.setStyles,
     hasDrawingDraft: () => !!drawings.snapshot().draft,
     play: () => control('play', [], ['paused']), pause: () => control('pause', [], ['paused', 'playing', 'seeking']),
     toggle: () => state === 'playing' ? control('pause', [], ['playing']) : control('play', [], ['paused']),

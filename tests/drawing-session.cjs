@@ -107,6 +107,31 @@ async function main() {
     const pending = h.session.beginDrawing(); assert.equal(h.session.snapshot().drawings.draft.status, 'pausing'); h.session.cancelDrawing(); h.selected = 'B'; const loading = h.load(); resolve(); await pending; await loading;
     assert.equal(h.session.snapshot().source.id, 'B'); assert.equal(h.session.snapshot().drawings.draft, null); await h.session.close();
   });
+  await test('Tool preferences load/save independently and a failed preference write keeps prior values and video state', async () => {
+    const store = memoryStore(), { defaultStyles } = require('../plugin/drawing-model.js'); let preferences = { styles: defaultStyles(), token: null }, failed = false;
+    store.readStyles = () => clone(preferences);
+    store.saveStyles = (styles, token) => { if (failed) throw Error('tool disk full'); assert.equal(token, preferences.token); preferences = { styles: clone(styles), token: 'style-1' }; return clone(preferences); };
+    const h = harness(store); await h.load(); const prepares = h.prepares;
+    const next = { ...defaultStyles(), color: '#ff5252', widths: { ...defaultStyles().widths, pen: .008 } };
+    assert.equal(h.session.setDrawingStyles(next).status, 'saved'); assert.equal(h.session.snapshot().drawings.styles.widths.pen, .008);
+    assert.equal(h.prepares, prepares); assert.equal(h.writes, 0); failed = true;
+    assert.equal(h.session.setDrawingStyles({ ...next, color: '#ffffff' }).status, 'failed'); assert.equal(h.session.snapshot().drawings.styles.color, '#ff5252');
+    assert(h.session.snapshot().drawings.message.includes('tool disk full')); await h.session.close();
+    failed = false; const reopened = harness(store); await reopened.load(); assert.equal(reopened.session.snapshot().drawings.styles.widths.pen, .008); await reopened.session.close();
+  });
+  await test('Discarding a transient change restores clean state and empty unchanged save writes no drawing document', async () => {
+    const store = memoryStore(), h = harness(store); await h.load(); await h.session.beginDrawing(); h.session.touchDrawing();
+    assert(h.session.snapshot().drawings.draft.dirty); h.session.setDrawingObjects([]); assert(!h.session.snapshot().drawings.draft.dirty);
+    assert.equal(h.session.saveDrawing().status, 'saved'); assert.equal(store.data.size, 0); await h.session.close();
+  });
+  await test('A corrupt tool preference is reported after media opens instead of silently replacing old data', async () => {
+    const store = memoryStore(); store.readStyles = () => { throw Error('corrupt style revision'); };
+    store.saveStyles = () => { throw Error('preserved corrupt style revision'); };
+    const h = harness(store); await h.load(); assert.equal(h.session.snapshot().state, 'paused');
+    assert(h.session.snapshot().drawings.message.includes('corrupt style revision'));
+    assert.equal(h.session.setDrawingStyles(require('../plugin/drawing-model.js').defaultStyles()).status, 'saved'); // No-op is read-only.
+    assert(h.session.snapshot().drawings.message.includes('corrupt style revision')); assert.equal(store.data.size, 0); await h.session.close();
+  });
   console.log('Drawing Session: ' + count + ' actual Session/adapter models; no real Eagle/library writes.');
 }
 if (require.main === module) main().catch(error => { console.error(error.stack); process.exitCode = 1; });

@@ -41,6 +41,16 @@ try {
     const visibility = store.readVisibility(); store.saveVisibility(false, visibility.token); assert(!createAnnotationStore({ pluginRoot: plugin }).readVisibility().visible);
     assert.deepEqual(store.read({ ...scope, itemId: 'B' }).records, []); assert.deepEqual(store.read({ ...scope, libraryPath: path.join(s.root, 'other.library') }).records, []);
   });
+  test('New tool preferences reopen independently and do not change older drawing or visibility records', () => {
+    const old = store.read(scope), visibility = store.readVisibility(), defaults = store.readStyles();
+    const styles = { ...defaults.styles, color: '#ff5252', size: .065, widths: { ...defaults.styles.widths, pen: .008 } };
+    const p = store.saveStyles(styles, defaults.token); const reopened = createAnnotationStore({ pluginRoot: plugin });
+    assert.deepEqual(reopened.readStyles().styles, styles); assert.equal(reopened.read(scope).token, old.token); assert.equal(reopened.readVisibility().token, visibility.token);
+    assert.throws(() => store.saveStyles({ ...styles, size: .025 }, defaults.token), /改变/);
+    const fail = Object.create(fs); fail.linkSync = () => { throw Error('injected style interruption'); };
+    assert.throws(() => createAnnotationStore({ pluginRoot: plugin, io: fail }).saveStyles({ ...styles, size: .025 }, p.token), /interruption/);
+    assert.equal(reopened.readStyles().token, p.token); assert.throws(() => store.saveStyles({ ...styles, unknown: 1 }, p.token));
+  });
   test('Known staging hard link is recovered; an unrelated outside hard link is preserved and rejected', () => {
     const dir = path.join(store.root, saved.key), final = path.join(dir, 'r-' + String(saved.revision).padStart(12, '0') + '.json');
     const staging = path.join(dir, 'next-' + randomUUID() + '.json'); fs.linkSync(final, staging);
