@@ -61,7 +61,7 @@
   function createUI(options = {}) {
     const doc = options.document || document, win = options.window || window, now = options.now || (() => performance.now());
     const ids = ['screen', 'picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
-      'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentChoice', 'commentText', 'commentSave', 'commentCancel', 'commentKeyboardHint', 'commentDraftPreview', 'commentEditorStatus',
+      'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentShade', 'commentEditor', 'commentTime', 'commentChoice', 'commentText', 'commentSave', 'commentCancel', 'commentKeyboardHint', 'commentDraftPreview', 'commentEditorStatus',
       'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality',
       'forwardPredecode', 'decodedCache', 'cacheStatus', 'playbackRate', 'loopSelect', 'loopCancel', 'loopEnabled', 'loopRange',
       'loopBand', 'loopHandleStart', 'loopHandleEnd', 'loopHelp', 'timeRuler', 'wheelFrames', 'showCacheStrip', 'rateStep', 'customPlaybackRate', 'drawingFadeSeconds', 'drawingToolbar',
@@ -202,13 +202,23 @@
       } catch (failure) { if (session === active) set(el.cacheClearStatus, 'textContent', String(failure.message || failure)); }
       finally { cleaning = false; if (session === active) updateMemorySettings(); }
     });
-    on(win, 'resize', () => { coverageKey = null; coverageSize = null; timelineWidth = null; rulerKey = null; updateTransport(); refreshCoverage(); });
+    function layoutComment() {
+      if (el.commentEditor.hidden) return;
+      const r = el.screen.getBoundingClientRect(), w = Number(el.picture.width), h = Number(el.picture.height);
+      if (!(r.width > 0 && r.height > 0 && w > 0 && h > 0)) return;
+      const scale = Math.min(r.width / w, r.height / h), imageWidth = w * scale, imageHeight = h * scale;
+      const inset = Math.min(56, Math.max(12, imageHeight * .08));
+      set(el.commentEditor.style, 'bottom', (r.height - imageHeight) / 2 + inset + 'px');
+      set(el.commentEditor.style, 'maxWidth', Math.max(1, imageWidth - 24) + 'px');
+      set(el.commentEditor.style, 'maxHeight', Math.max(1, imageHeight - inset - 12) + 'px');
+    }
+    on(win, 'resize', () => { coverageKey = null; coverageSize = null; timelineWidth = null; rulerKey = null; updateTransport(); refreshCoverage(); layoutComment(); });
     const interactive = () => !!session && !noteRequest && !exportRequest && !state.comments?.draft && !state.drawings?.draft && state.exportState?.status !== 'busy' && ['paused', 'playing', 'seeking'].includes(state.state);
     const invoke = fn => {
       try { Promise.resolve(fn()).catch(() => {}); } catch (_) { /* session publishes operation errors */ }
     };
     const selection = selectionAPI.createSelection({ getSession: () => session, getState: () => state,
-      setTimeout: (fn, ms) => (win.setTimeout || setTimeout)(fn, ms), clearTimeout: id => (win.clearTimeout || clearTimeout)(id),
+      setTimeout: (fn, ms) => (win.setTimeout || setTimeout).call(win, fn, ms), clearTimeout: id => (win.clearTimeout || clearTimeout).call(win, id),
       changed() { updateTransport(); updateMemorySettings(); updateComments(); updateExports(); } });
     let transportBusy = false;
     function positionMarkers() {
@@ -307,7 +317,7 @@
       const help = editing.message || (editing.editing ? editing.busy ? '正在固定画面…' :
         (!start ? '在画面或时间轴拖动起点，再拖动终点。' : !endPoint ? '在画面或时间轴拖动终点。' : '画面横拖或时间轴拖动调整端点；【／】微调当前端点。') +
         ' 右键左/右选头尾；' + (editing.mode === 'hold' ? '松R或右键短点结束' : 'R或右键短点结束') + '，未齐取消、同帧清除；Esc取消。' : '');
-      set(el.loopHelp, 'textContent', help); set(el.loopHelp, 'hidden', !help);
+      set(el.loopHelp, 'textContent', help); set(el.loopHelp, 'hidden', !help); loopAttribute(el.loopHelp, 'data-fading', String(!!editing.messageFading));
     }
     on(el.playbackRate, 'change', () => { if (!el.playbackRate.disabled) requestRate(Number(el.playbackRate.value)); });
     on(el.loopSelect, 'click', () => { if (!el.loopSelect.disabled) selection.clearOrChoose(); });
@@ -472,6 +482,8 @@
       commentComposing = false; commentCompositionEnd = now();
       if (session) invoke(() => session.setCommentText(el.commentText.value));
     });
+    on(el.commentShade, 'pointerdown', event => { if (event.button === 0) { event.preventDefault(); event.stopPropagation?.(); } });
+    on(el.commentShade, 'wheel', event => event.preventDefault(), {passive:false});
     function saveNote() {
       const draft = state.comments?.draft;
       if (!session || !draft || commentComposing || now() - commentCompositionEnd < 50 || draft.kind === 'delete') return;
@@ -593,6 +605,8 @@
       // Hiding a focused editor can synchronously move activeElement to body.
       const editorHadFocus = [el.commentText, el.commentSave, el.commentCancel].includes(doc.activeElement);
       set(el.commentEditor, 'hidden', !draft);
+      set(el.commentShade, 'hidden', !draft);
+      if (draft && (editorId !== draft.id || editorEpoch !== state.epoch)) layoutComment();
       if (!draft) {
         const saved = previous?.draft && ['saving', 'checking'].includes(previous.draft.status) && editorEpoch === state.epoch &&
           ['paused', 'playing'].includes(state.state) && value?.status === 'ready';
@@ -669,7 +683,9 @@
     screenUI = screenGestureAPI.createScreenGestureUI({ document: doc, window: win, now,
       getContext: () => ({ epoch: state.epoch, enabled: interactive() && !gesture && !memoryBusy && !cleaning &&
           !selection.snapshot().busy,
-        canStart: interactive() && !selection.snapshot().busy && !transportBusy, canRate: shortcutReady() || !!rateRequest, horizontalOnly: selection.snapshot().editing, width: el.screen.getBoundingClientRect().width,
+        canStart: interactive() && !selection.snapshot().busy && !transportBusy, canRate: shortcutReady() || !!rateRequest, horizontalOnly: selection.snapshot().editing,
+        // State checks on every move do not need a fresh layout measurement.
+        get width() { return el.screen.getBoundingClientRect().width; },
         range: viewRange, time: state.playback?.time || 0, rate: state.playback?.transport?.rate || 1,
         step: state.interactionSettings?.rateStep || .1 }),
       start: () => { const s = selection.snapshot(); screenSelectionPoint = s.editing ? (s.controlled ? s.active : selection.nextPoint() || s.active || (Math.abs((state.playback?.time || 0) - s.start.time) <= Math.abs((state.playback?.time || 0) - s.end.time) ? 'start' : 'end')) : null; },
@@ -702,6 +718,8 @@
         else if (id === 'note') invoke(beginNote);
         else if (id === 'drawing') drawingUI.begin();
       } });
+    const commentResize = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(layoutComment) : null;
+    commentResize?.observe(el.screen);
     return { canvas: el.picture, confirmDrawingExit: () => drawingUI.confirmExit(), bindSession(value) {
       if (session !== value) {
         showCommentActions(null);
@@ -716,6 +734,7 @@
       if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
     }, update,
       destroy() {
+        commentResize?.disconnect();
         drawingUI.destroy(); screenUI.destroy(); contextUI.destroy();
         rateRequest = noteRequest = exportRequest = null; transportBusy = false;
         if (session && typeof session.setCommentsVisible === 'function') session.setCommentsVisible(false);

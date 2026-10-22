@@ -10,13 +10,15 @@
     const remove=list=>{for(const[n,t,f]of list)n.removeEventListener(t,f);list.length=0;};
     const make=(tag,cls,text)=>{const n=doc.createElement(tag);n.className=cls;if(text)n.textContent=text;return n;};
     const menu=make('div','context-wheel'),ring=make('div','context-wheel-ring'),center=make('button','context-wheel-center','·'),panel=make('div','context-wheel-panel');
-    menu.id='contextWheel';menu.hidden=true;menu.setAttribute('role','group');menu.setAttribute('aria-label','右键菜单');center.type='button';center.setAttribute('aria-label','取消菜单');
+    menu.id='contextWheel';menu.hidden=true;menu.inert=true;menu.setAttribute('data-open','false');menu.setAttribute('aria-hidden','true');menu.setAttribute('role','group');menu.setAttribute('aria-label','右键菜单');center.type='button';center.setAttribute('aria-label','取消菜单');
     menu.appendChild(ring);menu.appendChild(center);menu.appendChild(panel);screen.appendChild(menu);
     let press=null,timer=null,opened=null,items=[],buttons=[],childStart=null,destroyed=false,ignoreContextUntil=0;
     const later=(fn,ms)=>(win.setTimeout||setTimeout).call(win,fn,ms),clear=id=>(win.clearTimeout||clearTimeout).call(win,id);
     const input=e=>e.target?.closest?.('input,textarea,select,a,[contenteditable]');
     function stopTimer(){if(timer!==null)clear(timer);timer=null;}
-    function reset(){const old=press;press=null;stopTimer();menu.hidden=true;opened=null;childStart=null;panel.hidden=true;remove(ringListeners);remove(panelListeners);if(old)try{if(screen.hasPointerCapture?.(old.id))screen.releasePointerCapture(old.id);}catch(_){} }
+    function finishClosing(){if(!menu.hidden)return;menu.setAttribute('data-closing','false');panel.hidden=true;}
+    function reset(){const old=press,visible=!menu.hidden;press=null;stopTimer();menu.hidden=true;menu.inert=true;menu.setAttribute('aria-hidden','true');menu.setAttribute('data-open','false');if(visible)menu.setAttribute('data-closing','true');opened=null;childStart=null;if(!visible)panel.hidden=true;remove(ringListeners);remove(panelListeners);if(old)try{if(screen.hasPointerCapture?.(old.id))screen.releasePointerCapture(old.id);}catch(_){} }
+    on(menu,'animationend',e=>{if(e.target===menu&&e.animationName==='wheel-out')finishClosing();});
     function position(x,y,size){const r=screen.getBoundingClientRect(),w=r.width||400,h=r.height||400,edge=size/2+6;menu.style.width=menu.style.height=size+'px';menu.style.left=Math.max(Math.min(edge,w/2),Math.min(w-edge,x-r.left))+'px';menu.style.top=Math.max(Math.min(edge,h/2),Math.min(h-edge,y-(r.top||0)))+'px';center.style.left=center.style.top=size/2+'px';}
     function menuCenter(){const r=screen.getBoundingClientRect();return{x:r.left+parseFloat(menu.style.left),y:(r.top||0)+parseFloat(menu.style.top)};}
     function choose(index){for(let i=0;i<buttons.length;i++)buttons[i].setAttribute('data-active',String(i===index));}
@@ -28,7 +30,7 @@
         const angle=i*Math.PI*2/items.length-Math.PI/2,radius=secondary?45:40;b.style.left=size/2+Math.cos(angle)*radius+'px';b.style.top=size/2+Math.sin(angle)*radius+'px';
         const symbol=make('span','context-wheel-symbol',(item.symbol||'')+'\ufe0e');if(item.id==='pen'||item.id==='drawing')symbol.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 17-1 4 4-1L20 8l-3-3L5 17Zm10-10 3 3M4 21h6"/></svg>';
         b.appendChild(symbol);b.appendChild(make('span','context-wheel-label',item.label));dynamic(ringListeners,b,'click',e=>execute(item,e));ring.appendChild(b);buttons.push(b);
-      });menu.hidden=false;choose(null);
+      });menu.setAttribute('data-closing','false');menu.setAttribute('data-open','true');menu.setAttribute('aria-hidden','false');menu.inert=false;menu.hidden=false;choose(null);
     }
     function showChildren(item,e){if(item.disabled||!item.children?.length)return;const at={x:e.clientX,y:e.clientY};childStart=at;show(item.children,at,true);choose(null);}
     function showPanel(){const ctx=getContext();remove(panelListeners);panel.replaceChildren();panel.hidden=false;panel.setAttribute('data-panel','color');

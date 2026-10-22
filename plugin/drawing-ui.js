@@ -18,7 +18,7 @@
     const buttons = Object.fromEntries([...model.KINDS, 'eraser'].map(k => [k, el['drawingTool' + k[0].toUpperCase() + k.slice(1)]]));
     let editor = null, committed = [], editorKey = null, selected = null, drag = null, work = null, textDraft = null, temporaryVisible = true;
     let snapshot = null, geometry = null, width = 1280, height = 720, normalKey = null, tool = 'pen', styles = model.defaultStyles(), stylesRef = null;
-    let eraserPoint = null, eraserWidth = .045, normalGroups = [], normalRecords = null, normalOrder = [], groupNodes = new Map();
+    let eraserPoint = null, eraserWidth = .045, normalGroups = [], normalRecords = null, normalOrder = [], groupNodes = new Map(), lastRender = null;
     const maskPrefix = 'erase-' + Math.random().toString(36).slice(2) + '-';
     let composing = false, compositionEnd = -Infinity, exitResolve = null, exitPromise = null, destroyed = false;
     const session = () => getSession(), draft = () => snapshot?.drawings?.draft;
@@ -136,6 +136,7 @@
       }
       if (editor && tool === 'eraser' && eraserPoint) nodes.push(node('ellipse', { 'data-eraser-cursor': 'true', cx: eraserPoint.x * width, cy: eraserPoint.y * height, rx: eraserWidth * scale / 2, ry: eraserWidth * scale / 2, fill: '#ffffff08', stroke: '#ddd', 'stroke-opacity': '.65', 'stroke-width': width / Math.max(1, geometry?.width || width), 'pointer-events': 'none' }));
       el.drawingLayer.replaceChildren(...nodes); properties(); layoutText();
+      lastRender = { value, editor, geometry, selected, tool, textDraft, visible: temporaryVisible, kind: draft()?.kind };
     }
     function publish(next) {
       try {
@@ -397,7 +398,12 @@
         set(el.drawingSave, 'textContent', d.status === 'unknown' ? '核对并保存' : d.kind === 'delete' ? '确认清除' : '保存（D）');
         set(el.drawingSave, 'disabled', !['editing', 'failed', 'unknown'].includes(d.status));
         for (const control of [...Object.values(buttons), el.drawingColorButton, el.drawingOptions, el.drawingColor, el.drawingWidth, el.drawingSize, el.drawingText, el.drawingDelete]) control.disabled = !shown || d.kind === 'delete' || !['editing', 'failed'].includes(d.status);
-        render(valueObjects);
+        // Playback/status notifications do not change the editor's picture.
+        // Direct pointer/tool edits still render immediately through render().
+        if (!lastRender || lastRender.value !== valueObjects || lastRender.editor !== editor || lastRender.geometry !== geometry ||
+            lastRender.selected !== selected || lastRender.tool !== tool || lastRender.textDraft !== textDraft ||
+            lastRender.visible !== temporaryVisible || lastRender.kind !== d.kind) render(valueObjects);
+        else { properties(); layoutText(); }
       } else {
         const nextKey = value.epoch + ':' + normalGroups.map(n => n.record.id).join('|') + ':' + (state?.visible !== false);
         if (nextKey !== normalKey) { normalKey = nextKey; if (valueObjects.length) layout(); render(valueObjects); }

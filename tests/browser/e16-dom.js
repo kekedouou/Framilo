@@ -45,7 +45,7 @@
   ui=EVAUI.createUI();ui.bindSession(session);publish();
   const ctx=el('picture').getContext('2d');ctx.fillStyle='#303238';ctx.fillRect(0,0,1280,720);ctx.strokeStyle='#41434a';ctx.lineWidth=1;for(let x=0;x<1280;x+=64){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,720);ctx.stroke();}for(let y=0;y<720;y+=64){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(1280,y);ctx.stroke();}
   let p=down();await sleep(450);let menu=el('contextWheel');
-  check(menu.getBoundingClientRect().width===120&&Number(getComputedStyle(menu).opacity)<.85,'Right wheel is 120px and visually subdued');
+  check(parseFloat(getComputedStyle(menu).width)===120&&Number(getComputedStyle(menu).opacity)<.85,'Right wheel has a 120px layout size and stays visually subdued during its entrance');
   check(menu.querySelectorAll('.context-wheel-item').length===4,'Viewing wheel retains four commands');pointer(window,'pointerup',p.x,p.y);check(menu.hidden,'Held center release cancels without action');
   await right(-60,0);check(el('timeline').getAttribute('data-selecting')==='true','Left viewing flick enters selection');
   await right();check(el('timeline').getAttribute('data-selecting')!=='true'&&applies===0&&clears===0,'Empty selection right tap cancels without making a range');
@@ -60,7 +60,7 @@
   await right(-60,0,true);check(state.playback.frameOrdinal===60,'A held selection wheel uses the same head direction');
   const range=JSON.stringify(state.playback.transport.loop);key('Escape');await settle();check(JSON.stringify(state.playback.transport.loop)===range,'Esc restores the saved range after endpoint control');
   await note();const editor=el('commentEditor').getBoundingClientRect(),screen=el('screen').getBoundingClientRect(),rail=el('timeline').getBoundingClientRect();
-  check(el('commentEditor').closest('.player-pane')&&!el('commentEditor').closest('aside')&&editor.top>=screen.bottom-1&&editor.bottom<=rail.top+1,'Time-note editor sits below the picture and above the timeline');
+  check(el('commentEditor').parentElement===el('screen')&&!el('commentEditor').closest('aside')&&editor.top>=screen.top&&editor.bottom<=screen.bottom&&editor.bottom<=rail.top+1,'Time-note editor floats inside the picture above the timeline');
   check(el('commentSave').hidden&&el('commentCancel').hidden&&document.querySelectorAll('aside textarea').length===0,'Normal note editing has no save/cancel buttons or sidebar input');
   input('观察起手与收尾');check(el('commentDraftPreview').textContent.includes('观察起手与收尾')&&noteWrites===0,'Sidebar previews the draft before any save');
   const nativeMenu=new MouseEvent('contextmenu',{bubbles:true,cancelable:true});el('commentText').dispatchEvent(nativeMenu);check(!nativeMenu.defaultPrevented,'Note input keeps its native right-click menu');
