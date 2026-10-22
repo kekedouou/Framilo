@@ -18,8 +18,8 @@ async function main(){let count=0;
  });
  await test('R hold allows source-frame endpoint adjustment directly on the picture and settles on key release',async()=>{
   const h=harness(true);h.key('R');h.hold();await flush();const before=h.calls.length;
-  h.el('screen').fire('pointerdown',{clientX:200,clientY:200});h.win.fire('pointermove',{clientX:300,clientY:200});
-  h.win.fire('pointerup',{clientX:320,clientY:200,buttons:0});await flush();
+  h.el('screen').fire('pointerdown',{clientX:200,clientY:200});h.win.fire('pointermove',{clientX:160,clientY:200});
+  h.win.fire('pointerup',{clientX:140,clientY:200,buttons:0});await flush();
   assert(h.calls.slice(before).some(n=>n[0]==='seek'&&n[2].kind==='loop-select'));
   h.win.fire('keyup',{key:'r',code:'KeyR'});await flush();assert(h.calls.some(n=>n[0]==='apply'));h.ui.destroy();
  });

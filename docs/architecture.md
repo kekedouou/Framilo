@@ -1,5 +1,7 @@
 # 技术架构：阶段 3B 已批准
 
+2026-10-22 E-16沿原边界：context-wheel承载模式短点/层级/输入取消，ui分发选择端点/确认和标注保存，菜单活动依赖只用于Esc优先级。loop-selection允许同帧草稿但不提交同帧循环，完整未改旧范围也确认，未齐取消/同帧清除。drawing-ui仅暴露四项/类型子项和原编辑事务，HTML/CSS移动文字框并由ui镜像草稿，不额外写原生标注。Preferences兼容可选drawingToolbar，Session新增纯设置入口、其它设置入口保留字段；不重建播放器/改变标注固定帧。圈画数据/媒体缓存/预算与SDK边界不变；完整读写/中断盘点及证据见[E-16记录](experiments/E16/report.md)。
+
 2026-10-22 E-15：drawing-erase是无DOM/文件/SDK的纯几何辅助模块，由drawing-model验证输入/输出；按实际长宽比计算线条与圆头擦除胶囊的接触/覆盖，压缩新轨迹并保守证明完全擦除。drawing-ui只提供SVG文字getBBox、显示比例和原有Session提交；无法证明擦净时保留，计算超过有界工作量则拒绝该预览并保留最后有效状态。HTML及未来打包白名单同步，原erasures格式/存储限额/Store原子修订与读写边界不变，见[E-15计划](experiments/E15/plan.md)和[报告](experiments/E15/report.md)。
 
 2026-10-22最新：E-14沿原边界接续：新增context-wheel纯右键输入/DOM模块，由ui分发既有选区/标注/圈画/循环命令；drawing-ui暴露菜单操作并默认折叠原工具条。screen-gestures/ui支持仅水平的选区模式，ui把画面输入交给原loop-selection。高倍速Player继续音画时钟、从同轮已解码帧选择不晚于当前时刻的最新画面；开始的快放读取可完成并进入原有界池，暂停/逐帧仍走准确请求。画质过滤仅为UI规则，不改持久数据/缓存格式或媒体架构。 范围与结果见[E-14计划](experiments/E14/plan.md)及[报告](experiments/E14/report.md)。下方为此前记录。

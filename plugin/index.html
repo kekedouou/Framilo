@@ -49,6 +49,14 @@
         <div id="notice" class="notice" role="status">在 Eagle 中单选 MP4 后打开插件</div>
         <p id="loopHelp" class="loop-help" role="status" hidden></p>
       </div>
+      <div id="commentEditor" class="comment-editor" role="region" aria-label="当前帧文字标注" hidden>
+        <p id="commentTime" class="muted"></p>
+        <select id="commentChoice" aria-label="选择当前帧要修改的文字" hidden></select>
+        <textarea id="commentText" rows="2" aria-label="标注文字" placeholder="记录当前画面的观察"></textarea>
+        <p id="commentKeyboardHint" class="muted">Enter保存 · Shift+Enter换行 · Esc取消 · 画面右键保存</p>
+        <p id="commentEditorStatus" class="muted" role="status"></p>
+        <div class="comment-actions"><button id="commentSave" type="button" hidden>保存</button><button id="commentCancel" type="button" hidden>取消</button></div>
+      </div>
       <div class="transport">
         <div class="timeline-area">
           <div id="timeRuler" class="time-ruler" aria-hidden="true"></div>
@@ -95,6 +103,7 @@
         <p class="muted">保持比例，不放大小视频。JPEG轻量预览。</p>
         <label class="predecode-option"><input id="forwardPredecode" type="checkbox" checked disabled> 提前解压周围画面</label>
         <label class="predecode-option"><input id="showDrawings" type="checkbox" checked> 显示屏幕标注（H）</label>
+        <label class="predecode-option"><input id="drawingToolbar" type="checkbox"> 显示圈画工具条</label>
         <p class="muted">立即生效并记住选择，不删除标注，不需点击应用。</p>
         <p class="muted">优先准备光标附近，自动替换远处画面。绿条表示已解压；未覆盖处首次拖动可能等待。</p>
         <label class="predecode-option"><input id="showCacheStrip" type="checkbox" checked disabled> 显示缓存绿条</label>
@@ -140,14 +149,7 @@
         <div class="comment-heading"><h2>标注</h2><button id="commentAdd" type="button" title="N添加或修改当前帧文字标注" disabled>文字</button><button id="drawingNew" type="button" title="D进入当前帧圈画，再按D保存退出" disabled>圈画（D）</button></div>
         <p id="drawingStatus" class="muted" role="status"></p>
         <p id="commentStatus" class="muted" role="status"></p>
-        <div id="commentEditor" hidden>
-          <p id="commentTime" class="muted"></p>
-          <select id="commentChoice" aria-label="选择当前帧要修改的文字" hidden></select>
-          <label for="commentText" class="muted">文字</label>
-          <textarea id="commentText" rows="3" placeholder="记录当前画面的观察"></textarea>
-          <p id="commentKeyboardHint" class="muted">Enter保存，Shift+Enter换行</p>
-          <div class="comment-actions"><button id="commentSave" type="button">保存</button><button id="commentCancel" type="button">取消</button></div>
-        </div>
+        <p id="commentDraftPreview" class="comment-draft-preview" hidden></p>
         <div id="commentList" class="comment-list"></div>
       </section>
     </aside>

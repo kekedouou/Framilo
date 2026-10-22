@@ -70,11 +70,11 @@ async function run() {
     h.editor.move('start', .4, true); h.editor.cancel(); await flush();
     assert.deepEqual(h.state.playback.transport.loop, original); assert.equal(h.state.state, 'paused'); h.editor.destroy();
   });
-  await check('Fine step edits only active endpoint, clamps crossing and leaves room at the last frame', async () => {
-    const h = harness(); await h.editor.begin('toggle'); h.editor.move('start', 1, true); assert.equal(h.editor.snapshot().start.ordinal, 8);
+  await check('Fine step edits the active endpoint and clamps crossing to coincident endpoints', async () => {
+    const h = harness(); await h.editor.begin('toggle'); h.editor.move('start', 1, true); assert.equal(h.editor.snapshot().start.ordinal, 9);
     h.editor.move('end', 0, true); assert.equal(h.editor.snapshot().end.ordinal, 9);
-    h.editor.active('start'); h.editor.step(1); assert.equal(h.editor.snapshot().start.ordinal, 8);
-    h.editor.step(-1); assert.equal(h.editor.snapshot().start.ordinal, 7); h.editor.active('end'); h.editor.step(-5);
+    h.editor.active('start'); h.editor.step(1); assert.equal(h.editor.snapshot().start.ordinal, 9);
+    h.editor.step(-1); assert.equal(h.editor.snapshot().start.ordinal, 8); h.editor.active('end'); h.editor.step(-5);
     assert.equal(h.editor.snapshot().end.ordinal, 8); h.editor.destroy();
   });
   await check('Final pending draw is awaited; cancellation or epoch change cannot later commit or autoplay', async () => {
@@ -100,11 +100,11 @@ async function run() {
     assert(!h.calls.some(c => c[0] === 'play')); assert(!h.editor.snapshot().busy);
     h.editor.keyDown(); h.editor.destroy(); h.hold(); assert(!h.editor.snapshot().editing); assert.equal(h.timers.size, 0);
   });
-  await check('Unchanged hold preserves paused old range; zero-duration result remains editable', async () => {
+  await check('Unchanged hold confirms the old range; zero-duration result clears and exits', async () => {
     const h=harness(true); h.editor.keyDown();h.hold();await flush();h.editor.keyUp();await flush();
-    assert.equal(h.state.state,'paused');assert(!h.calls.some(c=>c[0]==='apply'));assert.equal(h.state.playback.transport.loop.startOrdinal,2);
+    assert.equal(h.state.state,'playing');assert(h.calls.some(c=>c[0]==='apply'));assert.equal(h.state.playback.transport.loop.startOrdinal,2);
     await h.editor.begin('toggle');h.editor.move('end',.8,true);h.session.applyLoopRange=async()=>({status:'ignored',reason:'invalid-loop'});
-    await h.editor.finish();assert(h.editor.snapshot().editing);assert(h.editor.snapshot().message.includes('有效时长'));assert(!h.editor.snapshot().busy);h.editor.destroy();
+    await h.editor.finish();assert(!h.editor.snapshot().editing);assert(!h.state.playback.transport.loop.valid);assert(!h.editor.snapshot().busy);h.editor.destroy();
   });
   console.log('E06 selection: ' + count + ' deterministic interaction groups passed; actual Eagle input/layout pending.');
 }

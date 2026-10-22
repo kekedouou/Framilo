@@ -17,7 +17,7 @@
     const announce = text => { message = text || ''; changed(); };
     const forgetPress = () => { if (press) stop(press.timer); press = null; };
     function snapshot() { return { editing: !!draft, mode: draft?.mode, start: draft?.start || null, end: draft?.end || null,
-      active: draft?.active || null, busy: busy || !!draft?.initializing || !!draft?.finishing, message }; }
+      active: draft?.active || null, controlled: !!draft?.controlled, busy: busy || !!draft?.initializing || !!draft?.finishing, message }; }
     function cancel(pause = true) {
       const old = draft; draft = null; ++action; busy = false; forgetPress(); message = '';
       if (pause && old && old.session === getSession() && old.epoch === getState().epoch && ready()) {
@@ -46,8 +46,8 @@
       const value = draft;
       if (!value || !live(value) || value.initializing || value.finishing || !['start', 'end'].includes(point)) return false;
       const count = getState().playback?.frameCount;
-      const bounds = point === 'start' ? { maxOrdinal: value.end ? value.end.ordinal - 1 : count - 2 } :
-        { minOrdinal: value.start ? value.start.ordinal + 1 : 1 };
+      const bounds = point === 'start' ? { maxOrdinal: value.end ? value.end.ordinal : count - 1 } :
+        { minOrdinal: value.start ? value.start.ordinal : 0 };
       if (ordinal !== undefined) bounds.ordinal = ordinal;
       const frame = value.session.loopFrameAt(time, bounds);
       if (!frame) { announce('该视频暂时无法选择两个不同的帧。'); return false; }
@@ -59,22 +59,35 @@
       return true;
     }
     function step(delta) {
-      if (!draft || !draft.active || !draft[draft.active]) return false;
-      const point = draft[draft.active];
+      if (!draft || !draft.active) return false;
+      const point = draft[draft.active] || { time: getState().playback.time, ordinal: getState().playback.frameOrdinal };
       return move(draft.active, point.time, true, undefined, point.ordinal + delta);
+    }
+    function selectEndpoint(point) {
+      const value = draft;
+      if (!value || !live(value) || value.initializing || value.finishing || !['start', 'end'].includes(point)) return;
+      value.active = point; value.controlled = true; message = ''; changed();
+      const frame = value[point];
+      if (frame) value.pending = Promise.resolve(value.session.seek(frame.time, { index: frame.ordinal, final: true, kind: 'loop-endpoint' })).catch(() => ({ status: 'error' }));
+      return value.pending;
     }
     async function finish() {
       const value = draft;
       if (!value || !live(value) || value.finishing) return;
-      if (value.initializing || !value.start || !value.end || !value.modified) { cancel(); return; }
+      if (value.initializing || !value.start || !value.end) { cancel(); return; }
       value.finishing = true; changed();
       const result = await value.pending;
       if (!live(value)) return;
       if (!result || !['drawn', 'reused'].includes(result.status)) { cancel(); return; }
       try {
+        if (value.start.ordinal >= value.end.ordinal) {
+          await value.session.clearLoop();
+          if (live(value)) { draft = null; message = ''; changed(); }
+          return;
+        }
         const applied = await value.session.applyLoopRange({ startOrdinal: value.start.ordinal, endOrdinal: value.end.ordinal });
         if (!live(value)) return;
-        if (applied?.status === 'ignored') { value.finishing = false; announce('这个范围没有有效时长，请调整终点。'); return; }
+        if (applied?.status === 'ignored') { await value.session.clearLoop(); if (!live(value)) return; }
         draft = null; message = applied?.status === 'superseded' ? '选择已取消。' : ''; changed();
       } catch (_) { if (live(value)) cancel(false); }
     }
@@ -124,8 +137,8 @@
       if (press && (press.epoch !== getState().epoch || !ready())) forgetPress();
       if (draft && !live(draft)) cancel(false);
     }
-    return { snapshot, begin, move, step, finish, cancel, clearOrChoose, toggleLoop, keyDown, keyUp, update,
-      active(point) { if (draft && draft[point]) { draft.active = point; changed(); } },
+    return { snapshot, begin, move, step, selectEndpoint, finish, cancel, clearOrChoose, toggleLoop, keyDown, keyUp, update,
+      active(point) { if (draft && draft[point]) { draft.active = point; draft.controlled = true; changed(); } },
       nextPoint() { return !draft || draft.initializing || draft.finishing ? null : !draft.start ? 'start' : !draft.end ? 'end' : null; },
       blur() { cancel(); }, destroy() { cancel(false); } };
   }

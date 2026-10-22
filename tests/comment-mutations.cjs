@@ -58,6 +58,14 @@ async function test(name, run) { await run(); count++; console.log('ok ' + name)
     assert.deepEqual(h.data[0], { id: 'target', duration: 2.125, annotation: '修改后 中文 空格', extra: 'preserve' });
     assert.equal(h.data[1].annotation, '原有标注');
   });
+  await test('Blank new and cleared existing drafts cancel without writing or deleting native text', async () => {
+    for(const kind of ['new','edit']){
+      const h=harness();if(kind==='new')h.data=[];const before=JSON.parse(JSON.stringify(h.data));await h.load();
+      if(kind==='edit')await h.session.editComment('target');else await h.session.beginComment();
+      h.session.setCommentText(' \n ');assert.equal((await h.session.saveComment()).status,'cancelled');
+      assert.equal(h.session.snapshot().comments.draft,null);assert.deepStrictEqual(h.data,before);assert.equal(h.writes.length,0);await h.session.close();
+    }
+  });
   await test('Delete removes only the exact original ID, not other notes at the same timestamp', async () => {
     const h = harness(); h.data.push({ id: 'same-time', duration: 2.125, annotation: '原文字 空格' });
     const result = await h.adapter.saveComment(h.proposal('delete'));

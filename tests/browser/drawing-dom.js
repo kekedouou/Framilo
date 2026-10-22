@@ -18,6 +18,7 @@
     cancelDrawing() { state.drawings.draft = null; publish(); return true; },
     setDrawingsVisible(visible) { state.drawings.visible = visible; publish(); return { status: 'saved' }; },
     setDrawingStyles(styles) { savedPreferences = EVADrawingModel.validateStyles(styles); state.drawings.styles = copy(savedPreferences); publish(); return { status: 'saved' }; },
+    setDrawingToolbar(visible) { state.interactionSettings = { ...state.interactionSettings, drawingToolbar: visible }; publish(); return { status: 'saved' }; },
     async seekComment() { seeks++; publish(); }, step() { steps++; }, setCommentsVisible() {}, refreshComments: async () => {}, memorySnapshot: () => null
   };
   const objects = () => state.drawings.draft.objects;
@@ -43,10 +44,7 @@
     window.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); check(rows().every(row => row.querySelector('.comment-row-actions').hidden), 'Clicking outside collapses row actions');
     const before = el('screen').getBoundingClientRect(); background(); key('d'); await delay();
     check(el('drawingPanel').hidden && el('play').disabled, 'D enters a paused editor with its toolbar collapsed');
-    const menuRect=el('screen').getBoundingClientRect();
-    el('picture').dispatchEvent(new PointerEvent('pointerdown',{pointerId:89,button:2,buttons:2,clientX:menuRect.left+320,clientY:menuRect.top+220,bubbles:true,cancelable:true}));
-    window.dispatchEvent(new PointerEvent('pointerup',{pointerId:89,button:2,buttons:0,clientX:menuRect.left+250,clientY:menuRect.top+150,bubbles:true,cancelable:true}));
-    [...el('contextWheel').querySelectorAll('.context-wheel-panel button')].find(n=>n.textContent==='显示工具条').click();
+    el('drawingToolbar').checked=true;el('drawingToolbar').dispatchEvent(new Event('change',{bubbles:true}));await delay();
     const after = el('screen').getBoundingClientRect(); check(before.width === after.width && before.height === after.height, 'Tools never shrink or resize the video area');
     check(el('drawingPanel').getBoundingClientRect().height <= 42 && !el('drawingTool').querySelector('select') && !el('drawingUndo') && !el('drawingRedo'), 'Five compact tool buttons replace selection and undo/redo controls');
     for (const kind of ['pen', 'arrow', 'rect', 'ellipse']) stroke(kind, [.85, .9]);

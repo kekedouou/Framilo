@@ -61,10 +61,10 @@
   function createUI(options = {}) {
     const doc = options.document || document, win = options.window || window, now = options.now || (() => performance.now());
     const ids = ['screen', 'picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
-      'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentChoice', 'commentText', 'commentSave', 'commentCancel', 'commentKeyboardHint',
+      'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentChoice', 'commentText', 'commentSave', 'commentCancel', 'commentKeyboardHint', 'commentDraftPreview', 'commentEditorStatus',
       'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality',
       'forwardPredecode', 'decodedCache', 'cacheStatus', 'playbackRate', 'loopSelect', 'loopCancel', 'loopEnabled', 'loopRange',
-      'loopBand', 'loopHandleStart', 'loopHandleEnd', 'loopHelp', 'timeRuler', 'wheelFrames', 'showCacheStrip', 'rateStep', 'customPlaybackRate', 'drawingFadeSeconds',
+      'loopBand', 'loopHandleStart', 'loopHandleEnd', 'loopHelp', 'timeRuler', 'wheelFrames', 'showCacheStrip', 'rateStep', 'customPlaybackRate', 'drawingFadeSeconds', 'drawingToolbar',
       'exportDestination', 'exportFolder', 'exportFolderArea', 'exportFolderRefresh', 'exportFrame', 'exportClip', 'exportCancel', 'exportCheck', 'exportStatus'];
     const el = Object.fromEntries(ids.map(id => [id, doc.getElementById(id)]));
     if (ids.some(id => !el[id])) throw new Error('播放器界面缺少必要元素。');
@@ -134,7 +134,7 @@
     }
     on(win, 'focus', refreshCommentsOnReturn);
     if (typeof doc.addEventListener === 'function') on(doc, 'visibilitychange', refreshCommentsOnReturn);
-    let memoryBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null, shownPredecode = null, shownWheel = null, shownStrip = null, shownRateStep = null, shownFade = null;
+    let memoryBusy = false, toolbarBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null, shownPredecode = null, shownWheel = null, shownStrip = null, shownRateStep = null, shownFade = null;
     function updateMemorySettings() {
       const memory = state.memorySettings;
       const disabled = !session || !memory || memoryBusy || cleaning || transportBusy || !!noteRequest || !!exportRequest || state.state === 'preparing' || state.state === 'closed' || !!state.comments?.draft || !!state.drawings?.draft || selection.snapshot().editing;
@@ -158,6 +158,8 @@
         shownPredecode = !!state.forwardPredecode; set(el.forwardPredecode, 'checked', shownPredecode);
       }
       const interaction = state.interactionSettings || { wheelFrames: 1, showCacheStrip: true };
+      set(el.drawingToolbar, 'checked', interaction.drawingToolbar === true);
+      set(el.drawingToolbar, 'disabled', !session || !session.setDrawingToolbar || toolbarBusy || state.state === 'closed');
       if (shownWheel !== interaction.wheelFrames) { shownWheel = interaction.wheelFrames; set(el.wheelFrames, 'value', String(shownWheel)); }
       if (shownStrip !== interaction.showCacheStrip) { shownStrip = interaction.showCacheStrip; set(el.showCacheStrip, 'checked', shownStrip); }
       if (shownRateStep !== (interaction.rateStep ?? .1)) { shownRateStep = interaction.rateStep ?? .1; set(el.rateStep, 'value', String(shownRateStep)); }
@@ -171,6 +173,13 @@
       set(el.previewQuality, 'textContent', preview ? (displayedQuality === '1440p' ? '2K（1440p）' : displayedQuality) + ' 预览 · ' + preview.width + ' × ' + preview.height +
         (preview.originalResolution ? '（原始分辨率）' : '') : (state.previewQuality || '720p') + ' 预览');
     }
+    on(el.drawingToolbar, 'change', async () => {
+      if (el.drawingToolbar.disabled || !session?.setDrawingToolbar) return;
+      const active = session, visible = el.drawingToolbar.checked; toolbarBusy = true;
+      try { await active.setDrawingToolbar(visible); if (session === active) set(el.memoryStatus, 'textContent', '工具条设置已保存。'); }
+      catch (failure) { if (session === active) set(el.memoryStatus, 'textContent', failure.message || String(failure)); }
+      finally { toolbarBusy = false; updateMemorySettings(); }
+    });
     on(el.memoryApply, 'click', async () => {
       if (el.memoryApply.disabled || !session || typeof session.setPlaybackSettings !== 'function' && typeof session.setMemoryMiB !== 'function') return;
       const active = session, ramMiB = Number(el.memoryMiB.value);
@@ -297,7 +306,7 @@
       if (start && endPoint && state.duration > 0) { set(el.loopBand.style, 'left', timelineAPI.ratio(start.time, viewRange) * 100 + '%'); set(el.loopBand.style, 'width', Math.max(0, timelineAPI.ratio(endPoint.time, viewRange) - timelineAPI.ratio(start.time, viewRange)) * 100 + '%'); }
       const help = editing.message || (editing.editing ? editing.busy ? '正在固定画面…' :
         (!start ? '在画面或时间轴拖动起点，再拖动终点。' : !endPoint ? '在画面或时间轴拖动终点。' : '画面横拖或时间轴拖动调整端点；【／】微调当前端点。') +
-        (editing.mode === 'hold' ? ' 临时整段；松开 R 确认，Esc 取消。' : ' 再按 R 确认，Esc 取消。') : '');
+        ' 右键左/右选头尾；' + (editing.mode === 'hold' ? '松R或右键短点结束' : 'R或右键短点结束') + '，未齐取消、同帧清除；Esc取消。' : '');
       set(el.loopHelp, 'textContent', help); set(el.loopHelp, 'hidden', !help);
     }
     on(el.playbackRate, 'change', () => { if (!el.playbackRate.disabled) requestRate(Number(el.playbackRate.value)); });
@@ -347,7 +356,7 @@
       const handle = event.target === el.loopHandleStart ? 'start' : event.target === el.loopHandleEnd ? 'end' : null;
       if (handle && !editing.editing) return;
       event.preventDefault(); gesture = { id: event.pointerId, rect: el.timeline.getBoundingClientRect(), epoch: state.epoch, range: { ...viewRange },
-        point: editing.editing ? handle || selection.nextPoint() : null };
+        point: editing.editing ? handle || (editing.controlled ? editing.active : selection.nextPoint() || editing.active) : null };
       el.timeline.focus(); try { el.timeline.setPointerCapture(event.pointerId); } catch (_) {}
       hintEpoch = state.epoch; set(el.timeHint, 'hidden', false);
       set(el.timeHint, 'textContent', formatTime(state.playback ? state.playback.time : 0));
@@ -383,6 +392,12 @@
     on(el.previous, 'click', () => step(-1)); on(el.next, 'click', () => step(1));
     on(el.retry, 'click', () => { if (session) invoke(() => session.retry()); });
     on(win, 'keydown', event => {
+      if (event.defaultPrevented) return;
+      if (event.key === 'Escape' && contextUI?.active()) return;
+      if (event.key === 'Escape' && state.comments?.draft) {
+        if (!commentComposing && !event.isComposing && event.keyCode !== 229 && now() - commentCompositionEnd >= 50) { event.preventDefault(); invoke(() => session.cancelComment()); }
+        return;
+      }
       if (event.key === 'Escape' && selection.snapshot().editing) { event.preventDefault(); clearGesture(); selection.cancel(); return; }
       if (letterKey(event, 'R')) { if (interactive() && !gesture) { event.preventDefault(); selection.keyDown(); } return; }
       if (letterKey(event, 'L')) { if (interactive() && !gesture) { event.preventDefault(); selection.toggleLoop(); } return; }
@@ -457,6 +472,12 @@
       commentComposing = false; commentCompositionEnd = now();
       if (session) invoke(() => session.setCommentText(el.commentText.value));
     });
+    function saveNote() {
+      const draft = state.comments?.draft;
+      if (!session || !draft || commentComposing || now() - commentCompositionEnd < 50 || draft.kind === 'delete') return;
+      if (draft.status === 'unknown') return invoke(() => session.checkComment());
+      if (['editing', 'failed'].includes(draft.status)) return invoke(() => { session.setCommentText(el.commentText.value); return session.saveComment(); });
+    }
     on(el.commentText, 'keydown', event => {
       if (event.key !== 'Enter' && event.code !== 'Enter' && event.code !== 'NumpadEnter') return;
       const draft = state.comments?.draft;
@@ -466,7 +487,7 @@
       event.preventDefault();
       if (event.repeat) return;
       if (typeof event.stopPropagation === 'function') event.stopPropagation();
-      invoke(() => { session.setCommentText(el.commentText.value); return session.saveComment(); });
+      saveNote();
     });
     on(el.commentSave, 'click', () => { if (session) invoke(() => state.comments?.draft?.status === 'unknown' ? session.checkComment() : session.saveComment()); });
     on(el.commentCancel, 'click', () => { if (session) invoke(() => session.cancelComment()); });
@@ -563,9 +584,12 @@
         renderedInteractive = ready;
       }
       set(el.commentAdd, 'disabled', !ready || !value || value.status !== 'ready' || state.state === 'seeking');
+      set(el.commentDraftPreview, 'hidden', !draft || draft.kind === 'delete' || !draft.text?.trim());
+      set(el.commentDraftPreview, 'textContent', draft && draft.kind !== 'delete' ? formatTime(draft.time) + ' · 草稿\n' + (draft.text || '') : '');
+      set(el.commentEditorStatus, 'textContent', draft?.message || '');
       if (value === renderedComments) return;
       const previous = renderedComments; renderedComments = value;
-      set(el.commentStatus, 'textContent', draft?.message || value?.syncMessage || value?.message || (value?.status === 'ready' && !items.length ? '暂无标注' : ''));
+      set(el.commentStatus, 'textContent', draft?.message || value?.syncMessage || value?.message || (!draft && value?.status === 'ready' && !items.length ? '暂无标注' : ''));
       // Hiding a focused editor can synchronously move activeElement to body.
       const editorHadFocus = [el.commentText, el.commentSave, el.commentCancel].includes(doc.activeElement);
       set(el.commentEditor, 'hidden', !draft);
@@ -584,6 +608,8 @@
         el.commentChoice.value = ''; el.commentChoice.focus();
       }
       const editable = ['editing', 'failed'].includes(draft.status), deleting = draft.kind === 'delete';
+      set(el.commentSave, 'hidden', !deleting && draft.status !== 'unknown');
+      set(el.commentCancel, 'hidden', !deleting && !['unknown', 'obsolete', 'choosing'].includes(draft.status));
       set(el.commentTime, 'textContent', Number.isFinite(draft.time) ? (editable ? '固定时间 ' : '原保存时间 ') + formatTime(draft.time) : '正在固定画面…');
       set(el.commentText, 'disabled', draft.status === 'pausing'); set(el.commentText, 'readOnly', !editable && !commentComposing || deleting);
       if (!commentComposing || editorId !== draft.id) set(el.commentText, 'value', draft.text);
@@ -637,7 +663,7 @@
       const hideStrip = state.interactionSettings?.showCacheStrip === false;
       if (el.decodedCache.hidden !== hideStrip) { set(el.decodedCache, 'hidden', hideStrip); coverageKey = null; }
     }
-    drawingUI = drawingAPI.createDrawingUI({ document: doc, window: win, getSession: () => session, getState: () => state,
+    drawingUI = drawingAPI.createDrawingUI({ document: doc, window: win, getSession: () => session, getState: () => state, menuActive: () => !!contextUI?.active(),
       canBegin: () => shortcutReady() && !transportBusy && state.exportState?.status !== 'unknown', isKey: letterKey });
     let screenSelectionPoint = null;
     screenUI = screenGestureAPI.createScreenGestureUI({ document: doc, window: win, now,
@@ -646,7 +672,7 @@
         canStart: interactive() && !selection.snapshot().busy && !transportBusy, canRate: shortcutReady() || !!rateRequest, horizontalOnly: selection.snapshot().editing, width: el.screen.getBoundingClientRect().width,
         range: viewRange, time: state.playback?.time || 0, rate: state.playback?.transport?.rate || 1,
         step: state.interactionSettings?.rateStep || .1 }),
-      start: () => { const s = selection.snapshot(); screenSelectionPoint = s.editing ? selection.nextPoint() || s.active || (Math.abs((state.playback?.time || 0) - s.start.time) <= Math.abs((state.playback?.time || 0) - s.end.time) ? 'start' : 'end') : null; },
+      start: () => { const s = selection.snapshot(); screenSelectionPoint = s.editing ? (s.controlled ? s.active : selection.nextPoint() || s.active || (Math.abs((state.playback?.time || 0) - s.start.time) <= Math.abs((state.playback?.time || 0) - s.end.time) ? 'start' : 'end')) : null; },
       release: () => { screenSelectionPoint = null; },
       seek: (time, final) => { clearHint(); if (screenSelectionPoint && selection.snapshot().editing) selection.move(screenSelectionPoint, time, final, now()); else invoke(() => session.seek(time, { final, kind: final ? 'release' : 'rapid', inputAt: now() })); },
       rate: value => requestRate(value),
@@ -654,6 +680,10 @@
     contextUI = contextAPI.createContextWheel({ document: doc, window: win, screen: el.screen, now,
       getContext: () => {
         if (state.drawings?.draft) return { epoch: state.epoch, mode: 'drawing', ...drawingUI.menuState() };
+        if (state.comments?.draft) return { epoch: state.epoch, mode: 'note', enabled: !commentComposing && now() - commentCompositionEnd >= 50 && state.comments.draft.kind !== 'delete' && ['editing', 'failed', 'unknown'].includes(state.comments.draft.status), tap: 'save-note', items: [] };
+        if (selection.snapshot().editing) return { epoch: state.epoch, mode: 'selection', enabled: interactive() && !gesture && !selection.snapshot().busy,
+          tap: 'finish-selection', items: [{ id: 'unused-up', label: '', disabled: true }, { id: 'endpoint-end', label: '控制尾', symbol: '→' },
+            { id: 'unused-down', label: '', disabled: true }, { id: 'endpoint-start', label: '控制头', symbol: '←' }] };
         const loop = state.playback?.transport?.loop;
         return { epoch: state.epoch, mode: 'watch', enabled: interactive() && !gesture && !memoryBusy && !cleaning && !transportBusy && !selection.snapshot().busy,
           items: [{ id: 'note', label: '添加标注', symbol: 'N', disabled: !shortcutReady() || state.comments?.status !== 'ready' },
@@ -663,6 +693,9 @@
       },
       opening: () => { screenUI.reset(); },
       command: (id, value) => {
+        if (id === 'save-note') { saveNote(); return; }
+        if (id === 'finish-selection') { invoke(() => selection.finish()); return; }
+        if (id === 'endpoint-start' || id === 'endpoint-end') { invoke(() => selection.selectEndpoint(id === 'endpoint-start' ? 'start' : 'end')); return; }
         if (state.drawings?.draft) { invoke(() => drawingUI.menuCommand(id, value)); return; }
         if (id === 'selection') invoke(() => selection.begin('toggle'));
         else if (id === 'loop') invoke(() => selection.toggleLoop());

@@ -244,7 +244,7 @@ function createSession(options) {
     const interaction = interactionValue(wheelFrames === undefined ? previousInteraction.wheelFrames : wheelFrames,
       showCacheStrip === undefined ? previousInteraction.showCacheStrip : showCacheStrip,
       rateStep === undefined ? previousInteraction.rateStep : rateStep,
-      drawingFadeSeconds === undefined ? previousInteraction.drawingFadeSeconds : drawingFadeSeconds);
+      drawingFadeSeconds === undefined ? previousInteraction.drawingFadeSeconds : drawingFadeSeconds, previousInteraction.drawingToolbar);
     preferences.preview(ramMiB);
     if (closed || state === 'preparing' || comments.draft || drawings.snapshot().draft) throw issue('MEMORY_SETTINGS_BUSY', '请等待准备完成，并先保存或取消标注。');
     const token = epoch, retained = source;
@@ -271,6 +271,16 @@ function createSession(options) {
     return retained ? startLoad({ trigger, restoreTime: time, restoreFrameId: frameId, transportState }, retained) : { status: 'applied' };
   }
   function setMemoryMiB(ramMiB) { return setPlaybackSettings({ ramMiB }, 'memory-settings'); }
+  function setDrawingToolbar(visible) {
+    if (closed) return { status: 'ignored' };
+    if (typeof visible !== 'boolean') throw issue('SETTINGS_INVALID', '圈画工具条显示设置必须为开或关。');
+    const preferences = options.memoryPreferences;
+    if (!preferences || typeof preferences.interaction !== 'function') throw issue('SETTINGS_UNAVAILABLE', '当前入口没有工具条设置接口。');
+    const previous = preferences.interaction();
+    const interaction = interactionValue(previous.wheelFrames, previous.showCacheStrip, previous.rateStep, previous.drawingFadeSeconds, visible);
+    preferences.save(preferences.snapshot().ramMiB, preferences.quality(), preferences.forwardPredecode(), interaction);
+    notify(); return { status: 'saved' };
+  }
   function control(method, args, allowed) {
     if (drawings.snapshot().draft) return Promise.reject(issue('DRAWING_FRAME_FIXED', '圈画已固定当前帧，请先保存或取消。'));
     if (activeExport) return Promise.reject(issue('EXPORT_BUSY', '正在导出固定画面或片段，请等待完成或取消。'));
@@ -497,7 +507,7 @@ function createSession(options) {
   function saveComment() {
     const draft = comments.draft, token = epoch;
     if (!draft || !['editing', 'failed'].includes(draft.status)) return Promise.resolve({ status: 'ignored' });
-    if (draft.kind !== 'delete' && !draft.text.trim()) { commentChange({ draft: Object.freeze({ ...draft, message: '请填写标注文字。' }) }); return Promise.resolve({ status: 'failed' }); }
+    if (draft.kind !== 'delete' && !draft.text.trim()) return Promise.resolve(cancelComment());
     if (typeof eagleAdapter.saveComment !== 'function' || writes.size >= 32) {
       commentChange({ draft: Object.freeze({ ...draft, status: 'failed', message: '保存接口不可用或待核对记录已达上限，请先在Eagle核对。' }) });
       return Promise.resolve({ status: 'failed' });
@@ -755,7 +765,7 @@ function createSession(options) {
       const item = drawings.list(comments.items).find(value => value.id === id);
       return item && item.time <= duration ? control('seek', [item.time, { kind: 'annotation', index: item.drawingFrameOrdinal, final: true, inputAt: now() }], ['paused', 'playing', 'seeking']) : Promise.resolve({ status: 'ignored' });
     },
-    annotationHistory: () => Object.freeze(annotationReceipts.slice()), setMemoryMiB, setPlaybackSettings, clearOtherCaches,
+    annotationHistory: () => Object.freeze(annotationReceipts.slice()), setMemoryMiB, setPlaybackSettings, setDrawingToolbar, clearOtherCaches,
     beginExport, loadExportFolders, checkExport, cancelExport: () => { if (activeExport && !activeExport.issued) activeExport.controller.abort(); },
     libraryChanged: () => clear('library-changed'), close: () => clear('closed'), snapshot, memorySnapshot, cacheCoverageSnapshot });
 }

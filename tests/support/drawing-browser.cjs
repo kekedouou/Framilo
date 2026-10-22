@@ -5,12 +5,12 @@ const { spawn, spawnSync } = require('child_process');
 const { scratch } = require('./annotation-scratch.cjs');
 const root = path.resolve(__dirname, '../..');
 async function main() {
-  const e14Mode = process.argv.includes('--e14'), gestureMode = process.argv.includes('--gestures'), fixture = e14Mode ? 'e14-dom.js' : gestureMode ? 'gestures-dom.js' : 'drawing-dom.js';
+  const e16Mode = process.argv.includes('--e16'), e14Mode = process.argv.includes('--e14'), gestureMode = process.argv.includes('--gestures'), fixture = e16Mode ? 'e16-dom.js' : e14Mode ? 'e14-dom.js' : gestureMode ? 'gestures-dom.js' : 'drawing-dom.js';
   const syntax = spawnSync(process.execPath, ['--check', path.join(root, 'tests/browser', fixture)], {encoding:'utf8', windowsHide:true}); if (syntax.status !== 0) throw Error(syntax.stderr);
   const temp = scratch(gestureMode ? 'gesture-ui' : 'drawing-ui'), pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const files = new Map(['styles.css', 'player.js', 'loop-selection.js', 'timeline-view.js', 'drawing-erase.js', 'drawing-model.js', 'drawing-ui.js', 'screen-gestures.js', 'screen-gesture-ui.js', 'context-wheel.js', 'ui.js'].map(name => [name, fs.readFileSync(path.join(root, 'plugin', name))]));
   files.set('index.html', Buffer.from(fs.readFileSync(path.join(root, 'plugin/index.html'), 'utf8').replace('<script src="app.js"></script>', '<script src="fixture.js"></script>')));
-  files.set('fixture.js', Buffer.concat([Buffer.from(process.argv.includes('--watch-wheel') ? 'window.E14_WATCH_SCREENSHOT=true;\n' : process.argv.includes('--e15') ? 'window.E15_ERASER_CHECKS=true;\n' : ''), fs.readFileSync(path.join(root, 'tests/browser', fixture))]));
+  files.set('fixture.js', Buffer.concat([Buffer.from(process.argv.includes('--note-screenshot') ? 'window.E16_SCREENSHOT="note";\n' : process.argv.includes('--types-screenshot') ? 'window.E16_SCREENSHOT="types";\n' : process.argv.includes('--watch-wheel') ? 'window.E14_WATCH_SCREENSHOT=true;\n' : process.argv.includes('--e15') ? 'window.E15_ERASER_CHECKS=true;\n' : ''), fs.readFileSync(path.join(root, 'tests/browser', fixture))]));
   const server = http.createServer((req, res) => {
     const name = req.url === '/' ? 'index.html' : req.url.slice(1), body = files.get(name);
     if (!body) { res.writeHead(404).end(); return; }
@@ -57,8 +57,8 @@ async function main() {
     console.log('drawing-browser-checks ' + JSON.stringify({ browser: version, result, pageErrors, scope: 'Native Chromium DOM/SVG with Session model; no real Eagle/media/library writes.' }));
     const screenshot = process.argv.slice(2).find(s => /^[a-z0-9-]+\.png$/.test(s));
     if (screenshot) {
-      const folder = path.join(root, 'verification-runs', process.argv.includes('--e15-evidence') ? 'e15-eraser' : e14Mode || process.argv.includes('--e14-evidence') ? 'e14-interactions' : process.argv.includes('--e13') ? 'e13-experience' : gestureMode ? 'e12-gestures' : 'e11-annotations'), owner = JSON.parse(fs.readFileSync(path.join(folder, 'owner.json')));
-      assert.equal(owner.owner, process.argv.includes('--e15-evidence') ? 'eva-e15-eraser-v1' : e14Mode || process.argv.includes('--e14-evidence') ? 'eva-e14-interactions-v1' : process.argv.includes('--e13') ? 'eva-e13-experience' : gestureMode ? 'eva-e12-gestures' : 'eva-e11-annotations');
+      const folder = path.join(root, 'verification-runs', e16Mode || process.argv.includes('--e16-evidence') ? 'e16-context' : process.argv.includes('--e15-evidence') ? 'e15-eraser' : e14Mode || process.argv.includes('--e14-evidence') ? 'e14-interactions' : process.argv.includes('--e13') ? 'e13-experience' : gestureMode ? 'e12-gestures' : 'e11-annotations'), owner = JSON.parse(fs.readFileSync(path.join(folder, 'owner.json')));
+      assert.equal(owner.owner, e16Mode || process.argv.includes('--e16-evidence') ? 'eva-e16-context-v1' : process.argv.includes('--e15-evidence') ? 'eva-e15-eraser-v1' : e14Mode || process.argv.includes('--e14-evidence') ? 'eva-e14-interactions-v1' : process.argv.includes('--e13') ? 'eva-e13-experience' : gestureMode ? 'eva-e12-gestures' : 'eva-e11-annotations');
       const data = Buffer.from((await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId)).data, 'base64');
       const names = fs.readdirSync(folder), size = names.reduce((n, name) => n + fs.statSync(path.join(folder, name)).size, 0);
       assert(data.length <= owner.maxFileBytes && names.length < owner.maxFiles && size + data.length <= owner.maxBytes);

@@ -100,7 +100,7 @@ async function main() {
     const applies = h.calls.filter(c => c[0] === 'apply').length;
     h.win.fire('pointerup', { clientX: 850 }); await flush(); assert.equal(h.calls.filter(c => c[0] === 'apply').length, applies); h.ui.destroy();
   });
-  await test('No-change hold and Esc restore the old zoom/range, keep paused, and never apply', async () => {
+  await test('Unchanged or returned endpoints confirm and loop; Esc alone restores paused range', async () => {
     for (const mode of ['unchanged', 'escape', 'returned']) {
       const h = harness(true), old = { ...h.state.playback.transport.loop };
       h.key('R'); h.hold(); await flush();
@@ -111,8 +111,8 @@ async function main() {
       }
       if (mode === 'escape') h.key('Escape');
       h.up('R'); await flush();
-      assert.deepStrictEqual(h.state.playback.transport.loop, old); assert.equal(h.state.state, 'paused');
-      assert.equal(h.el('timeline').attributes['data-view'], 'loop'); assert(!h.calls.some(c => c[0] === 'apply')); h.ui.destroy();
+      assert.deepStrictEqual(h.state.playback.transport.loop, old); assert.equal(h.state.state, mode === 'escape' ? 'paused' : 'playing');
+      assert.equal(h.el('timeline').attributes['data-view'], 'loop'); assert.equal(h.calls.some(c => c[0] === 'apply'), mode !== 'escape'); h.ui.destroy();
     }
   });
   await test('Coverage, thumb, hint, markers and pointer share absolute focused time without rebuilding notes', async () => {
