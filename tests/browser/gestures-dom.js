@@ -69,6 +69,28 @@
     pointer('pointerdown',400,220);await sleep(460);pointer('pointermove',400,200);await settle();
     check(el('screenRateHint').getAttribute('data-placement')==='center','Rate changes after a stationary hold appear in the wheel center');pointer('pointerup',400,200);
 
+    // Each seek publishes through the actual UI. A stale speed-hint epoch used
+    // to cancel the new gesture on its first seek, until another speed change.
+    for(const kind of ['keyboard','vertical'])for(const expired of [false,true]){
+      if(kind==='keyboard')key('c');else{pointer('pointerdown',400,300);pointer('pointermove',400,280);await settle();pointer('pointerup',400,280);}
+      await settle();if(expired)await sleep(850);
+      state.epoch++;state.state='paused';state.playback={...state.playback,time:5};publish();
+      check(el('screenRateHint').getAttribute('data-open')==='false',kind+' speed feedback is retired on source switch (expired='+expired+')');
+      const baseline=seeks.length,rateCount=rates.length,w=el('screen').getBoundingClientRect().width;
+      pointer('pointerdown',300,260);pointer('pointermove',340,260);await settle();
+      pointer('pointermove',420,260);await settle();
+      check(seeks.length===baseline+2&&Math.abs(state.playback.time-5-120/w*10)<.0001,kind+' hint cannot interrupt successive seek/UI refreshes after switching (expired='+expired+')');
+      pointer('pointermove',320,260);await settle();
+      check(Math.abs(state.playback.time-5-20/w*10)<.0001,'Reverse movement continues in the same new-video drag ('+kind+', expired='+expired+')');
+      pointer('pointerup',360,260);await settle();
+      check(seeks.at(-1).final&&Math.abs(state.playback.time-5-60/w*10)<.0001&&rates.length===rateCount,'Release settles the latest position without a speed-change workaround ('+kind+', expired='+expired+')');
+    }
+    for(let source=0;source<3;source++){
+      state.epoch++;state.playback={...state.playback,time:5};publish();const baseline=seeks.length;
+      pointer('pointerdown',300,260);pointer('pointermove',330,260);await settle();pointer('pointermove',390,260);await settle();pointer('pointerup',410,260);await settle();
+      check(seeks.length===baseline+3&&seeks.at(-1).final,'Repeated source switch '+(source+1)+' needs no rate adjustment to restore dragging');
+    }
+
     ui.destroy();const destroyedCount=seeks.length+rates.length;pointer('pointerdown',400,220);pointer('pointermove',500,140);pointer('pointerup',500,140);await settle();
     check(destroyedCount===seeks.length+rates.length,'Destroy removes gesture listeners and timers');
     ui=EVAUI.createUI();ui.bindSession(session);publish();pointer('pointerdown',400,220);await sleep(460);pointer('pointermove',400,200);await settle();await sleep(160);

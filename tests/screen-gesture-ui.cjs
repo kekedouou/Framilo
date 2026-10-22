@@ -1,7 +1,7 @@
 'use strict';
 // Real gesture input controller with owned timer/capture models; no DOM or Eagle.
 const assert=require('assert'),{createScreenGestureUI}=require('../plugin/screen-gesture-ui.js');
-function harness(){
+function harness({refreshAfterSeek=false}={}){
   const timers=new Map(),frames=new Map(),captures=new Set(),calls=[],nodes=new Map();let serial=0,time=0,ctx={epoch:1,enabled:true,canStart:true,width:1000,range:{start:0,end:10},time:2,rate:1,step:.1};
   function node(id){const handlers=new Map();return{id,style:{},attributes:{},textContent:'',focus(){},closest(){return null;},
     addEventListener(t,f){if(!handlers.has(t))handlers.set(t,[]);handlers.get(t).push(f);},removeEventListener(t,f){handlers.set(t,(handlers.get(t)||[]).filter(n=>n!==f));},
@@ -14,7 +14,7 @@ function harness(){
   win.clearTimeout=function(id){assert.strictEqual(this,win);timers.delete(id);};
   win.requestAnimationFrame=function(fn){assert.strictEqual(this,win);const id=++serial;frames.set(id,fn);return id;};
   win.cancelAnimationFrame=function(id){assert.strictEqual(this,win);frames.delete(id);};
-  const api=createScreenGestureUI({document:doc,window:win,getContext:()=>ctx,now:()=>time,seek:(v,final)=>calls.push({seek:v,final}),rate:v=>calls.push({rate:v}),toggle:()=>calls.push({toggle:true})});
+  const api=createScreenGestureUI({document:doc,window:win,getContext:()=>ctx,now:()=>time,seek:(v,final)=>{calls.push({seek:v,final});if(refreshAfterSeek){ctx.time=v;api.update();}},rate:v=>calls.push({rate:v}),toggle:()=>calls.push({toggle:true})});
   const screen=doc.getElementById('screen');return{api,win,doc,screen,calls,captures,timers,frames,ctx,
     move(x,y,more={}){time+=20;win.emit('pointermove',{clientX:x,clientY:y,...more});},
     down(){screen.emit('pointerdown',{target:screen});},flush(){for(const[id,fn]of [...frames]){frames.delete(id);fn();}},
@@ -48,7 +48,34 @@ test('Destroy removes all listeners, animation callbacks, timers and pointer cap
 });
 test('Click toggles exactly once, but hold, drag, cancel, blur, blocked input and lost buttons do not',()=>{const h=harness();h.down();h.win.emit('pointerup',{buttons:0});assert.equal(h.calls.filter(c=>c.toggle).length,1);h.down();h.hold();h.win.emit('pointerup',{buttons:0});h.down();h.win.emit('blur');h.down();h.win.emit('pointercancel');h.down();h.move(100,100,{buttons:0});h.down();h.move(200,100);h.win.emit('pointerup',{clientX:200,buttons:0});assert.equal(h.calls.filter(c=>c.toggle).length,1);h.api.destroy();});
 test('Speed feedback belongs to keyboard, flick direction or sustained/held center',()=>{const h=harness(),hint=h.doc.getElementById('screenRateHint');h.api.hint(1.2);assert.equal(hint.attributes['data-placement'],'keyboard');h.down();h.move(100,80);assert.equal(hint.attributes['data-placement'],'up');h.hold();h.move(100,20);assert.equal(hint.attributes['data-placement'],'center');h.win.emit('pointerup',{clientY:20});h.down();h.hold();h.move(100,130);assert.equal(hint.attributes['data-placement'],'center');h.api.destroy();});
-test('A completed keyboard hint cannot leak into a new video',()=>{const h=harness(),hint=h.doc.getElementById('screenRateHint');h.api.hint(2);h.ctx.epoch++;h.api.update();assert.equal(hint.attributes['data-open'],'false');h.api.destroy();});
+test('A completed keyboard hint cannot interrupt dragging after source changes and seek-driven UI updates',()=>{
+  for(const expired of [false,true]){
+    const h=harness({refreshAfterSeek:true}),hint=h.doc.getElementById('screenRateHint');h.api.hint(2);if(expired)h.hold();
+    for(let source=0;source<3;source++){
+      h.ctx.epoch++;h.ctx.time=2;h.api.update();assert.equal(hint.attributes['data-open'],'false');
+      h.down();for(const [x,time]of [[120,2.2],[180,2.8],[60,1.6]]){
+        h.move(x,100);h.flush();assert(h.api.active(),'A seek/UI refresh must keep the new source drag active');assert(h.captures.has(1));assert(Math.abs(h.calls.at(-1).seek-time)<1e-9);
+      }
+      h.win.emit('pointerup',{clientX:160,buttons:0});assert(h.calls.at(-1).final);assert(Math.abs(h.calls.at(-1).seek-2.6)<1e-9);assert(!h.api.active());assert(!h.captures.size);
+    }h.api.destroy();assert(!h.timers.size);
+  }
+});
+
+test('Vertical speed feedback cannot poison the next video horizontal gesture',()=>{
+  for(const expired of [false,true]){
+    const h=harness({refreshAfterSeek:true});h.down();h.move(100,70);h.win.emit('pointerup',{clientY:70,buttons:0});assert(h.calls.some(c=>c.rate));if(expired)h.hold();
+    h.ctx.epoch++;h.api.update();h.down();h.move(160,100);h.flush();assert(h.api.active());h.move(220,100);h.flush();assert(Math.abs(h.calls.at(-1).seek-3.2)<1e-9);h.win.emit('pointerup',{clientX:240,buttons:0});assert(h.calls.at(-1).final);h.api.destroy();
+  }
+});
+
+test('Reset retires old speed feedback before another source starts a new drag',()=>{
+  const h=harness({refreshAfterSeek:true});h.api.hint(2);h.api.reset();assert(!h.timers.size);h.ctx.epoch++;h.down();h.move(180,100);h.flush();assert(h.api.active());h.api.destroy();
+});
+
+test('Changing the source during a speed hint discards old queued seeks and permits a fresh drag',()=>{
+  const h=harness({refreshAfterSeek:true});h.api.hint(2);h.down();h.move(200,100);h.ctx.epoch++;h.api.update();h.flush();assert(!h.calls.length);assert(!h.captures.size);
+  h.down();h.move(220,100);h.flush();assert(h.api.active());assert.equal(h.calls.length,1);h.api.destroy();
+});
 test('A new same-mouse down recovers a lost-up press immediately instead of waiting for idle motion',()=>{const h=harness();h.down();h.move(180,100);h.down();h.move(260,100);h.win.emit('pointerup',{clientX:260,buttons:0});assert(h.calls.at(-1).final);assert(!h.api.active());assert(!h.captures.size);h.api.destroy();});
 test('A pending locate may accept horizontal replacement without falsely displaying an unapplied speed',()=>{const h=harness();h.ctx.canRate=false;h.down();h.move(100,40);assert(!h.calls.length);assert.notEqual(h.doc.getElementById('screenRateHint').attributes['data-open'],'true');h.api.destroy();});
 console.log('Screen gesture controller: '+count+' ownership/cancellation checks; not real Eagle.');

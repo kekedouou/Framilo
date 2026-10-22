@@ -29,6 +29,10 @@
       ring.setAttribute('data-direction',direction||'');ring.setAttribute('data-held',String(value.held));
       ring.setAttribute('data-selection',String(value.horizontalOnly));
     }
+    function hideHint(){
+      if(hideTimer!==null)clear(hideTimer);
+      hideTimer=null;hintEpoch=null;toast.setAttribute('data-open','false');
+    }
     function hint(value,placement='keyboard') {
       hintEpoch=getContext().epoch;toast.textContent=Number(value.toFixed(3))+'×';toast.setAttribute('data-placement',placement);
       if(placement==='keyboard'){toast.style.left='18px';toast.style.top='16px';}
@@ -36,7 +40,7 @@
         toast.style.left=Math.max(45,Math.min(r.width-45,(parseFloat(ring.style.left)||origin.x-r.left)))+'px';
         toast.style.top=Math.max(24,Math.min(r.height-24,(parseFloat(ring.style.top)||origin.y-r.top)+offset))+'px';}
       toast.setAttribute('data-open','true');if(hideTimer!==null)clear(hideTimer);
-      hideTimer=later(()=>{hideTimer=null;toast.setAttribute('data-open','false');},800);
+      hideTimer=later(hideHint,800);
     }
     function apply(action){
       if(!action)return;
@@ -58,7 +62,7 @@
       if(machine.snapshot()?.id===e.pointerId)release();
       if(!machine.down(event(e),context))return;
       start();
-      toast.setAttribute('data-open','false');
+      hideHint();
       e.preventDefault();screen.tabIndex=-1;screen.focus?.({preventScroll:true});epoch=context.epoch;origin={x:e.clientX,y:e.clientY};
       try{screen.setPointerCapture?.(e.pointerId);}catch(_){}
       holdTimer=later(()=>{holdTimer=null;if(machine.hold())show();},420);
@@ -85,9 +89,9 @@
     on(win,'blur',()=>end());
     on(win,'keydown',e=>{if(machine.snapshot()&&e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation?.();end();}},true);
     on(screen,'wheel',e=>{if(machine.snapshot())e.preventDefault();},{capture:true,passive:false});
-    function reset(){release();if(hideTimer!==null)clear(hideTimer);hideTimer=null;toast.setAttribute('data-open','false');}
+    function reset(){release();hideHint();}
     return {hint,finish:()=>end(),active:()=>!!machine.snapshot(),update(){if(machine.snapshot()&&(!getContext().enabled||getContext().epoch!==epoch||machine.snapshot().horizontalOnly!==!!getContext().horizontalOnly)||hintEpoch!==null&&getContext().epoch!==hintEpoch)reset();},
-      reset,destroy(){destroyed=true;release();if(hideTimer!==null)clear(hideTimer);listeners.forEach(([n,t,f,o])=>n.removeEventListener(t,f,o));toast.setAttribute('data-open','false');}};
+      reset,destroy(){destroyed=true;release();hideHint();listeners.forEach(([n,t,f,o])=>n.removeEventListener(t,f,o));}};
   }
   return {createScreenGestureUI};
 });
