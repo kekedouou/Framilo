@@ -14,7 +14,7 @@
   const validRate = rate => Number.isFinite(rate) && rate >= .1 && rate <= 4;
   function steppedRate(rate, direction, step = .1) {
     if (!validRate(rate) || ![-1, 0, 1].includes(direction) || !RATE_STEPS.includes(step)) throw new Error('播放速度或调整步长无效。');
-    return Math.max(10, Math.min(400, Math.round(rate * 100) + direction * Math.round(step * 100))) / 100;
+    return Math.max(100, Math.min(4000, Math.round(rate * 1000) + direction * Math.round(step * 1000))) / 1000;
   }
   function preparationWindow(frames, center, capacity) {
     const count = Math.max(1, Math.min(frames.length, capacity)), order = [center], time = frames[center].time;

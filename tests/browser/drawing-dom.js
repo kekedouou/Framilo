@@ -10,7 +10,7 @@
   let ui, serial = 0, stored = [], failSave = false, changes = 0, seeks = 0, steps = 0, prepares = 0, savedPreferences = null;
   const publish = () => { changes++; ui.update({ ...state, drawings: { ...state.drawings } }); };
   const session = {
-    async beginDrawing(id) { state.state = 'paused'; const objects = id ? copy(stored) : []; state.drawings.draft = { id: ++serial, status: 'editing', frameId: 20, frameOrdinal: 20, time: 2, objects, original: JSON.stringify(objects), dirty: false }; publish(); return { status: 'editing' }; },
+    async beginDrawing(id) { state.state = 'paused'; const objects = copy(stored); state.drawings.draft = { id: ++serial, status: 'editing', frameId: 20, frameOrdinal: 20, time: 2, objects, original: JSON.stringify(objects), dirty: false }; publish(); return { status: 'editing' }; },
     setDrawingObjects(objects) { EVADrawingModel.validate(objects); state.drawings.draft = { ...state.drawings.draft, objects: copy(objects), dirty: JSON.stringify(objects) !== state.drawings.draft.original }; publish(); },
     touchDrawing() { state.drawings.draft = { ...state.drawings.draft, dirty: true }; publish(); },
     saveDrawing() { if (failSave) { state.drawings.draft = { ...state.drawings.draft, status: 'failed', message: '模拟空间不足' }; publish(); return { status: 'failed' }; }
@@ -109,12 +109,46 @@
     check(!el('drawingExit').hidden && state.drawings.draft && el('drawingExitMessage').textContent.includes('不足'), 'Failed save retains editor and explains the failure');
     failSave = false; el('drawingExitDiscard').click(); check(await closing, 'Explicit discard releases the pending close intent');
     check(!state.drawings.draft && el('drawingLayer').hidden && !state.drawings.visible, 'Exit restores the original hidden preference');
-    state.playback = { ...state.playback, frameId: 21, frameOrdinal: 21 }; session.setDrawingsVisible(true); check(el('drawingLayer').hidden, 'Leaving the exact source frame hides its drawing');
-    state.playback = { ...state.playback, frameId: 20, frameOrdinal: 20 }; publish(); check(!el('drawingLayer').hidden, 'Returning to the same source frame restores the drawing');
+    state.playback = { ...state.playback, frameId: 21, frameOrdinal: 21, time: 2.3 }; session.setDrawingsVisible(true); check(el('drawingLayer').hidden, 'Leaving the uniform fade window hides its drawing');
+    state.playback = { ...state.playback, frameId: 20, frameOrdinal: 20, time: 2 }; publish(); check(!el('drawingLayer').hidden, 'Returning to the same source frame restores the drawing');
     ui.destroy(); const beforeDestroy = changes; background(); key('d'); key('h'); check(changes === beforeDestroy, 'Destroy removes drawing keyboard listeners');
     ui = EVAUI.createUI(); ui.bindSession(session); publish(); background(); key('d'); await delay(); tool('pen');
     check(Number(el('drawingWidth').value) === .015 && el('drawingColor').value === '#ff5252', 'Recreated UI loads persisted tool preferences');
     stroke('rect', [.12, .2], [.48, .5]); stroke('arrow', [.55, .25], [.78, .4]); stroke('text', [.17, .65]); input('精简标注工具'); tool('text');
+
+    // E-11 additions exercise actual SVG masks and input, not a canvas stand-in.
+    stored=[]; state.drawings.records=[]; state.drawings.draft=null; publish(); background(); key('d'); await delay();
+    stroke('rect',[.2,.2],[.8,.8]); stroke('text',[.25,.3]); input('局部擦除'); tool('rect');
+    const eraseCount=objects().length; tool('eraser');
+    const sizeBefore=Number(el('drawingWidth').value);
+    el('screen').dispatchEvent(new WheelEvent('wheel',{deltaY:-100,bubbles:true,cancelable:true}));
+    check(Number(el('drawingWidth').value)>sizeBefore,'Eraser wheel changes its radius without stepping the video');
+    pointer(el('drawingLayer'),'pointerdown',[.1,.31]); pointer(window,'pointermove',[.9,.31]); pointer(window,'pointerup',[.9,.31]);
+    check(objects().length===eraseCount&&objects().every(o=>o.erasures?.length===1),'One continuous eraser stroke locally cuts both text and shape without deleting either object');
+    check(el('drawingLayer').querySelectorAll('mask').length===2,'Every cut object renders through its own SVG mask');
+    const maskImage=new Image(),svg=el('drawingLayer').cloneNode(true);
+    svg.removeAttribute('hidden');svg.style='';svg.setAttribute('width','1280');svg.setAttribute('height','720');
+    maskImage.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(new XMLSerializer().serializeToString(svg));await maskImage.decode();
+    const canvas=document.createElement('canvas');canvas.width=1280;canvas.height=720;const ctx=canvas.getContext('2d');ctx.drawImage(maskImage,0,0);
+    check(ctx.getImageData(256,223,1,1).data[3]===0&&ctx.getImageData(640,144,1,1).data[3]>0,'Native SVG rasterization confirms an actual transparent hole while untouched stroke pixels remain');
+    background();key('z',{ctrlKey:true});check(objects().every(o=>!o.erasures),'One Ctrl+Z restores the entire continuous eraser stroke');
+    tool('text');const fontBefore=Number(el('drawingSize').value);el('screen').dispatchEvent(new WheelEvent('wheel',{deltaY:-1,bubbles:true,cancelable:true}));
+    check(Number(el('drawingSize').value)>fontBefore,'Text tool wheel adjusts font size without a video seek');
+    background();key('d');await delay();check(!state.drawings.draft&&stored.length===eraseCount,'Pressing D again saves and exits the current group');
+    state.drawings.records=[{id:'old',frameId:20,frameOrdinal:20,time:2,objects:copy(stored)},{id:'new',frameId:21,frameOrdinal:21,time:2.2,objects:copy(stored)}];
+    state.playback={...state.playback,time:1.8};publish();
+    const oldNode=el('drawingLayer').querySelector('[data-drawing-group="old"]');
+    check(oldNode&&Math.abs(Number(oldNode.getAttribute('opacity'))-.2)<.001,'Annotation fades in according to video time before its own frame');
+    state.playback={...state.playback,time:2.05};publish();
+    let layers=[...el('drawingLayer').querySelectorAll('[data-drawing-group]')];
+    check(layers.length===2&&layers.at(-1).getAttribute('data-drawing-group')==='new','Overlapping groups remain visible and the newly appearing group is above the older one');
+    state.playback={...state.playback,time:2.1};publish();check(el('drawingLayer').querySelector('[data-drawing-group="old"]')===layers[0],'Opacity updates reuse existing SVG nodes rather than rebuilding every video frame');
+    state.playback={...state.playback,time:2.4};publish();state.playback={...state.playback,time:2.1};publish();
+    layers=[...el('drawingLayer').querySelectorAll('[data-drawing-group]')];
+    check(layers.at(-1).getAttribute('data-drawing-group')==='old','Reverse observation also puts a newly appearing group above groups already visible');
+    state.playback={...state.playback,time:3};publish();check(el('drawingLayer').hidden,'Groups disappear completely outside their uniform fade windows');
+    state.playback={...state.playback,time:2};publish();background();key('d');await delay();
+
     window.EVAUXProof = { checks: results, state, session, ui };
     const out = document.createElement('pre'); out.id = 'drawing-results'; out.hidden = true; out.textContent = JSON.stringify({ passed: true, checks: results }); document.body.appendChild(out);
   } catch (error) {

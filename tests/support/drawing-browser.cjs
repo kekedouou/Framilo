@@ -1,14 +1,16 @@
 'use strict';
 // Optional native DOM check. Never launched by the default model-only checks.
 const fs = require('fs'), path = require('path'), http = require('http'), assert = require('assert');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { scratch } = require('./annotation-scratch.cjs');
 const root = path.resolve(__dirname, '../..');
 async function main() {
-  const temp = scratch('drawing-ui'), pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-  const files = new Map(['styles.css', 'player.js', 'loop-selection.js', 'timeline-view.js', 'drawing-model.js', 'drawing-ui.js', 'ui.js'].map(name => [name, fs.readFileSync(path.join(root, 'plugin', name))]));
+  const gestureMode = process.argv.includes('--gestures'), fixture = gestureMode ? 'gestures-dom.js' : 'drawing-dom.js';
+  const syntax = spawnSync(process.execPath, ['--check', path.join(root, 'tests/browser', fixture)], {encoding:'utf8', windowsHide:true}); if (syntax.status !== 0) throw Error(syntax.stderr);
+  const temp = scratch(gestureMode ? 'gesture-ui' : 'drawing-ui'), pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const files = new Map(['styles.css', 'player.js', 'loop-selection.js', 'timeline-view.js', 'drawing-model.js', 'drawing-ui.js', 'screen-gestures.js', 'screen-gesture-ui.js', 'ui.js'].map(name => [name, fs.readFileSync(path.join(root, 'plugin', name))]));
   files.set('index.html', Buffer.from(fs.readFileSync(path.join(root, 'plugin/index.html'), 'utf8').replace('<script src="app.js"></script>', '<script src="fixture.js"></script>')));
-  files.set('fixture.js', fs.readFileSync(path.join(root, 'tests/browser/drawing-dom.js')));
+  files.set('fixture.js', fs.readFileSync(path.join(root, 'tests/browser', fixture)));
   const server = http.createServer((req, res) => {
     const name = req.url === '/' ? 'index.html' : req.url.slice(1), body = files.get(name);
     if (!body) { res.writeHead(404).end(); return; }
@@ -47,20 +49,21 @@ async function main() {
     await call('Page.navigate', { url: 'http://127.0.0.1:' + server.address().port }, sessionId);
     let result;
     while (!result) {
+      if (pageErrors.length) throw Error('Native page error: ' + JSON.stringify(pageErrors));
       if (Date.now() - start > 25000) throw Error('Native drawing check timed out: ' + JSON.stringify(pageErrors));
       const text = await evaluate('document.getElementById("drawing-results")?.textContent');
       if (text) result = JSON.parse(text); else await pause(50);
     }
     console.log('drawing-browser-checks ' + JSON.stringify({ browser: version, result, pageErrors, scope: 'Native Chromium DOM/SVG with Session model; no real Eagle/media/library writes.' }));
-    if (process.argv[2]) {
-      assert(/^[a-z0-9-]+\.png$/.test(process.argv[2]));
-      const folder = path.join(root, 'verification-runs/e10-interaction'), owner = JSON.parse(fs.readFileSync(path.join(folder, 'owner.json')));
-      assert.equal(owner.owner, 'eva-e10-interaction');
+    const screenshot = process.argv.slice(2).find(s => /^[a-z0-9-]+\.png$/.test(s));
+    if (screenshot) {
+      const folder = path.join(root, 'verification-runs', gestureMode ? 'e12-gestures' : 'e11-annotations'), owner = JSON.parse(fs.readFileSync(path.join(folder, 'owner.json')));
+      assert.equal(owner.owner, gestureMode ? 'eva-e12-gestures' : 'eva-e11-annotations');
       const data = Buffer.from((await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId)).data, 'base64');
       const names = fs.readdirSync(folder), size = names.reduce((n, name) => n + fs.statSync(path.join(folder, name)).size, 0);
       assert(data.length <= owner.maxFileBytes && names.length < owner.maxFiles && size + data.length <= owner.maxBytes);
-      fs.writeFileSync(path.join(folder, process.argv[2]), data, { flag: 'wx' });
-      console.log('Drawing UI screenshot saved: ' + process.argv[2] + ' ' + data.length + ' bytes');
+      fs.writeFileSync(path.join(folder, screenshot), data, { flag: 'wx' });
+      console.log('Drawing UI screenshot saved: ' + screenshot + ' ' + data.length + ' bytes');
     }
     assert(result.passed, result.error); assert.equal(pageErrors.length, 0);
   } finally {

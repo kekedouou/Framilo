@@ -136,7 +136,7 @@ function createSession(options) {
       if (request.previewQuality !== undefined && (!info.preview || info.preview.quality !== request.previewQuality))
         throw issue('PREVIEW_QUALITY_MISMATCH', '准备结果的画质与本次选择不一致。');
       source = Object.freeze({ ...selected, sha256: info.source.sha256 }); duration = info.duration;
-      drawings.open({ libraryPath: request.drawingLibrary || comments.libraryPath, itemId: source.id, sourceSha256: source.sha256 });
+      drawings.open({ libraryPath: request.drawingLibrary || comments.libraryPath, itemId: source.id, sourceSha256: source.sha256, frames: info.frames, duration: info.duration });
       progress = { stage: 'player-initialize', message: '正在初始化画面与声音' }; notify();
       if (!current(request)) { await releaseOwner(owned); return { status: 'superseded' }; }
       const player = createPlayer({ experimentMode: 'compressed-ram',
@@ -407,29 +407,55 @@ function createSession(options) {
     else comments = Object.freeze({ ...comments, draft: result && result.status === 'failed'
       ? Object.freeze({ ...record.draft, status: 'obsolete', message: '原提案未发送，视频已切换。文字已保留，请复制后取消，再固定新画面。' }) : record.draft });
   }
-  async function beginComment() {
+
+  const drawingModel = require('./drawing-model.js');
+  function frameBounds(owned, ordinal) {
+    return { start: owned.info.frames[ordinal].time, end: owned.info.frames[ordinal + 1]?.time ?? owned.info.duration, final: ordinal === owned.info.frames.length - 1 };
+  }
+  async function freshNative(owned, token) {
+    if (typeof eagleAdapter.readComments !== 'function') throw issue('COMMENTS_API_UNAVAILABLE', '无法核对Eagle文字标注，未发送新标注。');
+    commentWriteRevision++;
+    const data = await eagleAdapter.readComments(source, { libraryPath: comments.libraryPath });
+    if (closed || token !== epoch || owner !== owned) throw issue('COMMENT_SUPERSEDED', '素材已经切换，未继续保存。');
+    commentChange({ items: data.items, libraryPath: data.libraryPath, status: 'ready' }); return data.items;
+  }
+
+  async function beginComment(preferredId = null) {
     if (activeExport || drawings.snapshot().draft) return { status: 'ignored' };
     const owned = owner, token = epoch;
-    if (closed || !owned || !owned.ready || comments.status !== 'ready' || comments.draft || !['paused', 'playing'].includes(state))
-      return { status: 'ignored' };
+    if (closed || !owned?.ready || comments.status !== 'ready' || comments.draft || !['paused', 'playing'].includes(state)) return { status: 'ignored' };
     let draft = Object.freeze({ id: ++draftSequence, status: 'pausing', source, libraryPath: comments.libraryPath,
       libraryEpoch, frameId: null, time: null, text: '', message: '正在固定画面…', attempt: null });
     commentChange({ draft });
     try {
       await owned.player.pause();
       if (!liveDraft(draft.id, token)) return { status: 'superseded' };
-      if (comments.draft.status === 'obsolete') return { status: 'obsolete' };
-      const actual = owned.player.snapshot();
-      const frame = owned.info.frames[actual.frameOrdinal];
-      if (actual.state !== 'paused' || actual.pendingTargets > 0 || !Number.isSafeInteger(actual.frameId) || !Number.isFinite(actual.time) ||
-        !frame || !Number.isFinite(frame.time) || frame.id !== actual.frameId || Math.abs(frame.time - actual.time) > .000001)
+      const actual = owned.player.snapshot(), frame = owned.info.frames[actual.frameOrdinal];
+      if (actual.state !== 'paused' || actual.pendingTargets > 0 || !frame || frame.id !== actual.frameId || frame.time !== actual.time)
         throw issue('COMMENT_FRAME_NOT_READY', '画面尚未定位完成，请完成定位后再添加标注。');
-      draft = Object.freeze({ ...draft, frameId: actual.frameId, time: actual.time, status: 'editing', message: '' });
-      commentChange({ draft }); return { status: 'editing', draft };
+      const items = await freshNative(owned, token);
+      if (!liveDraft(draft.id, token)) return { status: 'superseded' };
+      const choices = drawingModel.nativeAtFrame(items, owned.info.frames, actual.frameOrdinal, owned.info.duration);
+      const selected = choices.find(n => n.id === preferredId) || (choices.length === 1 ? choices[0] : null);
+      if (selected) {
+        draft = Object.freeze({ ...draft, kind: 'edit', frameId: actual.frameId, time: selected.time, text: selected.text,
+          original: Object.freeze({ ...selected }), status: 'editing', message: '修改当前帧已有文字，保留原时间。' });
+      } else if (choices.length > 1) draft = Object.freeze({ ...draft, kind: 'choose', frameId: actual.frameId, time: actual.time,
+        choices, status: 'choosing', message: '这一帧已有多条文字，请选择要修改的一条。' });
+      else draft = Object.freeze({ ...draft, frameId: actual.frameId, time: actual.time, frameBounds: frameBounds(owned, actual.frameOrdinal), status: 'editing', message: '' });
+      commentChange({ draft }); return { status: draft.status, draft };
     } catch (failure) {
       if (liveDraft(draft.id, token)) commentChange({ draft: null, message: failure.message });
       return { status: 'failed', message: failure.message };
     }
+  }
+  function chooseComment(id) {
+    const d = comments.draft;
+    if (!d || d.status !== 'choosing') return { status: 'ignored' };
+    const item = d.choices.find(n => n.id === id); if (!item) return { status: 'ignored' };
+    commentChange({ draft: Object.freeze({ ...d, kind: 'edit', status: 'editing', time: item.time, text: item.text,
+      original: Object.freeze({ ...item }), message: '修改选中的文字，其余同帧文字保持原样。' }) });
+    return { status: 'editing' };
   }
   async function beginCommentMutation(id, kind) {
     if (activeExport || drawings.snapshot().draft) return { status: 'ignored' };
@@ -445,7 +471,7 @@ function createSession(options) {
       if (!liveDraft(draft.id, token)) return { status: 'superseded' };
       if (comments.draft.status === 'obsolete') return { status: 'obsolete' };
       commentChange({ draft: Object.freeze({ ...draft, status: 'editing', message: kind === 'delete'
-        ? '确认删除下面这条标注？此操作会从Eagle资料库删除。' : '修改文字，原标注时间保持不变。' }) });
+        ? '确认从Eagle删除这条文字？本帧共享圈画会保留。' : '修改文字，原标注时间保持不变。' }) });
       return { status: 'editing' };
     } catch (failure) {
       if (liveDraft(draft.id, token)) commentChange({ draft: null, message: failure.message });
@@ -463,7 +489,7 @@ function createSession(options) {
   }
   function cancelComment() {
     const draft = comments.draft;
-    if (!draft || ['pausing', 'editing', 'failed', 'obsolete'].includes(draft.status)) { commentChange({ draft: null, message: '' }); return { status: 'cancelled' }; }
+    if (!draft || ['pausing', 'editing', 'failed', 'obsolete', 'choosing'].includes(draft.status)) { commentChange({ draft: null, message: '' }); return { status: 'cancelled' }; }
     // An uncertain write must stay available for explicit read-only checking.
     return { status: 'ignored', message: '这次保存已发出，请先核对结果。' };
   }
@@ -642,10 +668,64 @@ function createSession(options) {
       const actual = owned.player.snapshot(), frame = owned.info.frames[actual.frameOrdinal];
       if (actual.state !== 'paused' || actual.pendingTargets > 0 || !frame || frame.id !== actual.frameId || frame.time !== actual.time)
         throw issue('DRAWING_FRAME_NOT_READY', '当前源帧尚未准确显示，请完成定位后重试。');
+      const native = await freshNative(owned, token); if (!valid()) return { status: 'superseded' };
+      target = drawings.resolveFrame({ frameId: actual.frameId, frameOrdinal: actual.frameOrdinal }, native);
       drawings.begin(reservation, { frameId: actual.frameId, frameOrdinal: actual.frameOrdinal, time: actual.time }, target, kind);
       return { status: 'editing' };
     } catch (failure) { if (valid()) drawings.fail(failure); return { status: 'failed', message: failure.message }; }
   }
+
+  let drawingWrite = null;
+  function saveDrawing() {
+    if (drawingWrite) return drawingWrite;
+    const d = drawings.snapshot().draft, owned = owner, token = epoch;
+    if (!d || !owned?.ready || closed || !['editing', 'failed', 'unknown'].includes(d.status)) return Promise.resolve({ status: 'ignored' });
+    if (d.kind === 'delete' || !d.objects.length) return Promise.resolve(drawings.save());
+    const valid = () => !closed && epoch === token && owner === owned && drawings.snapshot().draft?.id === d.id;
+    drawings.saveState('saving', d.nativeAttempt ? '正在核对原保存结果…' : '正在核对Eagle文字…');
+    drawingWrite = Promise.resolve().then(async () => {
+      let items;
+      if (d.nativeAttempt) {
+        if (typeof eagleAdapter.verifyComment !== 'function') throw Error('原保存结果尚未确认，无法重新发送。');
+        const result = await eagleAdapter.verifyComment(d.nativeAttempt);
+        if (!valid()) return { status: 'superseded' };
+        if (result.status !== 'saved') { drawings.saveState('unknown', result.message || '文字保存结果未确认，请再次核对，勿重复添加。', d.nativeAttempt); return result; }
+        drawings.saveState('saving', '文字已确认，正在保存圈画…', null);
+        commentChange({ items: result.items }); items = result.items;
+      } else items = await freshNative(owned, token);
+      if (!valid()) return { status: 'superseded' };
+      let links = drawingModel.nativeAtFrame(items, owned.info.frames, d.frameOrdinal, owned.info.duration);
+      if (!links.length) {
+        if (typeof eagleAdapter.saveComment !== 'function') throw Error('当前Eagle没有可用的文字保存接口。');
+        const text = d.objects.find(o => o.kind === 'text' && o.text.trim())?.text.trim().slice(0, 4096) || '第' + (d.frameOrdinal + 1) + '帧';
+        let attempt = null;
+        commentWriteRevision++;
+        let result;
+        try {
+          result = await eagleAdapter.saveComment({ source, libraryPath: comments.libraryPath, frameId: d.frameId, time: d.time, text,
+            frameBounds: frameBounds(owned, d.frameOrdinal), reuseSameFrame: true },
+            { isCurrent: valid, onIssued(value) { attempt = value; if (valid()) drawings.saveState('saving', '正在保存并核对Eagle文字…', value); } });
+        } catch (failure) { result = { status: attempt ? 'unknown' : 'failed', attempt, message: failure.message }; }
+        commentWriteRevision++;
+        if (!valid()) return { status: 'superseded' };
+        if (result.status !== 'saved') {
+          drawings.saveState(result.status === 'unknown' ? 'unknown' : 'failed', result.message || '文字未保存，圈画草稿仍保留。', result.attempt || attempt);
+          return result;
+        }
+        drawings.saveState('saving', '文字已确认，正在保存圈画…', null);
+        items = result.items; commentChange({ items });
+        links = drawingModel.nativeAtFrame(items, owned.info.frames, d.frameOrdinal, owned.info.duration);
+        if (!links.length) throw Error('新文字未能关联当前源帧，圈画草稿仍保留。');
+      }
+      drawings.setLinks(links.map(n => ({ id: n.id, time: n.time })));
+      return drawings.save();
+    }).catch(failure => {
+      if (valid()) drawings.saveState('failed', failure.message);
+      return { status: 'failed', message: failure.message };
+    }).finally(() => { drawingWrite = null; scheduleCommentSync(); });
+    return drawingWrite;
+  }
+
   async function clearDrawing(id) {
     const owned = owner, token = epoch;
     if (closed || comments.draft || drawings.snapshot().draft || activeExport || !owned || !owned.ready || !['paused', 'playing'].includes(state)) return { status: 'ignored' };
@@ -655,7 +735,7 @@ function createSession(options) {
   }
   return Object.freeze({ loadSelected, retry: settings => loadSelected({ ...settings, trigger: 'retry' }),
     beginDrawing, clearDrawing, setDrawingObjects: drawings.objects, touchDrawing: drawings.touch,
-    saveDrawing: drawings.save, cancelDrawing: drawings.discard, setDrawingsVisible: drawings.setVisible, setDrawingStyles: drawings.setStyles,
+    saveDrawing, cancelDrawing: drawings.discard, setDrawingsVisible: drawings.setVisible, setDrawingStyles: drawings.setStyles,
     hasDrawingDraft: () => !!drawings.snapshot().draft,
     play: () => control('play', [], ['paused']), pause: () => control('pause', [], ['paused', 'playing', 'seeking']),
     toggle: () => state === 'playing' ? control('pause', [], ['playing']) : control('play', [], ['paused']),
@@ -668,7 +748,7 @@ function createSession(options) {
     applyLoopRange: range => control('applyLoopRange', [range], ['paused', 'playing', 'seeking']),
     loopFrameAt: (time, bounds) => !closed && owner && owner.ready && owner.epoch === epoch && !comments.draft &&
       ['paused', 'playing', 'seeking'].includes(state) && typeof owner.player.loopFrameAt === 'function' ? owner.player.loopFrameAt(time, bounds) : null,
-    beginComment, editComment: id => beginCommentMutation(id, 'edit'), deleteComment: id => beginCommentMutation(id, 'delete'),
+    beginComment, chooseComment, editComment: id => beginCommentMutation(id, 'edit'), deleteComment: id => beginCommentMutation(id, 'delete'),
     setCommentText, saveComment, cancelComment, checkComment, refreshComments, setCommentsVisible,
     seekComment: id => {
       const item = drawings.list(comments.items).find(value => value.id === id);

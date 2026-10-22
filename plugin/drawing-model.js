@@ -21,7 +21,8 @@
     if (!Array.isArray(objects) || objects.length > 128 || JSON.stringify(objects).length * 2 > MAX_BYTES) throw Error('圈画内容达到本帧容量上限，请减少对象或分开记录。');
     const ids = new Set();
     for (const o of objects) {
-      const keys = o && Object.keys(o).sort().join(',');
+      const keys = o && Object.keys(o).filter(k => k !== 'erasures').sort().join(',');
+      if (o && Object.prototype.hasOwnProperty.call(o, 'erasures')) validateErasures(o.erasures);
       const expected = o && (o.kind === 'pen' ? 'color,id,kind,points,width' : o.kind === 'text' ? 'a,b,color,id,kind,size,text,width' : 'a,b,color,id,kind,width');
       if (keys !== expected) throw Error('圈画包含未知字段，未覆盖原件。');
       if (!o || !KINDS.includes(o.kind) || typeof o.id !== 'string' || !/^[\w-]{1,80}$/.test(o.id) || ids.has(o.id) ||
@@ -53,11 +54,15 @@
     if (result.kind === 'pen') result.points = result.points.map(map);
     else { result.a = map(result.a); result.b = map(result.b); }
     if (resize && result.kind === 'text') result.size = Math.max(.01, Math.min(.2, result.size * Math.min(sx, sy)));
-    return result;
+    return mapErasures(result, o, map, resize ? Math.sqrt(sx * sy) : 1);
   }
   function resizeHandle(o, to, handle) {
     const result = copy(o), clamp = n => Math.max(0, Math.min(1, n));
-    if (o.kind === 'arrow' && ['a', 'b'].includes(handle)) { result[handle] = { x: clamp(to.x), y: clamp(to.y) }; return result; }
+    if (o.kind === 'arrow' && ['a', 'b'].includes(handle)) {
+      result[handle] = { x: clamp(to.x), y: clamp(to.y) };
+      const old = bounds(o), next = bounds(result), sx = (next.right - next.x) / Math.max(.0001, old.right - old.x), sy = (next.bottom - next.y) / Math.max(.0001, old.bottom - old.y);
+      return mapErasures(result, o, p => ({ x: clamp(next.x + (p.x - old.x) * sx), y: clamp(next.y + (p.y - old.y) * sy) }));
+    }
     if (!['nw', 'ne', 'sw', 'se'].includes(handle)) return result;
     const box = bounds(o), west = handle.includes('w'), north = handle.includes('n');
     const anchor = { x: west ? box.right : box.x, y: north ? box.bottom : box.y };
@@ -72,7 +77,7 @@
     }
     const map = p => ({ x: clamp(anchor.x + (p.x - anchor.x) * sx), y: clamp(anchor.y + (p.y - anchor.y) * sy) });
     if (o.kind === 'pen') result.points = o.points.map(map); else { result.a = map(o.a); result.b = map(o.b); }
-    return result;
+    return mapErasures(result, o, map, Math.sqrt(sx * sy));
   }
   // Hit only visible strokes (plus a few CSS pixels), never a hollow interior.
   function hitTest(objects, kind, p, geometry) {
@@ -84,7 +89,7 @@
       return Math.hypot(q.x - a.x - t * dx, q.y - a.y - t * dy);
     };
     for (let i = objects.length - 1; i >= 0; i--) {
-      const o = objects[i]; if (o.kind !== kind) continue;
+      const o = objects[i]; if (o.kind !== kind || erasedAt(o, p, geometry)) continue;
       const b = bounds(o), tolerance = Math.max(5, o.width * Math.min(w, h) / 2 + 3);
       let hit = false;
       if (kind === 'text') hit = q.x >= b.x * w - 3 && q.x <= b.right * w + 3 && q.y >= b.y * h - 3 && q.y <= b.bottom * h + 3;
@@ -107,6 +112,51 @@
     }
     return null;
   }
+
+  const FADE_SECONDS = .25, MAX_ERASURES = 64;
+  function validateErasures(value) {
+    if (!Array.isArray(value) || value.length > MAX_ERASURES || value.reduce((n, s) => n + (s?.points?.length || 0), 0) > 4096)
+      throw Error('擦除轨迹达到本对象上限，请减少擦除次数。');
+    for (const s of value) if (!s || Object.keys(s).sort().join(',') !== 'points,width' || !Number.isFinite(s.width) || s.width < .001 || s.width > .3 ||
+        !Array.isArray(s.points) || !s.points.length || s.points.length > 2048 || !s.points.every(point)) throw Error('擦除轨迹格式无效。');
+    return copy(value);
+  }
+  function mapErasures(result, original, map, factor = 1) {
+    if (original.erasures) result.erasures = original.erasures.map(s => ({ points: s.points.map(map), width: Math.max(.001, Math.min(.3, s.width * factor)) }));
+    return result;
+  }
+  function segmentDistance(p, a, b, w = 1, h = 1) {
+    const dx = (b.x - a.x) * w, dy = (b.y - a.y) * h;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * w * dx + (p.y - a.y) * h * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot((p.x - a.x) * w - t * dx, (p.y - a.y) * h - t * dy);
+  }
+  function erasedAt(o, p, geometry) {
+    return (o.erasures || []).some(s => s.points.some((v, i) => segmentDistance(p, i ? s.points[i - 1] : v, v, geometry.width, geometry.height) <= s.width * Math.min(geometry.width, geometry.height) / 2));
+  }
+  function erase(objects, stroke) {
+    validateErasures([stroke]); const value = validate(objects);
+    const sx = Math.min(...stroke.points.map(p => p.x)) - stroke.width / 2, sy = Math.min(...stroke.points.map(p => p.y)) - stroke.width / 2;
+    const ex = Math.max(...stroke.points.map(p => p.x)) + stroke.width / 2, ey = Math.max(...stroke.points.map(p => p.y)) + stroke.width / 2;
+    return validate(value.map(o => {
+      const b = bounds(o);
+      if (b.right + o.width / 2 < sx || b.x - o.width / 2 > ex || b.bottom + o.width / 2 < sy || b.y - o.width / 2 > ey ||
+          (o.erasures || []).some(s => JSON.stringify(s) === JSON.stringify(stroke))) return o;
+      return { ...o, erasures: [...(o.erasures || []), copy(stroke)] };
+    }));
+  }
+  function frameIndex(frames, time, duration = Infinity) {
+    if (!Array.isArray(frames) || !frames.length || !Number.isFinite(time) || time < frames[0].time || time > duration) return -1;
+    let a = 0, b = frames.length;
+    while (a + 1 < b) { const m = (a + b) >> 1; if (frames[m].time <= time) a = m; else b = m; }
+    return a;
+  }
+  function nativeAtFrame(items, frames, ordinal, duration) { return items.filter(n => frameIndex(frames, n.time, duration) === ordinal); }
+  function visibleGroups(records, time, seconds = FADE_SECONDS) {
+    if (!Number.isFinite(time)) return [];
+    return records.map(record => ({ record, opacity: Math.max(0, 1 - Math.abs(time - record.time) / seconds) }))
+      .filter(n => n.opacity > .00001).sort((a, b) => a.record.time - b.record.time || a.record.id.localeCompare(b.record.id));
+  }
+
   function createEditor(initial = []) {
     let value = validate(initial), past = [];
     function trim() { while (past.length > 32 || past.reduce((n, v) => n + JSON.stringify(v).length * 2, 0) > 4 * 1024 ** 2) past.shift(); }
@@ -122,5 +172,5 @@
     const scale = Math.min(rect.width / width, rect.height / height), w = width * scale, h = height * scale;
     return { left: rect.left + (rect.width - w) / 2, top: rect.top + (rect.height - h) / 2, width: w, height: h };
   }
-  return { KINDS, MAX_BYTES, validate, bounds, transform, hitTest, defaultStyles, validateStyles, createEditor, imageRect };
+  return { KINDS, MAX_BYTES, validate, bounds, transform, hitTest, defaultStyles, validateStyles, createEditor, imageRect, erase, erasedAt, validateErasures, frameIndex, nativeAtFrame, visibleGroups, FADE_SECONDS };
 });

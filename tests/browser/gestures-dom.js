@@ -1,0 +1,56 @@
+/* Native mouse-event checks with the real UI and an injected Session. */
+(async function(){
+  'use strict';const el=id=>document.getElementById(id),sleep=ms=>new Promise(r=>setTimeout(r,ms)),checks=[];
+  const settle=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  const check=(ok,text)=>{if(!ok)throw Error(text);checks.push(text);};
+  const state={epoch:1,state:'paused',duration:10,source:{name:'画面手势检查（无真实视频）'},playback:{time:2,frameId:60,frameOrdinal:60,frameCount:300,transport:{rate:1,loop:{valid:false}}},
+    comments:{status:'ready',items:[],draft:null},drawings:{status:'ready',records:[],visible:true,styles:EVADrawingModel.defaultStyles(),draft:null}};
+  let ui;const seeks=[],rates=[],publish=()=>ui.update({...state,playback:{...state.playback},drawings:{...state.drawings}});
+  const session={snapshot:()=>state,setCommentsVisible(){},refreshComments:async()=>{},memorySnapshot:()=>null,
+    async seek(time,options){seeks.push({time,...options});state.playback={...state.playback,time,frameId:Math.round(time*30),frameOrdinal:Math.round(time*30)};publish();return{status:'drawn'};},
+    async setPlaybackRate(rate){rates.push(rate);state.playback={...state.playback,transport:{...state.playback.transport,rate}};publish();return{status:'applied'};},
+    setDrawingObjects(){},setDrawingStyles:()=>({status:'saved'}),cancelDrawing(){state.drawings.draft=null;publish();return true;},
+    beginDrawing:async()=>({status:'ignored'}),beginComment:async()=>({status:'ignored'})};
+  function pointer(type,x,y,extra={}){const r=el('screen').getBoundingClientRect();const event=new PointerEvent(type,{pointerId:77,button:0,buttons:type==='pointerup'?0:1,clientX:r.left+x,clientY:r.top+y,bubbles:true,cancelable:true,...extra});(type==='pointerdown'?el('picture'):window).dispatchEvent(event);return event;}
+  function key(key){window.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));}
+  try{
+    ui=EVAUI.createUI();ui.bindSession(session);publish();const before=el('screen').getBoundingClientRect();
+    pointer('pointerdown',200,250);pointer('pointermove',300,250);await settle();
+    check(seeks.length===1&&seeks[0].time>2&&!seeks[0].final,'Horizontal screen drag uses the existing nonfinal seek path');
+    pointer('pointermove',300,40);await settle();check(rates.length===0,'Horizontal direction remains locked even after large vertical movement');
+    pointer('pointerup',320,40);await settle();check(seeks.at(-1).final&&seeks.at(-1).time>seeks[0].time,'Release processes the last pointer position and requests accurate final settlement');
+    const width=el('screen').getBoundingClientRect().width,start=state.playback.time;
+    pointer('pointerdown',200,250);pointer('pointermove',250,250,{shiftKey:true});await settle();
+    check(Math.abs(seeks.at(-1).time-start-100/width*10)<.0001,'Shift doubles horizontal sensitivity');
+    pointer('pointermove',300,250,{ctrlKey:true});await settle();
+    check(Math.abs(seeks.at(-1).time-start-125/width*10)<.0001,'Ctrl halves the next movement without jumping the previous target');
+    pointer('pointerup',300,250);await sleep(10);
+    const previousSeeks=seeks.length,rateBefore=state.playback.transport.rate;
+    pointer('pointerdown',400,300);pointer('pointermove',400,270);await settle();
+    check(rates.at(-1)===Number((rateBefore+.1).toFixed(3))&&el('screenRateHint').textContent.includes('×'),'Upward flick adjusts one step and shows the quiet speed hint');
+    await sleep(150);pointer('pointermove',400,200);await settle();check(rates.at(-1)>rateBefore+.1,'Continued upward movement adjusts further steps');
+    const stopped=rates.length;await sleep(160);check(rates.length===stopped,'Holding still never runs a repeating speed-change timer');
+    pointer('pointermove',650,200);await settle();check(seeks.length===previousSeeks,'Vertical gesture cannot accidentally become a horizontal seek');
+    pointer('pointerup',650,200);
+    const previousRate=state.playback.transport.rate;pointer('pointerdown',400,200);pointer('pointermove',400,220,{ctrlKey:true});await settle();
+    check(rates.at(-1)===Number((previousRate-.05).toFixed(3)),'Ctrl halves the configured speed step');pointer('pointerup',400,220);
+    const heldSeeks=seeks.length,heldRates=rates.length;
+    pointer('pointerdown',400,220);await sleep(460);
+    check(el('screenGestureRing').getAttribute('data-open')==='true'&&el('screenGestureRing').getAttribute('data-held')==='true','Intentional stationary hold reveals the existing four-direction progress/speed wheel');
+    check(seeks.length===heldSeeks&&rates.length===heldRates,'Opening the direction wheel does not execute any extra command');
+    key('Escape');await sleep(10);check(el('screenGestureRing').getAttribute('data-open')==='false','Esc closes the direction wheel');
+    pointer('pointerdown',400,220);pointer('pointercancel',400,220,{pointerId:78});pointer('pointermove',450,220);await settle();
+    check(seeks.length>heldSeeks,'Cancellation from a different pointer cannot end the active drag');
+    window.dispatchEvent(new Event('blur'));await sleep(10);check(seeks.at(-1).final&&el('screenGestureRing').getAttribute('data-open')==='false','Window blur settles the current drag and releases its feedback');
+    state.drawings.draft={id:1,status:'editing',objects:[],original:'[]',dirty:false};publish();
+    const blockedSeeks=seeks.length,blockedRates=rates.length;pointer('pointerdown',400,220);pointer('pointermove',500,140);pointer('pointerup',500,140);await settle();
+    check(seeks.length===blockedSeeks&&rates.length===blockedRates,'Drawing edit state has priority over every screen gesture');
+    state.drawings.draft=null;publish();
+    pointer('pointerdown',400,220);await sleep(460);state.epoch++;publish();check(el('screenGestureRing').getAttribute('data-open')==='false','Changing the source epoch discards pending gesture state');
+    check(before.width===el('screen').getBoundingClientRect().width&&before.height===el('screen').getBoundingClientRect().height,'Direction wheel and speed hints never resize the video area');
+    ui.destroy();const destroyedCount=seeks.length+rates.length;pointer('pointerdown',400,220);pointer('pointermove',500,140);pointer('pointerup',500,140);await settle();
+    check(destroyedCount===seeks.length+rates.length,'Destroy removes gesture listeners and timers');
+    ui=EVAUI.createUI();ui.bindSession(session);publish();pointer('pointerdown',400,220);await sleep(460);
+    const out=document.createElement('pre');out.id='drawing-results';out.hidden=true;out.textContent=JSON.stringify({passed:true,checks});document.body.appendChild(out);
+  }catch(error){ui?.destroy();const out=document.createElement('pre');out.id='drawing-results';out.hidden=true;out.textContent=JSON.stringify({passed:false,checks,seeks,rates,time:state.playback.time,width:el('screen').getBoundingClientRect().width,error:error.stack});document.body.appendChild(out);}
+})();

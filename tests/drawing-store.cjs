@@ -64,6 +64,14 @@ try {
     assert.throws(() => store.save(scope, Array.from({ length: 257 }, (_, i) => note('n' + i)), saved.token));
     assert.throws(() => store.save(scope, [{ ...note(), objects: [{ ...box, kind: 'text', size: .04, text: 'x'.repeat(4097) }] }], saved.token));
   });
+  test('Old records reopen unchanged; new eraser paths and multiple native links survive exact isolated round trips', () => {
+    const model = require('../plugin/drawing-model.js'), old = store.read(scope), cut = model.erase([box], {width:.05,points:[{x:.2,y:.1},{x:.3,y:.1}]});
+    const extended = { ...note('extended'), nativeId:'a', nativeTime:.125, nativeLinks:[{id:'a',time:.125},{id:'b',time:.126}], objects:cut };
+    saved=store.save(scope,[extended],old.token); const reopened=createAnnotationStore({pluginRoot:plugin}).read(scope);
+    assert.deepEqual(reopened.records,[extended]);
+    assert.throws(()=>store.save(scope,[{...extended,nativeLinks:[{id:'a',time:-1}]}],saved.token));
+    assert.equal(store.read(scope).token,saved.token);
+  });
   test('Unknown or corrupt data is preserved and never silently treated as an empty video', () => {
     const dir = path.join(store.root, saved.key), unknown = path.join(dir, 'unknown.json'); fs.writeFileSync(unknown, 'keep');
     assert.throws(() => store.read(scope), /未知/); assert.equal(fs.readFileSync(unknown, 'utf8'), 'keep'); fs.unlinkSync(unknown);

@@ -14,12 +14,13 @@ function validateRecords(records) {
   if (!Array.isArray(records) || records.length > 256) throw Error('当前视频圈画条目达到上限。');
   const ids = new Set();
   return records.map(n => {
-    if (!n || Object.keys(n).sort().join(',') !== 'frameId,frameOrdinal,id,nativeId,nativeTime,objects,sourceSha256,time') throw Error('圈画条目包含未知字段，原件已保留。');
+    if (!n || Object.keys(n).filter(k => k !== 'nativeLinks').sort().join(',') !== 'frameId,frameOrdinal,id,nativeId,nativeTime,objects,sourceSha256,time') throw Error('圈画条目包含未知字段，原件已保留。');
     if (!n || typeof n.id !== 'string' || !/^[\w-]{1,80}$/.test(n.id) || ids.has(n.id) || !/^[a-f0-9]{64}$/.test(n.sourceSha256) ||
         !Number.isSafeInteger(n.frameOrdinal) || n.frameOrdinal < 0 || !Number.isSafeInteger(n.frameId) || n.frameId < 0 || !Number.isFinite(n.time) || n.time < 0 ||
         n.nativeId !== null && (typeof n.nativeId !== 'string' || !n.nativeId || n.nativeId.length > 256) ||
         (n.nativeId === null ? n.nativeTime !== null : !Number.isFinite(n.nativeTime) || n.nativeTime < 0)) throw Error('圈画条目格式无效，原件已保留。');
-    ids.add(n.id); return { id: n.id, sourceSha256: n.sourceSha256, frameOrdinal: n.frameOrdinal, frameId: n.frameId, time: n.time,
+    if (n.nativeLinks !== undefined && (!Array.isArray(n.nativeLinks) || n.nativeLinks.length > 64 || new Set(n.nativeLinks.map(l => l.id)).size !== n.nativeLinks.length || n.nativeLinks.some(l => !l || Object.keys(l).sort().join(',') !== 'id,time' || typeof l.id !== 'string' || !l.id || l.id.length > 256 || !Number.isFinite(l.time) || l.time < 0))) throw Error('圈画关联文字格式无效，原件已保留。');
+    ids.add(n.id); return { ...(n.nativeLinks === undefined ? {} : { nativeLinks: n.nativeLinks.map(l => ({ ...l })) }), id: n.id, sourceSha256: n.sourceSha256, frameOrdinal: n.frameOrdinal, frameId: n.frameId, time: n.time,
       nativeId: n.nativeId, nativeTime: n.nativeTime, objects: model.validate(n.objects) };
   });
 }

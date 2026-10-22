@@ -20,6 +20,7 @@
               <button id="drawingToolRect" type="button" title="矩形：拖动绘制，点击边线可移动" aria-label="矩形" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1"/></svg></button>
               <button id="drawingToolEllipse" type="button" title="椭圆：拖动绘制，点击边线可移动" aria-label="椭圆" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="8" ry="7"/></svg></button>
               <button id="drawingToolText" type="button" title="文字：点击空白输入，双击已有文字修改" aria-label="文字" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6V4h14v2M12 4v16M8 20h8"/></svg></button>
+              <button id="drawingToolEraser" type="button" title="局部橡皮擦：滚轮调整大小" aria-label="局部橡皮擦" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 14 9-10 7 6-9 10H8Zm2-2 7 6M11 20h10"/></svg></button>
             </div>
             <span class="drawing-divider" aria-hidden="true"></span>
             <button id="drawingColorButton" class="drawing-color-button" type="button" title="颜色：所有工具共用最近选择" aria-label="圈画颜色" aria-expanded="false"><span></span></button>
@@ -29,7 +30,7 @@
             <button id="drawingSave" class="drawing-save" type="button" title="保存整条标注（Enter）">保存</button><button id="drawingCancel" type="button" title="退出绘图（Esc）" aria-label="退出绘图"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
           </div>
           <div id="drawingProperties" class="drawing-popover" hidden>
-            <label id="drawingWidthLabel" for="drawingWidth">线宽 <input id="drawingWidth" type="range" min="0.001" max="0.05" step="0.001" value="0.004" aria-label="线条粗细"></label>
+            <label id="drawingWidthLabel" for="drawingWidth"><span id="drawingWidthName">线宽</span> <input id="drawingWidth" type="range" min="0.001" max="0.05" step="0.001" value="0.004" aria-label="线条粗细"></label>
             <label id="drawingSizeLabel" for="drawingSize" hidden>字号 <input id="drawingSize" type="range" min="0.01" max="0.2" step="0.001" value="0.04" aria-label="画面文字大小"></label>
           </div>
           <div id="drawingPalette" class="drawing-popover drawing-palette" aria-label="颜色选择" hidden>
@@ -39,6 +40,11 @@
         </div>
         <textarea id="drawingText" class="drawing-text" rows="2" aria-label="画面文字" spellcheck="false" hidden></textarea>
         <p id="drawingMessage" class="drawing-message" role="status" hidden></p>
+        <div id="screenGestureRing" class="screen-gesture-ring" data-open="false" data-held="false" aria-hidden="true" aria-label="左右调整进度，上下调整倍速">
+          <span class="gesture-up">↑<small>加速</small></span><span class="gesture-right">→<small>前进</small></span>
+          <span class="gesture-down">↓<small>减速</small></span><span class="gesture-left">←<small>后退</small></span><i></i>
+        </div>
+        <output id="screenRateHint" class="screen-rate-hint" data-open="false" aria-live="off"></output>
         <div id="notice" class="notice" role="status">在 Eagle 中单选 MP4 后打开插件</div>
         <p id="loopHelp" class="loop-help" role="status" hidden></p>
       </div>
@@ -70,7 +76,7 @@
           <label title="L开启循环并展开片段，关闭恢复整段、保留范围"><input id="loopEnabled" type="checkbox" disabled>循环（L）</label>
           <output id="loopRange" class="muted">未设置范围</output>
           <details class="shortcut-help"><summary title="查看现有操作和快捷键">操作提示</summary>
-            <div class="shortcut-panel">空格：播放／暂停<br>Z：还原1×；X：减速；C：加速<br>【／】：前后逐帧；画面或时间轴滚轮：逐帧<br>R短按：选择／确认／清除片段<br>长按R：暂停并临时查看整段、拖动端点；松开确认，Esc取消<br>L：循环并展开片段／关闭并查看整段<br>N：添加文字；D：新建圈画；H：屏幕标注显隐<br>绘图中：Enter保存，Esc退出，Ctrl+Z撤销，Delete删除选中对象<br>S：导出当前画面；E：导出所选片段<br>标注输入：Enter保存，Shift+Enter换行</div>
+            <div class="shortcut-panel">空格：播放／暂停<br>Z：还原1×；X：减速；C：加速<br>【／】：前后逐帧；画面或时间轴滚轮：逐帧<br>R短按：选择／确认／清除片段<br>长按R：暂停并临时查看整段、拖动端点；松开确认，Esc取消<br>L：循环并展开片段／关闭并查看整段<br>N：添加／修改本帧文字；D：进入／保存圈画；H：屏幕标注显隐<br>绘图中：Enter保存，Esc退出，Ctrl+Z撤销，Delete删除选中对象<br>S：导出当前画面；E：导出所选片段<br>标注输入：Enter保存，Shift+Enter换行</div>
           </details>
         </div>
       </div>
@@ -127,11 +133,12 @@
         <p id="exportStatus" class="muted" role="status">从原视频导出，预览画质不影响结果。</p>
       </section>
       <section class="comments" aria-label="视频标注">
-        <div class="comment-heading"><h2>标注</h2><button id="commentAdd" type="button" title="N添加文字标注" disabled>文字</button><button id="drawingNew" type="button" title="D新建本帧圈画；已有条目从列表编辑" disabled>圈画（D）</button></div>
+        <div class="comment-heading"><h2>标注</h2><button id="commentAdd" type="button" title="N添加或修改当前帧文字标注" disabled>文字</button><button id="drawingNew" type="button" title="D进入当前帧圈画，再按D保存退出" disabled>圈画（D）</button></div>
         <p id="drawingStatus" class="muted" role="status"></p>
         <p id="commentStatus" class="muted" role="status"></p>
         <div id="commentEditor" hidden>
           <p id="commentTime" class="muted"></p>
+          <select id="commentChoice" aria-label="选择当前帧要修改的文字" hidden></select>
           <label for="commentText" class="muted">文字</label>
           <textarea id="commentText" rows="3" placeholder="记录当前画面的观察"></textarea>
           <p id="commentKeyboardHint" class="muted">Enter保存，Shift+Enter换行</p>
@@ -149,6 +156,8 @@
   <script src="timeline-view.js"></script>
   <script src="drawing-model.js"></script>
   <script src="drawing-ui.js"></script>
+  <script src="screen-gestures.js"></script>
+  <script src="screen-gesture-ui.js"></script>
   <script src="ui.js"></script>
   <script src="app.js"></script>
 </body>

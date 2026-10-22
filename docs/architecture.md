@@ -1,5 +1,9 @@
 # 技术架构：阶段 3B 已批准
 
+2026-10-22实现：drawing-model增加有界erasures及源帧/淡化计算；drawing-store兼容可选nativeLinks，drawing-session同帧共享组、删文字保图。Session核对原生文字再提交本地，未知只核对；本地丢回执独立读回，不覆盖竞争版本。screen-gestures/screen-gesture-ui只连接既有Session；Player仅将步长算术扩为千分位，媒体/缓存/预算不改。新文件纳入后续打包白名单但未重建冻结包。验证见[E-11](experiments/E11/report.md)/[E-12](experiments/E12/report.md)。
+
+2026-10-22获准局部演进：E-11保留drawing-model/ui/session/store职责，引入对象局部擦除及同帧多原生关联的兼容格式，Session通过Eagle适配层核对原生写入，不能声称跨库与本地存储原子提交。E-12另设手势状态机/输入展示层，不接入解码缓存；边界见[E-11](experiments/E11/plan.md)、[E-12](experiments/E12/plan.md)。冻结版本不改。
+
 2026-10-20产品约束同步：以[当前产品定位与设计原则](product.md#当前产品定位与设计原则)指导后续设计。产品是“给特效师的播放器”，缓存、解码和资源预算是实现手段；模块与数据依赖不等于强制用户按固定流程使用工具。当前仍以plugin为唯一正式实现，本次不修改阶段3B架构、模块边界或技术选型。独立版及远期AI仅沿用既有愿景/计划边界，不新增实现或数据上传授权。
 
 2026-10-20 E-10交互补充：同类命中/四角及箭头端点、无重做的有界历史和样式校验放drawing-model；瞬态空文字/拖动预览不混入已提交对象，drawing-ui只经Session发操作。drawing-session协调共享颜色/逐工具宽度及字号，drawing-store新增独立styles修订（color/widths/size，严格校验、默认懒读、原子提交），仍用现有owner协议；旧视频记录/visibility格式原样兼容，不重写旧数据。工具设置失败保留旧版并提示，不重建视频缓存。坐标换算使用CSS实际显示矩形，工具栏/属性与就地文本绝对定位不改变picture布局；侧栏只控制展开状态。真实文件/Session/DOM验证见[E-10报告](experiments/E10/report.md)。

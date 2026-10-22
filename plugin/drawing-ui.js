@@ -8,16 +8,18 @@
   'use strict';
   function createDrawingUI({ document: doc, window: win, getSession, getState, canBegin, isKey }) {
     const ids = ['screen', 'picture', 'drawingLayer', 'drawingPanel', 'drawingTool', 'drawingColor', 'drawingWidth', 'drawingSize',
-      'drawingToolPen', 'drawingToolArrow', 'drawingToolRect', 'drawingToolEllipse', 'drawingToolText',
-      'drawingColorButton', 'drawingOptions', 'drawingProperties', 'drawingPalette', 'drawingWidthLabel', 'drawingSizeLabel',
+      'drawingToolPen', 'drawingToolArrow', 'drawingToolRect', 'drawingToolEllipse', 'drawingToolText', 'drawingToolEraser',
+      'drawingColorButton', 'drawingOptions', 'drawingProperties', 'drawingPalette', 'drawingWidthLabel', 'drawingWidthName', 'drawingSizeLabel',
       'drawingText', 'drawingDelete', 'drawingSave', 'drawingCancel', 'drawingMessage', 'drawingNew',
       'showDrawings', 'drawingStatus', 'drawingExit', 'drawingExitMessage', 'drawingExitSave', 'drawingExitDiscard', 'drawingExitReturn'];
     const el = Object.fromEntries(ids.map(id => [id, doc.getElementById(id)]));
     if (ids.some(id => !el[id])) throw Error('圈画界面缺少必要元素。');
     const listeners = [], on = (n, t, f, options) => { n.addEventListener(t, f, options); listeners.push([n, t, f, options]); };
-    const buttons = Object.fromEntries(model.KINDS.map(k => [k, el['drawingTool' + k[0].toUpperCase() + k.slice(1)]]));
+    const buttons = Object.fromEntries([...model.KINDS, 'eraser'].map(k => [k, el['drawingTool' + k[0].toUpperCase() + k.slice(1)]]));
     let editor = null, committed = [], editorKey = null, selected = null, drag = null, work = null, textDraft = null, temporaryVisible = true;
     let snapshot = null, geometry = null, width = 1280, height = 720, normalKey = null, tool = 'pen', styles = model.defaultStyles(), stylesRef = null;
+    let eraserPoint = null, eraserWidth = .045, normalGroups = [], normalRecords = null, normalOrder = [], groupNodes = new Map();
+    const maskPrefix = 'erase-' + Math.random().toString(36).slice(2) + '-';
     let composing = false, compositionEnd = -Infinity, exitResolve = null, exitPromise = null, destroyed = false;
     const session = () => getSession(), draft = () => snapshot?.drawings?.draft;
     const set = (n, k, v) => { if (n[k] !== v) n[k] = v; };
@@ -62,7 +64,10 @@
       for (const [k, button] of Object.entries(buttons)) button.setAttribute('aria-pressed', String(k === tool));
       el.drawingTool.setAttribute('data-tool', tool);
       el.drawingColor.value = o?.color || styles.color; el.drawingColorButton.style.color = el.drawingColor.value;
-      el.drawingWidth.value = o && o.kind !== 'text' ? o.width : styles.widths[tool] || .004;
+      el.drawingWidthName.textContent = tool === 'eraser' ? '擦除直径' : '线宽';
+      el.drawingWidth.min = tool === 'eraser' ? '.005' : '.001'; el.drawingWidth.max = tool === 'eraser' ? '.15' : '.05';
+      el.drawingWidth.value = tool === 'eraser' ? eraserWidth : o && o.kind !== 'text' ? o.width : styles.widths[tool] || .004;
+      el.drawingColorButton.hidden = tool === 'eraser';
       el.drawingSize.value = o?.kind === 'text' ? o.size : styles.size;
       el.drawingWidthLabel.hidden = tool === 'text'; el.drawingSizeLabel.hidden = tool !== 'text';
       el.drawingDelete.hidden = !o || !!textDraft && !el.drawingText.value.trim(); el.drawingDelete.disabled = !editor || !o;
@@ -75,8 +80,12 @@
       const b = model.bounds(o); return [['nw', { x: b.x, y: b.y }], ['ne', { x: b.right, y: b.y }], ['sw', { x: b.x, y: b.bottom }], ['se', { x: b.right, y: b.bottom }]];
     }
     function render(value) {
-      const nodes = [], scale = Math.min(width, height);
-      for (const o of value) {
+      const nodes = [], scale = Math.min(width, height); groupNodes = new Map();
+      const entries = editor ? value.map(o => ({ o, key: o.id, parent: nodes })) : normalGroups.flatMap(({ record, opacity }) => {
+        const group = node('g', { 'data-drawing-group': record.id, opacity }); nodes.push(group); groupNodes.set(record.id, group);
+        return record.objects.map(o => ({ o, key: record.id + '-' + o.id, parent: group }));
+      });
+      for (const { o, key, parent } of entries) {
         if (textDraft?.object.id === o.id) continue;
         const g = node('g', { 'data-object-id': o.id, fill: 'none', stroke: o.color, 'stroke-width': o.width * scale, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'pointer-events': 'none' });
         const x = o.a?.x * width, y = o.a?.y * height, x2 = o.b?.x * width, y2 = o.b?.y * height;
@@ -95,15 +104,27 @@
           const text = node('text', { x, y, fill: o.color, stroke: 'none', 'font-size': o.size * scale, 'font-family': 'Segoe UI, Microsoft YaHei UI, sans-serif', 'dominant-baseline': 'hanging' });
           o.text.split('\n').forEach((line, i) => { const span = node('tspan', { x, dy: i ? o.size * scale * 1.25 : 0 }); span.textContent = line || ' '; text.appendChild(span); }); g.appendChild(text);
         }
-        nodes.push(g);
+        if (o.erasures?.length) {
+          const maskId = maskPrefix + key, defs = node('defs'), mask = node('mask', { id: maskId, maskUnits: 'userSpaceOnUse', maskContentUnits: 'userSpaceOnUse', x: 0, y: 0, width, height, 'mask-type': 'luminance' });
+          mask.appendChild(node('rect', { x: 0, y: 0, width, height, fill: 'white', stroke: 'none' }));
+          for (const cut of o.erasures) {
+            const attrs = { fill: 'none', stroke: 'black', 'stroke-width': cut.width * scale, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
+            mask.appendChild(cut.points.length === 1 ? node('circle', { cx: cut.points[0].x * width, cy: cut.points[0].y * height, r: cut.width * scale / 2, fill: 'black', stroke: 'none' })
+              : node('polyline', { ...attrs, points: cut.points.map(p => p.x * width + ',' + p.y * height).join(' ') }));
+          }
+          defs.appendChild(mask); g.appendChild(defs); g.setAttribute('mask', 'url(#' + maskId + ')');
+        }
+        if (Array.isArray(parent)) parent.push(g); else parent.appendChild(g);
       }
       const o = value.find(v => v.id === selected);
       if (editor && o && !textDraft && temporaryVisible && draft()?.kind !== 'delete') for (const [handle, p] of handles(o)) {
         // Constant screen-size handles. No visible or invisible bounding rectangle.
-        const rx = 4.5 * width / Math.max(1, geometry?.width || width), ry = 4.5 * height / Math.max(1, geometry?.height || height);
-        nodes.push(node('ellipse', { cx: p.x * width, cy: p.y * height, rx, ry, fill: '#e8e8e8', stroke: '#262626', 'stroke-width': width / Math.max(1, geometry?.width || width),
-          'data-object-id': o.id, 'data-handle': handle, 'pointer-events': 'all', cursor: ['a', 'b'].includes(handle) ? 'crosshair' : ['nw', 'se'].includes(handle) ? 'nwse-resize' : 'nesw-resize' }));
+        const rx = 2.6 * width / Math.max(1, geometry?.width || width), ry = 2.6 * height / Math.max(1, geometry?.height || height);
+        nodes.push(node('ellipse', { cx: p.x * width, cy: p.y * height, rx: rx * 3, ry: ry * 3, fill: 'transparent', stroke: 'none', 'data-object-id': o.id, 'data-handle': handle, 'pointer-events': 'all' }));
+        nodes.push(node('ellipse', { cx: p.x * width, cy: p.y * height, rx, ry, fill: '#c5c9cf', 'fill-opacity': '.78', stroke: '#262626', 'stroke-width': width / Math.max(1, geometry?.width || width),
+          'pointer-events': 'none', cursor: ['a', 'b'].includes(handle) ? 'crosshair' : ['nw', 'se'].includes(handle) ? 'nwse-resize' : 'nesw-resize' }));
       }
+      if (editor && tool === 'eraser' && eraserPoint) nodes.push(node('ellipse', { 'data-eraser-cursor': 'true', cx: eraserPoint.x * width, cy: eraserPoint.y * height, rx: eraserWidth * scale / 2, ry: eraserWidth * scale / 2, fill: '#ffffff08', stroke: '#ddd', 'stroke-opacity': '.65', 'stroke-width': width / Math.max(1, geometry?.width || width), 'pointer-events': 'none' }));
       el.drawingLayer.replaceChildren(...nodes); properties(); layoutText();
     }
     function publish(next) {
@@ -133,6 +154,7 @@
       if (!drag || event && event.pointerId !== drag.pointerId) return;
       const before = drag, next = work; drag = null; work = null;
       try { if (el.drawingLayer.hasPointerCapture?.(before.pointerId)) el.drawingLayer.releasePointerCapture(before.pointerId); } catch (_) { /* Cancelled host pointer. */ }
+      if (before.erasing) { if (next) publish(next); else render(committed); return; }
       const o = next?.find(n => n.id === before.object.id);
       const valid = !before.creating || before.moved && o && (['pen', 'arrow'].includes(o.kind) || Math.abs(o.a.x - o.b.x) * geometry.width >= 1 && Math.abs(o.a.y - o.b.y) * geometry.height >= 1);
       if (next && valid) publish(next); else { session()?.setDrawingObjects(committed); render(committed); }
@@ -146,14 +168,15 @@
     function chooseTool(kind) {
       if (!editor || composing || exitPromise || draft()?.kind === 'delete') return;
       try { flush(); } catch (error) { message(error.message); return; }
-      if (tool !== kind) selected = null; tool = kind;
+      if (tool !== kind) selected = null; eraserPoint = null; tool = kind;
       el.drawingProperties.hidden = false; el.drawingPalette.hidden = true; render(committed); el.drawingLayer.focus?.({ preventScroll: true });
     }
     for (const [kind, button] of Object.entries(buttons)) on(button, 'click', () => chooseTool(kind));
     on(el.drawingOptions, 'click', () => { el.drawingProperties.hidden = !el.drawingProperties.hidden; el.drawingPalette.hidden = true; properties(); });
     on(el.drawingColorButton, 'click', () => { el.drawingPalette.hidden = !el.drawingPalette.hidden; el.drawingProperties.hidden = true; properties(); });
     function changeStyle(field, value) {
-      if (!editor || draft()?.kind === 'delete') return;
+      if (!editor || draft()?.kind === 'delete' || ['saving', 'unknown'].includes(draft()?.status)) return;
+      if (tool === 'eraser') { eraserWidth = Math.max(.005, Math.min(.15, Number(value))); properties(); return; }
       const next = model.validateStyles(styles);
       if (field === 'color') next.color = value; else if (field === 'size') next.size = Number(value); else next.widths[tool] = Number(value);
       try { model.validateStyles(next); } catch (error) { message(error.message); return; }
@@ -178,11 +201,17 @@
       if (!textDraft) el.drawingLayer.focus?.({ preventScroll: true });
     });
     on(el.drawingLayer, 'pointerdown', event => {
-      if (!editor || draft()?.status === 'pausing' || draft()?.kind === 'delete' || !temporaryVisible || event.button !== 0 || exitPromise || composing) return;
+      if (!editor || !['editing', 'failed'].includes(draft()?.status) || draft()?.kind === 'delete' || !temporaryVisible || event.button !== 0 || exitPromise || composing) return;
       layout(); const p = point(event); if (!p) return;
       const handle = event.target.getAttribute?.('data-handle'), handleId = event.target.getAttribute?.('data-object-id');
       try { flush(); } catch (error) { message(error.message); return; }
       event.preventDefault(); el.drawingLayer.focus?.({ preventScroll: true }); closeProperties();
+      if (tool === 'eraser') {
+        selected = null; drag = { pointerId: event.pointerId, erasing: true, original: committed, stroke: { points: [p], width: eraserWidth } };
+        try { work = model.erase(committed, drag.stroke); render(work); } catch (e) { message(e.message); drag = null; work = null; }
+        try { el.drawingLayer.setPointerCapture?.(event.pointerId); } catch (_) {}
+        return;
+      }
       const hit = handle && selected === handleId ? committed.find(o => o.id === handleId && o.kind === tool) : model.hitTest(committed, tool, p, geometry);
       if (hit) {
         selected = hit.id; drag = { pointerId: event.pointerId, start: p, original: committed, object: hit, handle: handle && hit.id === handleId ? handle : false, moved: false };
@@ -206,11 +235,21 @@
       if (!editor || !temporaryVisible) return;
       const p = point(event); if (!p) return;
       if (!drag) {
+        if (tool === 'eraser' && event.target === el.drawingLayer) { eraserPoint = p; render(committed); }
         if (event.target === el.drawingLayer) el.drawingLayer.style.cursor = model.hitTest(committed, tool, p, geometry) ? 'move' : tool === 'text' ? 'text' : 'crosshair';
         return;
       }
       if (event.pointerId !== drag.pointerId) return;
       event.preventDefault();
+      if (drag.erasing) {
+        eraserPoint = p;
+        const last = drag.stroke.points[drag.stroke.points.length - 1];
+        if (Math.hypot((p.x - last.x) * geometry.width, (p.y - last.y) * geometry.height) < 1) return;
+        if (drag.stroke.points.length >= 512) { finish(); message('这一段擦除已完成，请松手后继续。'); return; }
+        drag.stroke.points.push(p);
+        try { work = model.erase(drag.original, drag.stroke); render(work); } catch (e) { finish(); message(e.message); }
+        return;
+      }
       const moved = Math.hypot((p.x - drag.start.x) * geometry.width, (p.y - drag.start.y) * geometry.height) >= 3;
       if (!drag.moved && !moved) return;
       const firstMove = !drag.moved; drag.moved = true;
@@ -227,7 +266,15 @@
     });
     on(win, 'pointerup', finish); on(win, 'pointercancel', finish); on(win, 'blur', () => finish());
     on(win, 'resize', () => { if (snapshot?.drawings && (editor || !el.drawingLayer.hidden)) { finish(); layout(); render(editor ? committed : normalObjects()); } });
-    on(el.screen, 'wheel', event => { if (editor) event.preventDefault(); }, { passive: false });
+    on(el.screen, 'wheel', event => {
+      if (!editor || !temporaryVisible || !['editing', 'failed'].includes(draft()?.status) || event.altKey || event.metaKey || !Number.isFinite(event.deltaY) || !event.deltaY) return;
+      if (event.target?.closest?.('.drawing-palette,input[type=color]')) return;
+      event.preventDefault();
+      const direction = event.deltaY < 0 ? 1 : -1;
+      if (tool === 'eraser') changeStyle('width', eraserWidth + direction * .005);
+      else if (tool === 'text') changeStyle('size', Math.max(.01, Math.min(.2, (current()?.size || styles.size) + direction * .002)));
+      else changeStyle('width', Math.max(.001, Math.min(.05, (current()?.width || styles.widths[tool]) + direction * .001)));
+    }, { passive: false });
     function undo() {
       if (!editor || draft()?.kind === 'delete') return;
       try { flush(); } catch (error) { message(error.message); return; }
@@ -277,7 +324,7 @@
       if (destroyed || event.defaultPrevented || event.isComposing || event.keyCode === 229 || composing || now() - compositionEnd < 50) return;
       if (exitPromise) { if (event.key === 'Escape') { event.preventDefault(); finishExit(false); } return; }
       if (isKey(event, 'H')) { if (session()) { event.preventDefault(); toggle(); } return; }
-      if (isKey(event, 'D')) { if (!editor && canBegin()) { event.preventDefault(); begin(); } return; }
+      if (isKey(event, 'D')) { if (!event.repeat && (editor || canBegin())) { event.preventDefault(); if (editor) save(); else begin(); } return; }
       if (!editor || event.repeat || event.altKey || event.metaKey) return;
       const input = event.target?.isContentEditable || event.target?.closest?.('input,textarea,select,[contenteditable]');
       if (event.key === 'Escape') { event.preventDefault(); confirmExit('退出绘图'); return; }
@@ -290,12 +337,18 @@
       else if (event.ctrlKey && !event.shiftKey && String(event.key).toLowerCase() === 'y') event.preventDefault();
       else if (!event.ctrlKey && !event.shiftKey && event.key === 'Delete') { event.preventDefault(); removeSelected(); }
     });
+
     function normalObjects() {
-      const p = snapshot?.playback;
-      return snapshot?.drawings?.records?.filter(n => n.frameOrdinal === p?.frameOrdinal && n.frameId === p?.frameId && Math.abs(n.time - p.time) < .000001).flatMap(n => n.objects) || [];
+      const found = model.visibleGroups(snapshot?.drawings?.records || [], snapshot?.playback?.time);
+      const ids = new Set(found.map(n => n.record.id));
+      normalOrder = normalOrder.filter(id => ids.has(id));
+      for (const n of found) if (!normalOrder.includes(n.record.id)) normalOrder.push(n.record.id);
+      normalGroups = normalOrder.map(id => found.find(n => n.record.id === id));
+      return normalGroups.flatMap(n => n.record.objects);
     }
     function update(value) {
       snapshot = value; const state = value.drawings, d = state?.draft;
+      if (normalRecords !== state?.records) { normalRecords = state?.records; normalKey = null; }
       if (state?.styles && state.styles !== stylesRef) { stylesRef = state.styles; styles = model.validateStyles(state.styles); }
       const key = d ? value.epoch + ':' + d.id : null;
       if (key !== editorKey) {
@@ -316,18 +369,19 @@
       if (active) {
         if (geometry === null || normalKey !== key) { layout(); normalKey = key; }
         message(d.message || (shown ? d.kind === 'delete' ? '确认删除这条圈画标注？' : '点击同类图形可调整 · Enter保存 · Esc退出 · Ctrl+Z撤销' : '圈画已临时隐藏，按H恢复后继续绘图。'));
-        set(el.drawingSave, 'textContent', d.kind === 'delete' ? '确认删除' : '保存');
-        set(el.drawingSave, 'disabled', !['editing', 'failed'].includes(d.status));
-        for (const control of [...Object.values(buttons), el.drawingColorButton, el.drawingOptions, el.drawingColor, el.drawingWidth, el.drawingSize, el.drawingText, el.drawingDelete]) control.disabled = !shown || d.kind === 'delete' || d.status === 'pausing';
+        set(el.drawingSave, 'textContent', d.status === 'unknown' ? '核对并保存' : d.kind === 'delete' ? '确认清除' : '保存（D）');
+        set(el.drawingSave, 'disabled', !['editing', 'failed', 'unknown'].includes(d.status));
+        for (const control of [...Object.values(buttons), el.drawingColorButton, el.drawingOptions, el.drawingColor, el.drawingWidth, el.drawingSize, el.drawingText, el.drawingDelete]) control.disabled = !shown || d.kind === 'delete' || !['editing', 'failed'].includes(d.status);
         render(valueObjects);
       } else {
-        const nextKey = valueObjects.map(o => o.id).join('|') + ':' + (state?.visible !== false);
+        const nextKey = value.epoch + ':' + normalGroups.map(n => n.record.id).join('|') + ':' + (state?.visible !== false);
         if (nextKey !== normalKey) { normalKey = nextKey; if (valueObjects.length) layout(); render(valueObjects); }
+        else for (const n of normalGroups) groupNodes.get(n.record.id)?.setAttribute('opacity', String(n.opacity));
       }
     }
     return { update, begin, confirmExit, flush,
       destroy() { destroyed = true; listeners.forEach(([n, t, f, o]) => n.removeEventListener(t, f, o)); if (exitResolve) finishExit(false); },
-      reset() { editorKey = null; editor = null; committed = []; drag = null; work = null; textDraft = null; normalKey = null; if (exitResolve) finishExit(false); } };
+      reset() { editorKey = null; editor = null; committed = []; drag = null; work = null; textDraft = null; normalKey = null; normalOrder = []; normalGroups = []; groupNodes.clear(); if (exitResolve) finishExit(false); } };
   }
   return { createDrawingUI };
 });

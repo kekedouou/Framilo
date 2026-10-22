@@ -6,10 +6,10 @@
   const view = typeof window === 'object' && window ? window : root && root.document ? root : null;
   const api = factory(view ? view.EVALoopSelection : require('./loop-selection.js'),
     view ? view.EVATimelineView : require('./timeline-view.js'), view ? view.EVAPlayer : require('./player.js'),
-    view ? view.EVADrawingUI : require('./drawing-ui.js'));
+    view ? view.EVADrawingUI : require('./drawing-ui.js'), view ? view.EVAScreenGestureUI : require('./screen-gesture-ui.js'));
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (view) view.EVAUI = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (selectionAPI, timelineAPI, playerAPI, drawingAPI) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (selectionAPI, timelineAPI, playerAPI, drawingAPI, screenGestureAPI) {
   'use strict';
   function formatTime(seconds) {
     const milliseconds = Math.max(0, Math.floor((Number(seconds) || 0) * 1000 + .00001));
@@ -44,7 +44,7 @@
   function createUI(options = {}) {
     const doc = options.document || document, win = options.window || window, now = options.now || (() => performance.now());
     const ids = ['screen', 'picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
-      'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentText', 'commentSave', 'commentCancel', 'commentKeyboardHint',
+      'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentEditor', 'commentTime', 'commentChoice', 'commentText', 'commentSave', 'commentCancel', 'commentKeyboardHint',
       'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality',
       'forwardPredecode', 'decodedCache', 'cacheStatus', 'playbackRate', 'loopSelect', 'loopCancel', 'loopEnabled', 'loopRange',
       'loopBand', 'loopHandleStart', 'loopHandleEnd', 'loopHelp', 'timeRuler', 'wheelFrames', 'showCacheStrip', 'rateStep', 'customPlaybackRate',
@@ -54,7 +54,7 @@
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
     let viewRange = { start: 0, end: 0, focused: false }, timelineWidth = null, rulerKey = null;
     let rateRequest = null, noteRequest = null, exportRequest = null;
-    let drawingUI = null;
+    let drawingUI = null, screenUI = null;
     const markerButtons = [], markerTimes = new WeakMap();
     const attributes = new Map();
     const loopAttributes = new WeakMap();
@@ -411,6 +411,7 @@
         const item = state.comments?.items.find(n => n.id === button.dataset.commentId);
         if (action === 'drawing') { drawingUI.begin(button.dataset.commentId); return; }
         if (action === 'clear-drawing') { invoke(() => session.clearDrawing(item.drawingId)); return; }
+        if (action === 'edit' && item?.localDrawing) { invoke(async () => { await session.seekComment(item.id); return session.beginComment(); }); return; }
         if (action === 'delete' && item?.localDrawing) { drawingUI.begin(item.id, 'delete'); return; }
         if (!action && item?.time > state.duration) return; // Still expose management of an out-of-range note.
         invoke(() => action === 'edit' ? session.editComment(button.dataset.commentId)
@@ -424,11 +425,12 @@
     async function beginNote() {
       if (!shortcutReady() || transportBusy || el.commentAdd.disabled) return;
       const job = noteRequest = { session, epoch: state.epoch }; update(state);
-      try { const pending = job.session.beginComment(); if (pending && typeof pending.then === 'function') await pending; }
+      try { const pending = job.session.beginComment(selectedComment); if (pending && typeof pending.then === 'function') await pending; }
       catch (_) { /* Session publishes proposal failures. */ }
       finally { if (noteRequest === job) { noteRequest = null; update(state); } }
     }
     on(el.commentAdd, 'click', beginNote);
+    on(el.commentChoice, 'change', () => { if (session && el.commentChoice.value) invoke(() => session.chooseComment(el.commentChoice.value)); });
     on(el.commentText, 'input', () => { if (session) invoke(() => session.setCommentText(el.commentText.value)); });
     on(el.commentText, 'compositionstart', () => { commentComposing = true; });
     on(el.commentText, 'compositionend', () => {
@@ -505,11 +507,17 @@
         for (const item of items) {
           const inRange = item.time <= state.duration;
           const button = doc.createElement('button'); button.type = 'button'; button.dataset.commentId = item.id;
-          button.className = 'comment-item'; button.textContent = formatTime(item.time) + '  ' + item.text + (item.drawingId ? '  ◇圈画' : '');
+          button.className = 'comment-item'; button.textContent = formatTime(item.time) + '  ' + item.text;
+          if (item.drawingId) {
+            const badge = doc.createElementNS ? doc.createElementNS('http://www.w3.org/2000/svg', 'svg') : doc.createElement('span');
+            badge.setAttribute('class', 'drawing-badge'); badge.setAttribute('viewBox', '0 0 24 24'); badge.setAttribute('aria-label', '含圈画');
+            if (doc.createElementNS) { const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'm5 17-1 4 4-1L20 8l-3-3L5 17Zm10-10 3 3'); badge.appendChild(path); }
+            button.appendChild(badge);
+          }
           button.title = inRange ? '定位到此标注并展开操作' : '此标注超出当前时长，点击展开管理，不定位视频';
           const row = doc.createElement('div'); row.className = 'comment-row'; row.appendChild(button);
           const actions = doc.createElement('div'); actions.className = 'comment-row-actions';
-          const rowActions = item.localDrawing ? [['delete', '删除整条']] : [['edit', '修改文字'], ['delete', '删除整条']];
+          const rowActions = item.localDrawing ? [['edit', '添加文字说明'], ['delete', '清除圈画']] : [['edit', '修改文字'], ['delete', '删除文字']];
           if (typeof session?.beginDrawing === 'function') rowActions.push(['drawing', item.drawingId ? '编辑圈画' : '添加圈画']);
           if (item.drawingId) rowActions.push(['clear-drawing', '清除圈画']);
           for (const [action, label] of rowActions) {
@@ -546,7 +554,14 @@
           ['paused', 'playing'].includes(state.state) && value?.status === 'ready';
         if (saved && editorHadFocus &&
             (typeof doc.hasFocus !== 'function' || doc.hasFocus())) el.timeline.focus();
-        editorId = null; editorEpoch = null; commentComposing = false; set(el.commentText, 'value', ''); return;
+        el.commentChoice.hidden = true; editorId = null; editorEpoch = null; commentComposing = false; set(el.commentText, 'value', ''); return;
+      }
+      const choosing = draft.status === 'choosing';
+      set(el.commentChoice, 'hidden', !choosing);
+      if (choosing && editorId !== draft.id) {
+        el.commentChoice.replaceChildren(); const empty = doc.createElement('option'); empty.value = ''; empty.textContent = '选择要修改的文字'; el.commentChoice.appendChild(empty);
+        for (const item of draft.choices) { const option = doc.createElement('option'); option.value = item.id; option.textContent = item.text; el.commentChoice.appendChild(option); }
+        el.commentChoice.value = ''; el.commentChoice.focus();
       }
       const editable = ['editing', 'failed'].includes(draft.status), deleting = draft.kind === 'delete';
       set(el.commentTime, 'textContent', Number.isFinite(draft.time) ? (editable ? '固定时间 ' : '原保存时间 ') + formatTime(draft.time) : '正在固定画面…');
@@ -555,7 +570,7 @@
       set(el.commentKeyboardHint, 'hidden', !editable || deleting);
       set(el.commentSave, 'textContent', draft.status === 'unknown' ? '核对保存结果' : deleting ? '确认删除' : '保存');
       set(el.commentSave, 'disabled', !editable && draft.status !== 'unknown');
-      set(el.commentCancel, 'disabled', !['editing', 'failed', 'pausing', 'obsolete'].includes(draft.status));
+      set(el.commentCancel, 'disabled', !['editing', 'failed', 'pausing', 'obsolete', 'choosing'].includes(draft.status));
       if (editable && editorId !== draft.id) { editorId = draft.id; editorEpoch = state.epoch; if (!deleting) el.commentText.focus(); }
     }
     function update(snapshot) {
@@ -597,15 +612,24 @@
       updateMemorySettings();
       updateTransport();
       if (drawingUI) drawingUI.update(state);
+      if (screenUI) screenUI.update();
       const hideStrip = state.interactionSettings?.showCacheStrip === false;
       if (el.decodedCache.hidden !== hideStrip) { set(el.decodedCache, 'hidden', hideStrip); coverageKey = null; }
     }
     drawingUI = drawingAPI.createDrawingUI({ document: doc, window: win, getSession: () => session, getState: () => state,
       canBegin: () => shortcutReady() && !transportBusy && state.exportState?.status !== 'unknown', isKey: letterKey });
+    screenUI = screenGestureAPI.createScreenGestureUI({ document: doc, window: win, now,
+      getContext: () => ({ epoch: state.epoch, enabled: interactive() && !gesture && !memoryBusy && !cleaning &&
+          !selection.snapshot().editing && !selection.snapshot().busy,
+        canStart: shortcutReady() && !transportBusy, width: el.screen.getBoundingClientRect().width,
+        range: viewRange, time: state.playback?.time || 0, rate: state.playback?.transport?.rate || 1,
+        step: state.interactionSettings?.rateStep || .1 }),
+      seek: (time, final) => { clearHint(); invoke(() => session.seek(time, { final, kind: final ? 'release' : 'rapid', inputAt: now() })); },
+      rate: value => requestRate(value) });
     return { canvas: el.picture, confirmDrawingExit: () => drawingUI.confirmExit(), bindSession(value) {
       if (session !== value) {
         showCommentActions(null);
-        drawingUI.reset();
+        drawingUI.reset(); screenUI.reset();
         rateRequest = noteRequest = exportRequest = null; transportBusy = false;
         selection.destroy();
         if (session && typeof session.setCommentsVisible === 'function') session.setCommentsVisible(false);
@@ -616,7 +640,7 @@
       if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
     }, update,
       destroy() {
-        drawingUI.destroy();
+        drawingUI.destroy(); screenUI.destroy();
         rateRequest = noteRequest = exportRequest = null; transportBusy = false;
         if (session && typeof session.setCommentsVisible === 'function') session.setCommentsVisible(false);
         if (memoryTimer !== null) { win.clearInterval(memoryTimer); memoryTimer = null; }

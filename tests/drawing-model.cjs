@@ -53,4 +53,39 @@ test('Tools share one color while keeping separate valid widths and one text siz
   const checked = model.validateStyles(p); assert.equal(checked.widths.rect, .004); checked.widths.pen = .004; assert.equal(p.widths.pen, .02);
   for (const invalid of [{ ...p, color: 'red' }, { ...p, extra: true }, { ...p, size: .5 }, { ...p, widths: { ...p.widths, pen: 0 } }]) assert.throws(() => model.validateStyles(invalid));
 });
+
+test('A local eraser cuts every tool without deleting its object or source pixels, and undo restores the complete group', () => {
+  const stroke={width:.05,points:[{x:.1,y:.2},{x:.7,y:.2}]};
+  for(const kind of model.KINDS){
+    const object=kind==='pen'?{id:kind,kind,color:'#ffffff',width:.01,points:[{x:.1,y:.2},{x:.7,y:.2}]}:
+      {id:kind,kind,color:'#ffffff',width:.01,a:{x:.1,y:.2},b:{x:.7,y:.5},...(kind==='text'?{text:'完整文字',size:.04}:{})};
+    const editor=model.createEditor([object]), next=model.erase([object],stroke);assert.equal(next.length,1);assert.equal(next[0].kind,kind);assert.equal(next[0].erasures.length,1);
+    assert.equal(object.erasures,undefined);editor.replace(next);assert(editor.undo());assert.deepEqual(editor.snapshot(),[object]);
+  }
+});
+test('Erased holes are no longer selectable; the rest of a stroke remains selectable at the same scale',()=>{
+  const line={id:'line',kind:'pen',color:'#ffffff',width:.01,points:[{x:.1,y:.5},{x:.9,y:.5}]}, g={width:1000,height:600};
+  const [cut]=model.erase([line],{width:.1,points:[{x:.5,y:.3},{x:.5,y:.7}]});
+  assert(!model.hitTest([cut],'pen',{x:.5,y:.5},g));assert(model.hitTest([cut],'pen',{x:.2,y:.5},g));
+});
+test('Move and resize carry eraser holes with the object, including arrow endpoint and font transforms',()=>{
+  const cut={...shape,erasures:[{width:.02,points:[{x:.2,y:.2},{x:.3,y:.3}]}]};
+  const moved=model.transform(cut,{x:.2,y:.2},{x:.3,y:.3});assert(Math.abs(moved.erasures[0].points[0].x-.3)<1e-8);
+  for(const object of [cut,{...cut,kind:'arrow'},{...cut,kind:'text',text:'A',size:.04}]){const resized=model.transform(object,object.a,{x:.8,y:.8},'se');model.validate([resized]);assert(resized.erasures[0].width>object.erasures[0].width);}
+  model.validate([model.transform({...cut,kind:'arrow'},cut.a,{x:.05,y:.05},'a')]);
+});
+test('Eraser data is bounded and strictly validated; out-of-image and unknown fields cannot overwrite valid data',()=>{
+  assert.throws(()=>model.erase([shape],{width:.1,points:[{x:2,y:0}]}));
+  assert.throws(()=>model.validate([{...shape,erasures:[{width:.02,points:[{x:.2,y:.2}],unknown:true}]}]));
+  assert.throws(()=>model.validate([{...shape,erasures:Array.from({length:65},()=>({width:.02,points:[{x:.2,y:.2}]}))}]));
+  assert.deepEqual(model.erase([shape],{width:.01,points:[{x:.99,y:.99}]}),[shape]);
+});
+test('Fade follows video time in both directions; overlaps keep all groups and remain attached to original frames',()=>{
+  const records=[{id:'a',time:1,frameId:8,objects:[shape]},{id:'b',time:1.1,frameId:9,objects:[shape]}];
+  const middle=model.visibleGroups(records,1.05);assert.equal(middle.length,2);assert(Math.abs(middle[0].opacity-.8)<1e-8);
+  assert.equal(model.visibleGroups(records,.749).length,0);assert.equal(model.visibleGroups(records,1.351).length,0);
+  assert.equal(model.visibleGroups(records,1)[0].opacity,1);assert.deepEqual(records.map(n=>n.frameId),[8,9]);
+  assert.equal(model.frameIndex([{time:0},{time:.033},{time:.099}],.08,.15),1);
+});
+
 console.log('Drawing model checks: ' + count + '; pure geometry/data only.');

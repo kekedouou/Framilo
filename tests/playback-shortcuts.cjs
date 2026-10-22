@@ -14,6 +14,7 @@ async function main() {
   await test('Step arithmetic is exact, accepts all four increments, and clamps without zero/reverse speeds', () => {
     for (const step of [.1, .2, .25, .5]) { assert.equal(steppedRate(1, 1, step), 1 + step); assert.equal(steppedRate(.1, -1, step), .1); assert.equal(steppedRate(4, 1, step), 4); }
     let rate = .1; for (let n = 0; n < 10; n++) rate = steppedRate(rate, 1, .1); assert.equal(rate, 1.1);
+    assert.equal(steppedRate(1.125, 1, .25), 1.375); assert.equal(steppedRate(1.125, -1, .1), 1.025);
     assert.equal(steppedRate(.1, 1, .25), .35); assert.equal(steppedRate(.35, -1, .25), .1);
     for (const rate of [0, .09, 4.01, NaN, Infinity, '1']) assert(!validRate(rate));
     assert.throws(() => steppedRate(1, 1, .3));

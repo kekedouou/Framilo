@@ -126,3 +126,25 @@ canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
   button { padding: 5px 8px; }
   .sidebar { padding: 16px 12px; }
 }
+
+/* E-11: quiet annotation identifiers; hit targets remain larger than handles. */
+.drawing-badge { display: inline-block; width: 13px; height: 13px; margin-left: 7px; vertical-align: -2px; fill: none; stroke: currentColor; stroke-width: 1.5; opacity: .58; }
+#commentChoice { width: 100%; margin: 4px 0 8px; }
+
+/* E-12 direction wheel stays off the image until an intentional gesture. */
+.screen { touch-action: none; }
+.screen-gesture-ring { position:absolute; z-index:5; width:112px; height:112px; transform:translate(-50%,-50%) scale(.94); opacity:0; pointer-events:none; border-radius:50%; border:1px solid #d3d7dd22; background:#20202080; transition:opacity 110ms ease,transform 110ms ease; color:#e8e8e8; }
+.screen-gesture-ring[data-open="true"] { opacity:.72; transform:translate(-50%,-50%) scale(1); }
+.screen-gesture-ring span { position:absolute; width:32px; text-align:center; font-size:21px; line-height:18px; opacity:.28; transition:opacity 80ms ease; }
+.screen-gesture-ring small { display:block; font-size:10px; line-height:15px; }
+.gesture-up { top:7px; left:39px; }.gesture-down { bottom:5px; left:39px; }.gesture-left { left:4px; top:40px; }.gesture-right { right:4px; top:40px; }
+.screen-gesture-ring i { position:absolute; width:4px; height:4px; border-radius:50%; background:#ddd7; left:53px; top:53px; }
+.screen-gesture-ring[data-direction="up"] .gesture-up,.screen-gesture-ring[data-direction="down"] .gesture-down,.screen-gesture-ring[data-direction="left"] .gesture-left,.screen-gesture-ring[data-direction="right"] .gesture-right { opacity:1; }
+.screen-gesture-ring[data-held="false"] { border-color:transparent; background:transparent; }
+.screen-gesture-ring[data-held="false"] span { opacity:0; }
+.screen-gesture-ring[data-held="false"][data-direction="up"] .gesture-up,.screen-gesture-ring[data-held="false"][data-direction="down"] .gesture-down,.screen-gesture-ring[data-held="false"][data-direction="left"] .gesture-left,.screen-gesture-ring[data-held="false"][data-direction="right"] .gesture-right { opacity:.7; }
+.screen-rate-hint { position:absolute; z-index:5; left:15px; top:13px; padding:3px 7px; border-radius:3px; color:#e8e8e8; background:#20202065; font-size:15px; opacity:0; transform:translateY(-2px); transition:opacity 120ms ease,transform 120ms ease; pointer-events:none; }
+.screen-rate-hint[data-open="true"] { opacity:.72; transform:translateY(0); }
+@media(prefers-reduced-motion:reduce) { .screen-gesture-ring,.screen-gesture-ring span,.screen-rate-hint { transition:none; } }
+
+.screen:focus, #picture:focus { outline: none; }

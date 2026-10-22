@@ -218,6 +218,13 @@ async function saveComment(api, proposal, settings = {}, options = {}) {
     if (!proposal || typeof proposal.text !== 'string' || !proposal.text.trim() || !Number.isFinite(proposal.time) || proposal.time < 0)
       throw commentError('COMMENT_PROPOSAL_INVALID', '请填写标注文字，并确认固定的画面时间。');
     const result = await commentItem(api, proposal.source, proposal.libraryPath, options), before = cloneComments(result.item.comments);
+    if (proposal.frameBounds) {
+      const b = proposal.frameBounds;
+      if (!Number.isFinite(b.start) || !Number.isFinite(b.end) || b.end <= b.start || proposal.time < b.start || proposal.time > b.end) throw commentError('COMMENT_FRAME_INVALID', '标注帧范围无效。');
+      const existing = before.filter(n => n.time >= b.start && (n.time < b.end || b.final && n.time === b.end));
+      if (existing.length) return proposal.reuseSameFrame ? { status: 'saved', commentId: existing[0].id, items: before, reused: true, message: '已关联当前帧已有文字。' }
+        : { status: 'failed', items: before, message: '当前帧已在Eagle添加文字，请取消后按N修改已有标注；你的输入仍保留。' };
+    }
     if (typeof result.item.addComment !== 'function') throw commentError('COMMENT_WRITE_UNAVAILABLE', '当前Eagle没有时间点标注添加接口。');
     guardLibrary(api, proposal.libraryPath);
     if (settings.isCurrent && !settings.isCurrent()) throw commentError('COMMENT_SUPERSEDED', '原提案已失效，未发送标注。');
