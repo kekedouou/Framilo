@@ -20,6 +20,7 @@ async function main() {
     [1440,1440,'1080p',[1080,1080],false], [1919,1079,'1080p',[1919,1079],true]]) {
     const p = profile.dimensions({ width:w,height:h },q); assert.deepEqual([p.width,p.height],expected); assert.equal(p.originalResolution,original);
   }
+  for(const [w,h,q,expected,original] of [[3840,2160,'1440p',[2560,1440],false],[2160,3840,'1440p',[1440,2560],false],[1920,1080,'1440p',[1920,1080],true],[2560,1440,'1440p',[2560,1440],true],[1440,2560,'1440p',[1440,2560],true]]){const p=profile.dimensions({width:w,height:h},q);assert.deepEqual([p.width,p.height],expected);assert.equal(p.originalResolution,original);profile.validate(p,{width:w,height:h});}
   const rotated=profile.dimensions({width:1920,height:1080,side_data_list:[{rotation:-90}]},'720p');
   assert.deepEqual([rotated.width,rotated.height],[720,1280]);
   const sar=profile.dimensions({width:720,height:576,sample_aspect_ratio:'16:15'},'720p'); assert.equal(sar.width,768); assert(!sar.originalResolution);
@@ -57,6 +58,7 @@ async function main() {
   const idle=harness(), idleA=await build(idle,'720p');idle.cache.release(idleA);const active=await build(idle,'1080p');
   const aged=idle.reboot({now:()=>Date.now()+86400001}), idleTx=aged.begin({sourceSha256:'d'.repeat(64),previewQuality:'720p'});idleTx.close();
   assert.equal(aged.inventory().caches.length,1);assert.equal(aged.inventory().caches[0].directory,active.cacheDir);idle.cache.release(active);
+  const triple=harness(),variants=[];for(const q of profile.QUALITIES){const info=await build(triple,q);variants.push([q,info.cacheDir]);triple.cache.release(info);}assert.equal(new Set(variants.map(n=>n[1])).size,3);const reboot3=triple.reboot();for(const[q,dir]of variants){const tx=reboot3.begin({sourceSha256:SOURCE_SHA,previewQuality:q});const manifest=await tx.readComplete();const info=await tx.finish(manifest,source);assert.equal(info.cacheDir,dir);tx.close();reboot3.release(info);}assert.equal((await reboot3.clearOther({sourceSha256:SOURCE_SHA})).cleared,0);
   console.log('E03 preview profiles/cache: dimension, rotation/SAR, no-upscale, legacy and double-variant reuse, shared clear, cancel/reopen, identity mismatch passed; models only.');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

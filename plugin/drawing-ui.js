@@ -10,7 +10,7 @@
     const ids = ['screen', 'picture', 'drawingLayer', 'drawingPanel', 'drawingTool', 'drawingColor', 'drawingWidth', 'drawingSize',
       'drawingToolPen', 'drawingToolArrow', 'drawingToolRect', 'drawingToolEllipse', 'drawingToolText', 'drawingToolEraser',
       'drawingColorButton', 'drawingOptions', 'drawingProperties', 'drawingPalette', 'drawingWidthLabel', 'drawingWidthName', 'drawingSizeLabel',
-      'drawingText', 'drawingDelete', 'drawingSave', 'drawingCancel', 'drawingMessage', 'drawingNew',
+      'drawingText', 'drawingTextDelete', 'drawingDelete', 'drawingSave', 'drawingCancel', 'drawingMessage', 'drawingNew',
       'showDrawings', 'drawingStatus', 'drawingExit', 'drawingExitMessage', 'drawingExitSave', 'drawingExitDiscard', 'drawingExitReturn'];
     const el = Object.fromEntries(ids.map(id => [id, doc.getElementById(id)]));
     if (ids.some(id => !el[id])) throw Error('圈画界面缺少必要元素。');
@@ -49,15 +49,25 @@
       layoutText();
     }
     function point(e) { return geometry ? { x: Math.max(0, Math.min(1, (e.clientX - geometry.left) / geometry.width)), y: Math.max(0, Math.min(1, (e.clientY - geometry.top) / geometry.height)) } : null; }
+    const measure = el.picture.getContext?.('2d');
+    function textWidth(value, font) {
+      if (measure?.measureText) { measure.font = font + 'px "Segoe UI", "Microsoft YaHei UI", sans-serif'; return measure.measureText(value).width; }
+      return [...value].reduce((n, c) => n + (c.charCodeAt(0) > 255 ? 1 : .6), 0) * font;
+    }
     function layoutText() {
+      el.drawingTextDelete.hidden = !textDraft || el.drawingText.hidden;
       if (!textDraft || !geometry) return;
       const o = textDraft.object, font = o.size * Math.min(width, height) * geometry.width / width;
-      const lines = el.drawingText.value.split('\n'), longest = Math.max(4, ...lines.map(s => [...s].reduce((n, c) => n + (c.charCodeAt(0) > 255 ? 1 : .6), 0)));
-      Object.assign(el.drawingText.style, { left: parseFloat(el.drawingLayer.style.left) + o.a.x * geometry.width - 4 + 'px',
-        top: parseFloat(el.drawingLayer.style.top) + o.a.y * geometry.height - 4 + 'px',
-        width: Math.min(Math.max(80, longest * font + 16), Math.max(36, (1 - o.a.x) * geometry.width + 4)) + 'px',
-        height: Math.min(Math.max(font * 1.25 + 10, lines.length * font * 1.25 + 10), Math.max(36, (1 - o.a.y) * geometry.height + 4)) + 'px',
-        fontSize: font + 'px', color: o.color });
+      const lines = el.drawingText.value.split('\n'), natural = Math.max(36, ...lines.map(s => textWidth(s, font))) + 14;
+      const left = parseFloat(el.drawingLayer.style.left) + o.a.x * geometry.width - 4;
+      const top = parseFloat(el.drawingLayer.style.top) + o.a.y * geometry.height - 4;
+      const available = Math.max(36, (1 - o.a.x) * geometry.width + 4), boxWidth = Math.min(natural, available);
+      const boxHeight = Math.max(font * 1.25 + 10, lines.length * font * 1.25 + 10);
+      Object.assign(el.drawingText.style, { left: left + 'px', top: top + 'px', width: boxWidth + 'px',
+        height: boxHeight + (natural > available ? 16 : 0) + 'px', fontSize: font + 'px', color: o.color,
+        overflowX: natural > available ? 'auto' : 'hidden' });
+      Object.assign(el.drawingTextDelete.style, { left: left + boxWidth - 9 + 'px', top: Math.max(2, top - 8) + 'px' });
+      el.drawingTextDelete.disabled = el.drawingText.disabled;
     }
     function properties() {
       const o = current();
@@ -135,8 +145,8 @@
     function textObject(object, value) {
       if (value.length > 4096) throw Error('画面文字超过4096字，请缩短后保存。');
       const lines = value.split('\n'), size = object.size * Math.min(width, height);
-      const length = Math.max(...lines.map(s => [...s].reduce((n, c) => n + (c.charCodeAt(0) > 255 ? 1 : .6), 0)));
-      return { ...object, text: value, b: { x: Math.min(1, object.a.x + length * size / width), y: Math.min(1, object.a.y + lines.length * size * 1.25 / height) } };
+      const length = Math.max(...lines.map(s => textWidth(s, size)));
+      return { ...object, text: value, b: { x: Math.min(1, object.a.x + length / width), y: Math.min(1, object.a.y + lines.length * size * 1.25 / height) } };
     }
     function commitText() {
       if (!textDraft) return;
@@ -287,6 +297,8 @@
       if (publish(committed.filter(o => o.id !== selected))) selected = null; render(committed);
     }
     on(el.drawingDelete, 'click', removeSelected);
+    on(el.drawingTextDelete, 'pointerdown', e => e.preventDefault());
+    on(el.drawingTextDelete, 'click', () => { if (!el.drawingTextDelete.disabled) { removeSelected(); el.drawingLayer.focus?.({ preventScroll: true }); } });
     on(el.drawingText, 'input', () => { if (!textDraft) return; if (el.drawingText.value.trim() || !textDraft.fresh) session()?.touchDrawing(); layoutText(); });
     on(el.drawingText, 'compositionstart', () => { composing = true; });
     on(el.drawingText, 'compositionend', () => { composing = false; compositionEnd = now(); if (textDraft && el.drawingText.value.trim()) session()?.touchDrawing(); layoutText(); });
@@ -339,7 +351,7 @@
     });
 
     function normalObjects() {
-      const found = model.visibleGroups(snapshot?.drawings?.records || [], snapshot?.playback?.time);
+      const found = model.visibleGroups(snapshot?.drawings?.records || [], snapshot?.playback?.time, snapshot?.interactionSettings?.drawingFadeSeconds ?? model.FADE_SECONDS, snapshot?.playback?.frameOrdinal);
       const ids = new Set(found.map(n => n.record.id));
       normalOrder = normalOrder.filter(id => ids.has(id));
       for (const n of found) if (!normalOrder.includes(n.record.id)) normalOrder.push(n.record.id);
@@ -362,7 +374,7 @@
       el.drawingStatus.textContent = state?.message || '';
       const shown = active ? temporaryVisible : state?.visible !== false;
       if (active && (!shown || d.kind === 'delete')) closeProperties();
-      el.drawingText.hidden = !textDraft || !shown;
+      el.drawingText.hidden = !textDraft || !shown; el.drawingTextDelete.hidden = el.drawingText.hidden;
       el.drawingLayer.style.pointerEvents = active && shown && d.kind !== 'delete' ? 'auto' : 'none';
       const valueObjects = active ? objects() : normalObjects();
       hideLayer(!shown || !active && !valueObjects.length || !['paused', 'playing', 'seeking'].includes(value.state));

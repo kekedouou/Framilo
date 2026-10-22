@@ -121,6 +121,7 @@
       this.cache = new Map(); this.tasks = new Map(); this.loads = new Set(); this.prefetchFailed = new Set();
       this.audioContext = null; this.audioBuffer = null; this.audioBudget = null; this.contexts = new Set(); this.graph = null; this.anchor = null;
       this.decodeDelayMs = 0; this.verifyMarkers = true; this.rafCount = 0; this.drawCount = 0; this.lastDrawAt = null; this.maxDrawGapMs = 0;
+      this.lastTickAt = null; this.displayInterval = 1000 / 60; this.recovery = null;
       this.lastClockEmit = -Infinity; this.waitingSince = null; this.ended = false; this.lastIssue = null; this.lastErrorCode = null;
       this.rafId = null; this.disposed = false; this.disposePromise = null; this._schedule();
       this.playbackRate = 1; this.loopStart = null; this.loopEnd = null; this.loopEnabled = false;
@@ -144,7 +145,7 @@
         cacheBytes: ledger.used, cachePeakBytes: ledger.peak, budget: ledger, audioAvailable: !!this.audioBuffer,
         decodeDelayMs: this.decodeDelayMs, verifyMarkers: this.verifyMarkers, epoch: this.epoch, drawCount: this.drawCount,
         rafOpportunity: this.rafCount, maxDrawGapMs: this.maxDrawGapMs, lastIssue: this.lastIssue, lastErrorCode: this.lastErrorCode,
-        playbackGuardMs: this.playbackGuardMs, telemetryIssue: this.telemetryIssue || null,
+        buffering: !!this.recovery, playbackGuardMs: this.playbackGuardMs, telemetryIssue: this.telemetryIssue || null,
         experimentMode: this.experimentMode, compressed: { ...this.compressedStats, residentFrames: this.compressed.size,
           residentBytes: ledger.kinds && ledger.kinds['compressed-jpeg'] || 0, limitBytes: this.experimentMode === 'compressed-ram' ? this.compressedLimit : 0 },
         forwardPredecode: this.forwardPredecode, forwardStatus: this.forwardStatus, forwardIssue: this.forwardIssue,
@@ -403,6 +404,35 @@
       this._halt(false); this.lastIssue = null; this.lastErrorCode = null;
       return this._request(this.info.frames[ordinal].time, { index: ordinal, final: true, kind: 'step', stepDirection: Math.sign(delta), inputAt: this.env.now() });
     }
+    _playAheadOrdinals(time, ordinal, count = 12) {
+      const loop = this.loopEnabled ? this._loopRange() : null, found = new Set();
+      // At 4x on a 60Hz display, decoding every intervening 60fps source frame
+      // wastes both slots. Forecast the frames actually due at future refreshes.
+      const step = this.displayInterval / 1000 * this.playbackRate;
+      for (let n = 1; n <= count; n++) {
+        let next = time + step * n;
+        if (loop && next >= loop.end) next = loop.start + (next - loop.end) % (loop.end - loop.start);
+        if (!loop && next >= this.info.duration) break;
+        const at = this.index.frameAt(this.info.frames, next);
+        if (at !== ordinal && (!loop || at >= loop.first && at <= loop.last)) found.add(at);
+      }
+      return [...found];
+    }
+    _recoverSupply(time, ordinal) {
+      if (this.recovery || this.state !== 'playing') return;
+      const epoch = this.epoch; this._halt(false);
+      const job = this.recovery = { epoch, token: this.playToken, started: this.env.now(), ordinal };
+      this._emit('clock', { phase: 'supply-buffer-start', mediaTime: time, frameOrdinal: ordinal });
+      // Pin one real target. Advancing the clock while decoding kept replacing
+      // it with a future frame and could starve the display indefinitely.
+      this._request(time, { index: ordinal, kind: 'buffer', final: true, inputAt: this.env.now() }).then(async result => {
+        if (this.recovery !== job || !this._playValid(epoch, job.token)) return;
+        if (!['drawn', 'reused'].includes(result.status)) { this.recovery = null; return; }
+        this.recovery = null;
+        this._emit('clock', { phase: 'supply-buffer-ready', mediaTime: this.time, waitMs: this.env.now() - job.started });
+        if (this.state === 'paused') await this.play();
+      }).catch(error => { if (this._valid(epoch) && this.recovery === job) { this.recovery = null; this._fail(error); } });
+    }
     async _prime(ordinal, epoch, token) {
       while (this._playValid(epoch, token)) {
         if (this.cache.has(ordinal)) return this.cache.get(ordinal);
@@ -426,8 +456,7 @@
           if (!['drawn', 'reused'].includes(result.status) || !this._playValid(epoch, token)) return { status: 'superseded' };
           ordinal = first; this._change('seeking');
         }
-        for (let offset = 0; offset < Math.min(4, loop ? loop.last - loop.first + 1 : this.info.frames.length - ordinal); offset++) {
-          const next = loop ? loop.first + (ordinal - loop.first + offset) % (loop.last - loop.first + 1) : ordinal + offset;
+        for (const next of [ordinal, ...this._playAheadOrdinals(this.info.frames[ordinal].time, ordinal, 3)]) {
           await this._prime(next, epoch, token); if (!this._playValid(epoch, token)) return { status: 'superseded' };
         }
         const media = this.info.frames[ordinal].time, when = context ? context.currentTime + 0.02 : null;
@@ -501,7 +530,7 @@
     }
     _halt(capture) {
       const media = capture && this.state === 'playing' ? this._clockTime() : this.time;
-      ++this.playToken; const graph = this.graph; this.graph = null;
+      this.recovery = null; ++this.playToken; const graph = this.graph; this.graph = null;
       if (graph) {
         graph.source.onended = null;
         try { graph.gain.gain.setValueAtTime(0, this.audioContext.currentTime); } catch (_) { /* closed output */ }
@@ -512,9 +541,9 @@
       this.anchor = null; this.waitingSince = null; return media;
     }
     pause() {
-      const wasPlaying = this.state === 'playing', media = this._halt(true);
+      const wasPlaying = this.state === 'playing', buffering = !!this.recovery, media = this._halt(true);
       if (this.disposed || !this.info || this.state === 'loading' || this.state === 'error') return Promise.resolve({ status: 'ignored', reason: 'not-ready' });
-      if (wasPlaying) return this._request(media, { final: true, kind: 'pause', inputAt: this.env.now() });
+      if (wasPlaying || buffering) return this._request(buffering ? this.time : media, { final: true, kind: 'pause', inputAt: this.env.now() });
       if (this.state === 'seeking' && !(this.target && this.target.resolve)) this._change('paused');
       return Promise.resolve({ status: 'paused' });
     }
@@ -903,14 +932,14 @@
       const maximumTasks = playing ? 2 : 1, direction = this.target && this.target.stepDirection || 1;
       // Reserve the spare task slot for new input. Paused inspection prepares
       // both sides, prioritising the most recent stepping direction.
-      const offsets = playing ? Array.from({ length: 12 }, (_, i) => i + 1) : [direction, -direction, direction * 2, -direction * 2, direction * 3, -direction * 3];
+      const offsets = playing ? this._playAheadOrdinals(this._clockTime(), base) : [direction, -direction, direction * 2, -direction * 2, direction * 3, -direction * 3];
       for (const offset of offsets) {
         if (base === null || this.tasks.size >= maximumTasks) break;
         const loop = playing && this.loopEnabled ? this._loopRange() : null;
-        const ordinal = loop ? loop.first + (base - loop.first + offset) % (loop.last - loop.first + 1) : base + offset;
+        const ordinal = playing ? offset : base + offset;
         if (ordinal < 0 || ordinal >= this.info.frames.length) continue;
         const delta = this.info.frames[ordinal].time - this.info.frames[base].time + (loop && ordinal < base ? loop.end - loop.start : 0);
-        if (playing && delta > 0.3 * this.playbackRate) break;
+        if (playing && delta < 0 && !loop) continue;
         if (!this.cache.has(ordinal) && !this.tasks.has(this.epoch + ':' + ordinal) && !this.prefetchFailed.has(ordinal)) this._decode(ordinal, playing ? 'play-ahead' : 'neighbour', null);
       }
       this._startBackground();
@@ -927,6 +956,9 @@
     }
     _tick() {
       this.rafId = null; if (this.disposed) return; ++this.rafCount;
+      const tickAt = this.env.now(), interval = this.lastTickAt === null ? 0 : tickAt - this.lastTickAt;
+      if (interval >= 8 && interval <= 100) this.displayInterval = this.displayInterval * .75 + interval * .25;
+      this.lastTickAt = tickAt;
       this.inRaf = true;
       try {
         if (this.info && this.state === 'playing') {
@@ -942,7 +974,7 @@
             if (ordinal !== this.currentIndex && !this.cache.has(ordinal)) {
               if (this.waitingSince === null) this.waitingSince = this.env.now();
               if (this.env.now() - this.waitingSince > this.playbackGuardMs) {
-                const error = new Error('画面供应不足，已停止声音；没有回退普通播放器。'); error.code = 'UNDERRUN'; this._fail(error);
+                this._recoverSupply(media, ordinal);
               }
             } else this.waitingSince = null;
             if (this.env.now() - this.lastClockEmit >= 250) {

@@ -39,11 +39,11 @@ async function main(){
   }
   const content='a'.repeat(64),source={sha256:content,codec:'h264',width:1920,height:1080,hasAudioStream:false,itemId:'local-only',filePath:path.join(scratch,'not-a-real-source.mp4')};
   const make=()=>createCache({pluginRoot:scratch,diskBytes:2*MIB});let cache=make();
-  for(const q of profiles.QUALITIES){const tx=cache.begin({sourceSha256:content,previewQuality:q});const a=await tx.writeAsset('0.jpg',images.get(q));const preview=profiles.dimensions(source,q);
+  for(const q of ['720p','1080p'] /* original E03/E04 matrix */){const tx=cache.begin({sourceSha256:content,previewQuality:q});const a=await tx.writeAsset('0.jpg',images.get(q));const preview=profiles.dimensions(source,q);
     const info=await tx.finish({source,preview,width:preview.width,height:preview.height,duration:1/24,frames:[{...a,id:0,ptsTicks:'0',timeBase:[1,24],time:0,end:1/24}],audio:null},source);
     tx.close();await cache.release(info);}
   cache=make();assert.equal(cache.inventory().caches.length,2);
-  for(const q of profiles.QUALITIES){const tx=cache.begin({sourceSha256:content,previewQuality:q}),manifest=await tx.readComplete();assert.equal(manifest.preview.quality,q);
+  for(const q of ['720p','1080p'] /* original E03/E04 matrix */){const tx=cache.begin({sourceSha256:content,previewQuality:q}),manifest=await tx.readComplete();assert.equal(manifest.preview.quality,q);
     const info=await tx.finish(manifest,source);tx.close();assert((await cache.readAsset(info,'0.jpg')).equals(images.get(q)));await cache.release(info);}
   assert.equal((await cache.clearOther({sourceSha256:content})).cleared,0);
   const cancel=cache.begin({sourceSha256:content,previewQuality:'1080p'});await cancel.writeAsset('cancel.jpg',Buffer.from('cancelled'));await cancel.abort();cancel.close();

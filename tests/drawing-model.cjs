@@ -88,4 +88,9 @@ test('Fade follows video time in both directions; overlaps keep all groups and r
   assert.equal(model.frameIndex([{time:0},{time:.033},{time:.099}],.08,.15),1);
 });
 
+test('Zero fade preserves the entire exact source frame, and configured fade retains overlap',()=>{
+ const records=[{id:'a',frameOrdinal:7,time:.21},{id:'b',frameOrdinal:8,time:.245}];
+ assert.deepEqual(model.visibleGroups(records,.235,0,7).map(n=>n.record.id),['a']);assert.deepEqual(model.visibleGroups(records,.246,0,8).map(n=>n.record.id),['b']);assert.equal(model.visibleGroups(records,.26,0,9).length,0);
+ assert.equal(model.visibleGroups(records,.245,1).length,2);assert.equal(model.visibleGroups(records,1.3,1).length,0);
+});
 console.log('Drawing model checks: ' + count + '; pure geometry/data only.');

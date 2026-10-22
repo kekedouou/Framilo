@@ -386,13 +386,16 @@ async function run() {
     for (let count = 0; count < 12; count++) await h.frame(100);
     assert.equal(h.player.snapshot().state, 'playing'); assert(!h.events.some(event => event.code === 'UNDERRUN')); await h.close();
   });
-  await check('underrun starts when next source frame is missing; final seek can recover', async () => {
-    const h = harness(); await h.load(sample('missing', null, 20, 2)); await h.settle(h.player.play()); const gate = h.gate(4);
-    for (let count = 0; count < 4; count++) await h.frame(500); await h.frame(40);
-    assert.equal(h.player.snapshot().state, 'playing'); await h.frame(100); assert.equal(h.player.snapshot().state, 'playing');
-    await h.frame(80); assert.equal(h.player.snapshot().state, 'error'); assert.equal(h.player.snapshot().lastErrorCode, 'UNDERRUN');
-    const target = h.player.seek(2, { final: true }); gate.resolve(); assert.equal((await h.settle(target)).frameId, 4);
-    assert.equal(h.player.snapshot().state, 'paused'); await h.close();
+  await check('missing supply freezes audio and clock, pins a target and automatically resumes when ready', async () => {
+    const h = harness(); await h.load(sample('missing', audio(0,10), 20, 2)); await h.settle(h.player.play()); const gate = h.gate(4);
+    for (let n=0;n<4;n++) await h.frame(500); await h.frame(40); await h.frame(100); await h.frame(80);
+    assert.equal(h.player.snapshot().state,'seeking'); assert(h.player.snapshot().buffering);
+    const old=h.contexts[0].sources.at(-1);assert(old.stopped);const pinned=h.player.target.index;
+    await h.frame(500);assert.equal(h.player.target.index,pinned);assert(h.player.snapshot().buffering);
+    gate.resolve();for(let n=0;n<12;n++)await h.frame(16);
+    assert.equal(h.player.snapshot().state,'playing');assert(!h.player.snapshot().buffering);
+    assert(!h.events.some(e=>e.code==='UNDERRUN'));assert(h.events.some(e=>e.phase==='supply-buffer-ready'));
+    assert.equal(h.contexts[0].sources.length,2);await h.close();
   });
   await check('audio callback and returned rejection both consumed; failed audio released', async () => {
     const h = harness({ audioFailure: true }); await assert.rejects(() => h.load(sample('bad', audio())), /audio decode failure/);

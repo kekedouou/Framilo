@@ -57,8 +57,8 @@ async function main() {
     console.log('drawing-browser-checks ' + JSON.stringify({ browser: version, result, pageErrors, scope: 'Native Chromium DOM/SVG with Session model; no real Eagle/media/library writes.' }));
     const screenshot = process.argv.slice(2).find(s => /^[a-z0-9-]+\.png$/.test(s));
     if (screenshot) {
-      const folder = path.join(root, 'verification-runs', gestureMode ? 'e12-gestures' : 'e11-annotations'), owner = JSON.parse(fs.readFileSync(path.join(folder, 'owner.json')));
-      assert.equal(owner.owner, gestureMode ? 'eva-e12-gestures' : 'eva-e11-annotations');
+      const folder = path.join(root, 'verification-runs', process.argv.includes('--e13') ? 'e13-experience' : gestureMode ? 'e12-gestures' : 'e11-annotations'), owner = JSON.parse(fs.readFileSync(path.join(folder, 'owner.json')));
+      assert.equal(owner.owner, process.argv.includes('--e13') ? 'eva-e13-experience' : gestureMode ? 'eva-e12-gestures' : 'eva-e11-annotations');
       const data = Buffer.from((await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId)).data, 'base64');
       const names = fs.readdirSync(folder), size = names.reduce((n, name) => n + fs.statSync(path.join(folder, name)).size, 0);
       assert(data.length <= owner.maxFileBytes && names.length < owner.maxFiles && size + data.length <= owner.maxBytes);

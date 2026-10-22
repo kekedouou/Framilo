@@ -116,6 +116,19 @@
     check(Number(el('drawingWidth').value) === .015 && el('drawingColor').value === '#ff5252', 'Recreated UI loads persisted tool preferences');
     stroke('rect', [.12, .2], [.48, .5]); stroke('arrow', [.55, .25], [.78, .4]); stroke('text', [.17, .65]); input('精简标注工具'); tool('text');
 
+    // E-13: real text layout and local deletion.
+    stroke('text',[.12,.45]);input('短句');
+    const shortWidth=el('drawingText').getBoundingClientRect().width,shortHeight=el('drawingText').getBoundingClientRect().height;
+    input('这是一段不会自动换行的较长画面文字 ABC');
+    check(el('drawingText').getBoundingClientRect().width>shortWidth&&el('drawingText').getBoundingClientRect().height===shortHeight,'Text box grows horizontally with measured glyphs without automatic wrapping');
+    check(el('drawingText').wrap==='off'&&el('drawingText').scrollHeight<=el('drawingText').clientHeight+1,'A single long line has no vertical scrolling controls');
+    input('第一行\n第二行');check(el('drawingText').getBoundingClientRect().height>shortHeight,'Only an explicit newline grows text-box height');
+    tool('rect');const textSaved=objects().find(o=>o.text==='第一行\n第二行');tool('text');doubleText([.13,.46]);
+    check(!el('drawingTextDelete').hidden,'Text edit exposes one compact corner delete control');
+    const otherIds=objects().filter(o=>o.id!==textSaved.id).map(o=>o.id);el('drawingTextDelete').click();
+    check(!objects().some(o=>o.id===textSaved.id)&&JSON.stringify(objects().map(o=>o.id))===JSON.stringify(otherIds),'Corner delete removes only its text and keeps the other drawings');
+    background();key('z',{ctrlKey:true});check(objects().some(o=>o.id===textSaved.id),'Corner deletion remains undoable');
+
     // E-11 additions exercise actual SVG masks and input, not a canvas stand-in.
     stored=[]; state.drawings.records=[]; state.drawings.draft=null; publish(); background(); key('d'); await delay();
     stroke('rect',[.2,.2],[.8,.8]); stroke('text',[.25,.3]); input('局部擦除'); tool('rect');
@@ -147,8 +160,11 @@
     layers=[...el('drawingLayer').querySelectorAll('[data-drawing-group]')];
     check(layers.at(-1).getAttribute('data-drawing-group')==='old','Reverse observation also puts a newly appearing group above groups already visible');
     state.playback={...state.playback,time:3};publish();check(el('drawingLayer').hidden,'Groups disappear completely outside their uniform fade windows');
+    state.interactionSettings={drawingFadeSeconds:0};state.playback={...state.playback,time:2.09,frameOrdinal:20};publish();check(el('drawingLayer').querySelectorAll('[data-drawing-group]').length===1&&el('drawingLayer').querySelector('[data-drawing-group=old]').getAttribute('opacity')==='1','Zero fade shows exactly the actual annotated source frame at full opacity');
+    state.playback={...state.playback,time:2.11,frameOrdinal:99};publish();check(el('drawingLayer').hidden,'Zero fade hides graphics on every other frame');state.interactionSettings={drawingFadeSeconds:1};publish();check(!el('drawingLayer').hidden,'One-second configured fade updates visibility without rebuilding media');state.interactionSettings={drawingFadeSeconds:.25};
     state.playback={...state.playback,time:2};publish();background();key('d');await delay();
 
+    tool('text');pointer(el('drawingLayer'),'pointerdown',[.16,.66]);input('画面文字随输入增长，不会自动换行');
     window.EVAUXProof = { checks: results, state, session, ui };
     const out = document.createElement('pre'); out.id = 'drawing-results'; out.hidden = true; out.textContent = JSON.stringify({ passed: true, checks: results }); document.body.appendChild(out);
   } catch (error) {

@@ -7,15 +7,15 @@
     let value=null;
     function down(e,context){
       if(value||e.button!==0||!Number.isFinite(e.x)||!Number.isFinite(e.y)||!(context.width>0)||!(context.range.end>context.range.start))return false;
-      value={id:e.id,epoch:context.epoch,x:e.x,y:e.y,lastX:e.x,lastY:e.y,lastAt:e.at,at:e.at,axis:null,held:false,
+      value={id:e.id,epoch:context.epoch,x:e.x,y:e.y,lastX:e.x,lastY:e.y,lastAt:e.at,at:e.at,axis:null,held:false,moved:false,sustained:false,
         range:{...context.range},width:context.width,time:context.time,rate:context.rate,step:context.step,carry:0,axisAt:null,travel:0};
       return true;
     }
-    function hold(){if(!value||value.axis||value.travel>=6)return false;value.held=true;return true;}
+    function hold(){if(!value||value.axis||value.moved)return false;value.held=true;return true;}
     function move(e){
       if(!value||value.id!==e.id||!Number.isFinite(e.x)||!Number.isFinite(e.y))return null;
       const v=value,dx=e.x-v.x,dy=e.y-v.y,first=!v.axis;
-      v.travel=Math.hypot(dx,dy);
+      v.travel=Math.hypot(dx,dy); v.moved ||= v.travel >= 6;
       if(!v.axis){
         if(Math.max(Math.abs(dx),Math.abs(dy))<6)return null;
         if(Math.abs(dx)>Math.abs(dy)*1.15)v.axis='x';else if(Math.abs(dy)>Math.abs(dx)*1.15)v.axis='y';else return null;
@@ -39,11 +39,11 @@
       v.carry+=my;
       const steps=Math.trunc(v.carry/28);
       if(!steps)return {kind:'direction',direction:my<0?'down':'up'};
-      v.carry-=steps*28;
+      v.carry-=steps*28;v.sustained=true;
       v.rate=clamp(Math.round((v.rate+steps*v.step*factor)*1000)/1000,.1,4);
       return {kind:'rate',rate:v.rate,direction:my<0?'down':'up'};
     }
-    function end(id){if(!value||id!==undefined&&id!==value.id)return null;const old=value;value=null;return old.axis==='x'?{kind:'seek',time:old.time,final:true}:null;}
+    function end(id){if(!value||id!==undefined&&id!==value.id)return null;const old=value;value=null;return old.axis==='x'?{kind:'seek',time:old.time,final:true}:!old.moved&&!old.held?{kind:'toggle'}:null;}
     return {down,hold,move,end,cancel:()=>{value=null;},snapshot:()=>value?{...value,range:{...value.range}}:null};
   }
   return {createGesture,multiplier};

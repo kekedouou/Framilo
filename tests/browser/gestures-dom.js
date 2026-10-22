@@ -5,9 +5,10 @@
   const check=(ok,text)=>{if(!ok)throw Error(text);checks.push(text);};
   const state={epoch:1,state:'paused',duration:10,source:{name:'画面手势检查（无真实视频）'},playback:{time:2,frameId:60,frameOrdinal:60,frameCount:300,transport:{rate:1,loop:{valid:false}}},
     comments:{status:'ready',items:[],draft:null},drawings:{status:'ready',records:[],visible:true,styles:EVADrawingModel.defaultStyles(),draft:null}};
-  let ui;const seeks=[],rates=[],publish=()=>ui.update({...state,playback:{...state.playback},drawings:{...state.drawings}});
+  let ui,toggles=0;const seeks=[],rates=[],publish=()=>ui.update({...state,playback:{...state.playback},drawings:{...state.drawings}});
   const session={snapshot:()=>state,setCommentsVisible(){},refreshComments:async()=>{},memorySnapshot:()=>null,
     async seek(time,options){seeks.push({time,...options});state.playback={...state.playback,time,frameId:Math.round(time*30),frameOrdinal:Math.round(time*30)};publish();return{status:'drawn'};},
+    async play(){toggles++;state.state='playing';publish();return{status:'playing'};},async pause(){toggles++;state.state='paused';publish();return{status:'paused'};},
     async setPlaybackRate(rate){rates.push(rate);state.playback={...state.playback,transport:{...state.playback.transport,rate}};publish();return{status:'applied'};},
     setDrawingObjects(){},setDrawingStyles:()=>({status:'saved'}),cancelDrawing(){state.drawings.draft=null;publish();return true;},
     beginDrawing:async()=>({status:'ignored'}),beginComment:async()=>({status:'ignored'})};
@@ -48,9 +49,29 @@
     state.drawings.draft=null;publish();
     pointer('pointerdown',400,220);await sleep(460);state.epoch++;publish();check(el('screenGestureRing').getAttribute('data-open')==='false','Changing the source epoch discards pending gesture state');
     check(before.width===el('screen').getBoundingClientRect().width&&before.height===el('screen').getBoundingClientRect().height,'Direction wheel and speed hints never resize the video area');
+    const countToggles=()=>toggles;
+    const toggleBefore=countToggles();pointer('pointerdown',500,260);pointer('pointerup',500,260);await settle();
+    check(countToggles()===toggleBefore+1&&state.state==='playing','A plain left click starts playback exactly once');
+    pointer('pointerdown',500,260);pointer('pointerup',500,260);await settle();
+    check(countToggles()===toggleBefore+2&&state.state==='paused','A second plain click pauses playback exactly once');
+    state.state='seeking';state.playback.buffering=true;publish();check(!el('play').disabled&&el('play').textContent==='暂停','The play control stays available to pause pending automatic buffer recovery');pointer('pointerdown',500,260);pointer('pointerup',500,260);await settle();check(state.state==='paused','A screen click can cancel waiting playback');state.playback.buffering=false;publish();
+    pointer('pointerdown',500,260);await sleep(460);pointer('pointerup',500,260);await settle();
+    check(countToggles()===toggleBefore+3,'Holding for the wheel and releasing never toggles playback');
+    pointer('pointerdown',500,260);pointer('pointermove',540,260);pointer('pointerup',540,260);await settle();
+    check(countToggles()===toggleBefore+3,'Seeking with a drag never toggles playback on release');
+    key('c');await settle();check(el('screenRateHint').getAttribute('data-placement')==='keyboard','Keyboard speed commands show their separate upper-left feedback');
+    pointer('pointerdown',400,300);pointer('pointermove',400,280);await settle();
+    check(el('screenRateHint').getAttribute('data-placement')==='up','An upward flick displays the rate above its direction hint');
+    await sleep(160);pointer('pointermove',400,210);await settle();
+    check(el('screenRateHint').getAttribute('data-placement')==='center','Continued adjustment moves rate feedback into the wheel center');pointer('pointerup',400,210);
+    pointer('pointerdown',400,210);pointer('pointermove',400,230);await settle();
+    check(el('screenRateHint').getAttribute('data-placement')==='down','A downward flick displays the rate below its direction hint');pointer('pointerup',400,230);
+    pointer('pointerdown',400,220);await sleep(460);pointer('pointermove',400,200);await settle();
+    check(el('screenRateHint').getAttribute('data-placement')==='center','Rate changes after a stationary hold appear in the wheel center');pointer('pointerup',400,200);
+
     ui.destroy();const destroyedCount=seeks.length+rates.length;pointer('pointerdown',400,220);pointer('pointermove',500,140);pointer('pointerup',500,140);await settle();
     check(destroyedCount===seeks.length+rates.length,'Destroy removes gesture listeners and timers');
-    ui=EVAUI.createUI();ui.bindSession(session);publish();pointer('pointerdown',400,220);await sleep(460);
+    ui=EVAUI.createUI();ui.bindSession(session);publish();pointer('pointerdown',400,220);await sleep(460);pointer('pointermove',400,200);await settle();await sleep(160);
     const out=document.createElement('pre');out.id='drawing-results';out.hidden=true;out.textContent=JSON.stringify({passed:true,checks});document.body.appendChild(out);
   }catch(error){ui?.destroy();const out=document.createElement('pre');out.id='drawing-results';out.hidden=true;out.textContent=JSON.stringify({passed:false,checks,seeks,rates,time:state.playback.time,width:el('screen').getBoundingClientRect().width,error:error.stack});document.body.appendChild(out);}
 })();

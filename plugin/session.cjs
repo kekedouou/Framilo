@@ -234,7 +234,7 @@ function createSession(options) {
     const result = await cache.clearOther({ sourceSha256: retained.sha256 });
     return closed || token !== epoch ? { status: 'superseded' } : { status: 'cleared', ...result };
   }
-  async function setPlaybackSettings({ ramMiB, previewQuality, forwardPredecode, wheelFrames, showCacheStrip, rateStep } = {}, trigger = 'playback-settings') {
+  async function setPlaybackSettings({ ramMiB, previewQuality, forwardPredecode, wheelFrames, showCacheStrip, rateStep, drawingFadeSeconds } = {}, trigger = 'playback-settings') {
     if (activeExport) throw issue('EXPORT_BUSY', '请等待导出结束或取消。');
     const preferences = options.memoryPreferences;
     if (!preferences) throw issue('MEMORY_SETTINGS_UNAVAILABLE', '当前入口没有内存设置接口。');
@@ -243,11 +243,12 @@ function createSession(options) {
     const previousInteraction = typeof preferences.interaction === 'function' ? preferences.interaction() : DEFAULT_INTERACTION;
     const interaction = interactionValue(wheelFrames === undefined ? previousInteraction.wheelFrames : wheelFrames,
       showCacheStrip === undefined ? previousInteraction.showCacheStrip : showCacheStrip,
-      rateStep === undefined ? previousInteraction.rateStep : rateStep);
+      rateStep === undefined ? previousInteraction.rateStep : rateStep,
+      drawingFadeSeconds === undefined ? previousInteraction.drawingFadeSeconds : drawingFadeSeconds);
     preferences.preview(ramMiB);
     if (closed || state === 'preparing' || comments.draft || drawings.snapshot().draft) throw issue('MEMORY_SETTINGS_BUSY', '请等待准备完成，并先保存或取消标注。');
     const token = epoch, retained = source;
-    const onlyControls = (forwardPredecode !== undefined || wheelFrames !== undefined || showCacheStrip !== undefined || rateStep !== undefined) && preferences.snapshot().ramMiB === ramMiB &&
+    const onlyControls = (forwardPredecode !== undefined || wheelFrames !== undefined || showCacheStrip !== undefined || rateStep !== undefined || drawingFadeSeconds !== undefined) && preferences.snapshot().ramMiB === ramMiB &&
       (previewQuality === undefined || typeof preferences.quality === 'function' && previewQuality === preferences.quality());
     const predecodeChanged = forwardPredecode !== undefined && (typeof preferences.forwardPredecode !== 'function' || forwardPredecode !== preferences.forwardPredecode());
     if (onlyControls && predecodeChanged && owner && owner.ready && typeof owner.player.setForwardPredecode !== 'function')
@@ -738,7 +739,7 @@ function createSession(options) {
     saveDrawing, cancelDrawing: drawings.discard, setDrawingsVisible: drawings.setVisible, setDrawingStyles: drawings.setStyles,
     hasDrawingDraft: () => !!drawings.snapshot().draft,
     play: () => control('play', [], ['paused']), pause: () => control('pause', [], ['paused', 'playing', 'seeking']),
-    toggle: () => state === 'playing' ? control('pause', [], ['playing']) : control('play', [], ['paused']),
+    toggle: () => state === 'playing' || owner?.player?.snapshot()?.buffering ? control('pause', [], ['playing', 'seeking']) : control('play', [], ['paused']),
     seek: (time, settings = {}) => control('seek', [time, { ...settings, inputAt: settings.inputAt === undefined ? now() : settings.inputAt }], ['paused', 'playing', 'seeking']),
     step: delta => control('step', [delta], ['paused', 'playing', 'seeking']),
     setPlaybackRate: rate => control('setPlaybackRate', [rate], ['paused', 'playing']),

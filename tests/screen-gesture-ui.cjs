@@ -14,7 +14,7 @@ function harness(){
   win.clearTimeout=function(id){assert.strictEqual(this,win);timers.delete(id);};
   win.requestAnimationFrame=function(fn){assert.strictEqual(this,win);const id=++serial;frames.set(id,fn);return id;};
   win.cancelAnimationFrame=function(id){assert.strictEqual(this,win);frames.delete(id);};
-  const api=createScreenGestureUI({document:doc,window:win,getContext:()=>ctx,now:()=>time,seek:(v,final)=>calls.push({seek:v,final}),rate:v=>calls.push({rate:v})});
+  const api=createScreenGestureUI({document:doc,window:win,getContext:()=>ctx,now:()=>time,seek:(v,final)=>calls.push({seek:v,final}),rate:v=>calls.push({rate:v}),toggle:()=>calls.push({toggle:true})});
   const screen=doc.getElementById('screen');return{api,win,doc,screen,calls,captures,timers,frames,ctx,
     move(x,y,more={}){time+=20;win.emit('pointermove',{clientX:x,clientY:y,...more});},
     down(){screen.emit('pointerdown',{target:screen});},flush(){for(const[id,fn]of [...frames]){frames.delete(id);fn();}},
@@ -46,4 +46,7 @@ test('Destroy removes all listeners, animation callbacks, timers and pointer cap
   const h=harness();h.down();h.move(200,100);h.api.destroy();
   assert.equal(h.win.listenerCount()+h.screen.listenerCount(),0);assert(!h.frames.size);assert(!h.timers.size);assert(!h.captures.size);
 });
+test('Click toggles exactly once, but hold, drag, cancel, blur, blocked input and lost buttons do not',()=>{const h=harness();h.down();h.win.emit('pointerup',{buttons:0});assert.equal(h.calls.filter(c=>c.toggle).length,1);h.down();h.hold();h.win.emit('pointerup',{buttons:0});h.down();h.win.emit('blur');h.down();h.win.emit('pointercancel');h.down();h.move(100,100,{buttons:0});h.down();h.move(200,100);h.win.emit('pointerup',{clientX:200,buttons:0});assert.equal(h.calls.filter(c=>c.toggle).length,1);h.api.destroy();});
+test('Speed feedback belongs to keyboard, flick direction or sustained/held center',()=>{const h=harness(),hint=h.doc.getElementById('screenRateHint');h.api.hint(1.2);assert.equal(hint.attributes['data-placement'],'keyboard');h.down();h.move(100,80);assert.equal(hint.attributes['data-placement'],'up');h.hold();h.move(100,20);assert.equal(hint.attributes['data-placement'],'center');h.win.emit('pointerup',{clientY:20});h.down();h.hold();h.move(100,130);assert.equal(hint.attributes['data-placement'],'center');h.api.destroy();});
+test('A completed keyboard hint cannot leak into a new video',()=>{const h=harness(),hint=h.doc.getElementById('screenRateHint');h.api.hint(2);h.ctx.epoch++;h.api.update();assert.equal(hint.attributes['data-open'],'false');h.api.destroy();});
 console.log('Screen gesture controller: '+count+' ownership/cancellation checks; not real Eagle.');

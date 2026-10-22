@@ -38,7 +38,8 @@
             <input id="drawingColor" type="color" value="#ffd54f" title="自定义颜色" aria-label="自定义圈画颜色">
           </div>
         </div>
-        <textarea id="drawingText" class="drawing-text" rows="2" aria-label="画面文字" spellcheck="false" hidden></textarea>
+        <textarea id="drawingText" class="drawing-text" rows="1" wrap="off" aria-label="画面文字" spellcheck="false" hidden></textarea>
+        <button id="drawingTextDelete" class="drawing-text-delete" type="button" title="删除这段画面文字" aria-label="删除这段画面文字" hidden>×</button>
         <p id="drawingMessage" class="drawing-message" role="status" hidden></p>
         <div id="screenGestureRing" class="screen-gesture-ring" data-open="false" data-held="false" aria-hidden="true" aria-label="左右调整进度，上下调整倍速">
           <span class="gesture-up">↑<small>加速</small></span><span class="gesture-right">→<small>前进</small></span>
@@ -76,7 +77,7 @@
           <label title="L开启循环并展开片段，关闭恢复整段、保留范围"><input id="loopEnabled" type="checkbox" disabled>循环（L）</label>
           <output id="loopRange" class="muted">未设置范围</output>
           <details class="shortcut-help"><summary title="查看现有操作和快捷键">操作提示</summary>
-            <div class="shortcut-panel">空格：播放／暂停<br>Z：还原1×；X：减速；C：加速<br>【／】：前后逐帧；画面或时间轴滚轮：逐帧<br>R短按：选择／确认／清除片段<br>长按R：暂停并临时查看整段、拖动端点；松开确认，Esc取消<br>L：循环并展开片段／关闭并查看整段<br>N：添加／修改本帧文字；D：进入／保存圈画；H：屏幕标注显隐<br>绘图中：Enter保存，Esc退出，Ctrl+Z撤销，Delete删除选中对象<br>S：导出当前画面；E：导出所选片段<br>标注输入：Enter保存，Shift+Enter换行</div>
+            <div class="shortcut-panel">单击画面／空格：播放／暂停<br>Z：还原1×；X：减速；C：加速<br>【／】：前后逐帧；画面或时间轴滚轮：逐帧<br>R短按：选择／确认／清除片段<br>长按R：暂停并临时查看整段、拖动端点；松开确认，Esc取消<br>L：循环并展开片段／关闭并查看整段<br>N：添加／修改本帧文字；D：进入／保存圈画；H：屏幕标注显隐<br>绘图中：Enter保存，Esc退出，Ctrl+Z撤销，Delete删除选中对象<br>S：导出当前画面；E：导出所选片段<br>标注输入：Enter保存，Shift+Enter换行</div>
           </details>
         </div>
       </div>
@@ -90,13 +91,16 @@
       <details class="memory-settings">
         <summary>设置</summary>
         <label for="qualitySelect">预览画质</label>
-        <select id="qualitySelect" aria-label="预览画质" disabled><option value="720p">720p</option><option value="1080p">1080p</option></select>
+        <select id="qualitySelect" aria-label="预览画质" disabled><option value="720p">720p</option><option value="1080p">1080p</option><option value="1440p">2K（1440p）</option></select>
         <p class="muted">保持比例，不放大小视频。JPEG轻量预览。</p>
         <label class="predecode-option"><input id="forwardPredecode" type="checkbox" checked disabled> 提前解压周围画面</label>
         <label class="predecode-option"><input id="showDrawings" type="checkbox" checked> 显示屏幕标注（H）</label>
         <p class="muted">立即生效并记住选择，不删除标注，不需点击应用。</p>
         <p class="muted">优先准备光标附近，自动替换远处画面。绿条表示已解压；未覆盖处首次拖动可能等待。</p>
         <label class="predecode-option"><input id="showCacheStrip" type="checkbox" checked disabled> 显示缓存绿条</label>
+        <label for="drawingFadeSeconds">标注淡入淡出时长（秒）</label>
+        <input id="drawingFadeSeconds" type="number" min="0" max="1" step="0.05" value="0.25" aria-label="标注淡入淡出时长" disabled>
+        <p class="muted">0关闭；标注帧前后各该时长。点击应用生效，不重建缓存。</p>
         <label for="wheelFrames">滚轮灵敏度</label>
         <select id="wheelFrames" aria-label="滚轮逐帧灵敏度" disabled><option value="1">1帧 / 次</option><option value="2">2帧 / 次</option><option value="5">5帧 / 次</option><option value="10">10帧 / 次</option></select>
         <p class="muted">画面或时间轴上滚上一帧、下滚下一帧；选择时微调当前端点。点击应用生效。</p>

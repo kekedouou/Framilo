@@ -35,4 +35,5 @@ test('Large horizontal movement respects loop-range boundaries and speed modifie
   const g=createGesture();g.down(e(0,0),context);assert.equal(g.move(e(9999,0,20)).time,12);assert.equal(g.move(e(-9999,0,40)).time,2);
   g.cancel();g.down(e(0,0),{...context,step:.25});assert.equal(g.move(e(0,-10,10,{ctrlKey:true})).rate,1.125);
 });
+test('Only a true short click can toggle playback; long holds and returned diagonal motion cannot',()=>{const g=createGesture();g.down(e(100,100),context);g.move(e(102,101,50));assert.deepEqual(g.end(1),{kind:'toggle'});g.down(e(100,100),context);g.hold();assert.equal(g.end(1),null);g.down(e(100,100),context);g.move(e(140,140,30));g.move(e(100,100,60));assert.equal(g.end(1),null);});
 console.log('Screen gesture model: '+count+' pure-input checks; no Eagle/performance conclusions.');

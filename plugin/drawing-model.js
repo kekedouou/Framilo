@@ -151,8 +151,9 @@
     return a;
   }
   function nativeAtFrame(items, frames, ordinal, duration) { return items.filter(n => frameIndex(frames, n.time, duration) === ordinal); }
-  function visibleGroups(records, time, seconds = FADE_SECONDS) {
+  function visibleGroups(records, time, seconds = FADE_SECONDS, ordinal = null) {
     if (!Number.isFinite(time)) return [];
+    if (seconds === 0) return records.filter(record => Number.isSafeInteger(ordinal) ? record.frameOrdinal === ordinal : Math.abs(time - record.time) < 1e-8).map(record => ({ record, opacity: 1 }));
     return records.map(record => ({ record, opacity: Math.max(0, 1 - Math.abs(time - record.time) / seconds) }))
       .filter(n => n.opacity > .00001).sort((a, b) => a.record.time - b.record.time || a.record.id.localeCompare(b.record.id));
   }
