@@ -21,6 +21,7 @@
     let eraserPoint = null, eraserWidth = .045, normalGroups = [], normalRecords = null, normalOrder = [], groupNodes = new Map();
     const maskPrefix = 'erase-' + Math.random().toString(36).slice(2) + '-';
     let composing = false, compositionEnd = -Infinity, exitResolve = null, exitPromise = null, destroyed = false;
+    let toolbarVisible = false;
     const session = () => getSession(), draft = () => snapshot?.drawings?.draft;
     const set = (n, k, v) => { if (n[k] !== v) n[k] = v; };
     const now = () => win.performance && typeof win.performance.now === 'function' ? win.performance.now() : Date.now();
@@ -364,12 +365,12 @@
       if (state?.styles && state.styles !== stylesRef) { stylesRef = state.styles; styles = model.validateStyles(state.styles); }
       const key = d ? value.epoch + ':' + d.id : null;
       if (key !== editorKey) {
-        editorKey = key; drag = null; work = null; textDraft = null; selected = null; temporaryVisible = true; editor = null; committed = []; composing = false; normalKey = null;
+        editorKey = key; drag = null; work = null; textDraft = null; selected = null; temporaryVisible = true; toolbarVisible = false; editor = null; committed = []; composing = false; normalKey = null;
         if (d && d.status !== 'pausing') { editor = model.createEditor(d.objects); committed = editor.snapshot(); }
         el.drawingText.hidden = true; el.drawingLayer.replaceChildren(); closeProperties();
       } else if (d && !editor && d.status !== 'pausing') { editor = model.createEditor(d.objects); committed = editor.snapshot(); }
       const active = !!d;
-      el.drawingPanel.hidden = el.drawingMessage.hidden = !active; el.showDrawings.checked = state?.visible !== false;
+      el.drawingPanel.hidden = !active || !toolbarVisible; el.drawingMessage.hidden = !active; el.showDrawings.checked = state?.visible !== false;
       el.showDrawings.disabled = active || !session(); el.drawingNew.disabled = !canBegin() || state?.status !== 'ready';
       el.drawingStatus.textContent = state?.message || '';
       const shown = active ? temporaryVisible : state?.visible !== false;
@@ -380,7 +381,7 @@
       hideLayer(!shown || !active && !valueObjects.length || !['paused', 'playing', 'seeking'].includes(value.state));
       if (active) {
         if (geometry === null || normalKey !== key) { layout(); normalKey = key; }
-        message(d.message || (shown ? d.kind === 'delete' ? '确认删除这条圈画标注？' : '点击同类图形可调整 · Enter保存 · Esc退出 · Ctrl+Z撤销' : '圈画已临时隐藏，按H恢复后继续绘图。'));
+        message(d.message || (shown ? d.kind === 'delete' ? '确认删除这条圈画标注？' : '右键选择工具 · 滚轮调整粗细/字号 · D保存 · Esc退出' : '圈画已临时隐藏，按H恢复后继续绘图。'));
         set(el.drawingSave, 'textContent', d.status === 'unknown' ? '核对并保存' : d.kind === 'delete' ? '确认清除' : '保存（D）');
         set(el.drawingSave, 'disabled', !['editing', 'failed', 'unknown'].includes(d.status));
         for (const control of [...Object.values(buttons), el.drawingColorButton, el.drawingOptions, el.drawingColor, el.drawingWidth, el.drawingSize, el.drawingText, el.drawingDelete]) control.disabled = !shown || d.kind === 'delete' || !['editing', 'failed'].includes(d.status);
@@ -391,7 +392,26 @@
         else for (const n of normalGroups) groupNodes.get(n.record.id)?.setAttribute('opacity', String(n.opacity));
       }
     }
-    return { update, begin, confirmExit, flush,
+    function menuState() {
+      const d = draft(), editable = !!editor && temporaryVisible && !composing && !exitPromise && ['editing', 'failed'].includes(d?.status) && d?.kind !== 'delete';
+      return { enabled: !!editor && !exitPromise && !composing && ['editing', 'failed', 'unknown'].includes(d?.status), color: current()?.color || styles.color,
+        items: [['pen','手写','✎'],['arrow','箭头','↗'],['rect','矩形','▭'],['ellipse','椭圆','○'],['text','文字','T'],['eraser','橡皮','◇']].map(([id,label,symbol]) => ({ id, label, symbol, selected: tool === id, disabled: !editable })).concat([
+          { id: 'color', label: '颜色', symbol: '●', disabled: !editable || tool === 'eraser' }, { id: 'actions', label: '更多', symbol: '⋯' }]),
+        actions: [{ id: 'undo', label: '撤销', disabled: !editable }, { id: 'delete', label: '删除选中', disabled: !editable || !current() },
+          { id: 'save', label: d?.status === 'unknown' ? '核对并保存' : d?.kind === 'delete' ? '确认清除' : '保存并退出' }, { id: 'exit', label: '退出圈画' },
+          { id: 'toolbar', label: toolbarVisible ? '收起工具条' : '显示工具条' }, { id: 'visibility', label: temporaryVisible ? '暂时隐藏圈画' : '显示圈画' }] };
+    }
+    function menuCommand(id, value) {
+      const m = menuState(); if (!m.enabled) return;
+      const item = [...m.items, ...m.actions].find(n => n.id === id); if (item?.disabled) return;
+      if (model.KINDS.includes(id) || id === 'eraser') chooseTool(id);
+      else if (id === 'color' && typeof value === 'string') changeStyle('color', value);
+      else if (id === 'undo') undo(); else if (id === 'delete') removeSelected();
+      else if (id === 'save') return save(); else if (id === 'exit') return confirmExit('退出绘图');
+      else if (id === 'toolbar') { toolbarVisible = !toolbarVisible; update(snapshot); }
+      else if (id === 'visibility') toggle();
+    }
+    return { update, begin, confirmExit, flush, menuState, menuCommand,
       destroy() { destroyed = true; listeners.forEach(([n, t, f, o]) => n.removeEventListener(t, f, o)); if (exitResolve) finishExit(false); },
       reset() { editorKey = null; editor = null; committed = []; drag = null; work = null; textDraft = null; normalKey = null; normalOrder = []; normalGroups = []; groupNodes.clear(); if (exitResolve) finishExit(false); } };
   }

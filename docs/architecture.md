@@ -1,5 +1,7 @@
 # 技术架构：阶段 3B 已批准
 
+2026-10-22最新：E-14沿原边界接续：新增context-wheel纯右键输入/DOM模块，由ui分发既有选区/标注/圈画/循环命令；drawing-ui暴露菜单操作并默认折叠原工具条。screen-gestures/ui支持仅水平的选区模式，ui把画面输入交给原loop-selection。高倍速Player继续音画时钟、从同轮已解码帧选择不晚于当前时刻的最新画面；开始的快放读取可完成并进入原有界池，暂停/逐帧仍走准确请求。画质过滤仅为UI规则，不改持久数据/缓存格式或媒体架构。 范围与结果见[E-14计划](experiments/E14/plan.md)及[报告](experiments/E14/report.md)。下方为此前记录。
+
 2026-10-22 E-13局部补充：Player按刷新间隔/倍速映射预读源帧，150ms欠载改为停止声音与时钟/固定目标/到位恢复；恢复受原epoch/playToken保护，准确逐帧/两任务/RAM账本不变。preview-profile新增1440p，共用动态缓存身份/限额；preferences新增兼容可选drawingFadeSeconds，Session控制应用但纯显示不重建媒体。drawing-ui复用画布测字、nowrap输入/局部删除，drawing-model按实际帧支持零淡化；screen-gestures/UI区分短点、拖动、长按并摆放反馈。没有Eagle/媒体逻辑混入UI，未改永久标注格式、颜色处理或冻结发行版，见[E-13记录](experiments/E13/report.md)。
 
 2026-10-22实现：drawing-model增加有界erasures及源帧/淡化计算；drawing-store兼容可选nativeLinks，drawing-session同帧共享组、删文字保图。Session核对原生文字再提交本地，未知只核对；本地丢回执独立读回，不覆盖竞争版本。screen-gestures/screen-gesture-ui只连接既有Session；Player仅将步长算术扩为千分位，媒体/缓存/预算不改。新文件纳入后续打包白名单但未重建冻结包。验证见[E-11](experiments/E11/report.md)/[E-12](experiments/E12/report.md)。

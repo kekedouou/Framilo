@@ -418,6 +418,18 @@
       }
       return [...found];
     }
+    _readyPlayOrdinal(ordinal) {
+      // At fast playback the media clock keeps moving. A late decoded frame
+      // can still advance the picture, but never draw a future or older frame
+      // in the current loop pass. Manual seek/step retain their exact target.
+      const loop = this.loopEnabled ? this._loopRange() : null;
+      const lower = this.drawnPlayCycle === this.playCycle ? this.currentIndex : loop ? loop.first - 1 : -1;
+      let ready = null;
+      for (const index of this.cache.keys()) {
+        if (index <= ordinal && index >= (loop ? loop.first : 0) && index >= lower && (ready === null || index > ready)) ready = index;
+      }
+      return ready;
+    }
     _recoverSupply(time, ordinal) {
       if (this.recovery || this.state !== 'playing') return;
       const epoch = this.epoch; this._halt(false);
@@ -460,6 +472,7 @@
           await this._prime(next, epoch, token); if (!this._playValid(epoch, token)) return { status: 'superseded' };
         }
         const media = this.info.frames[ordinal].time, when = context ? context.currentTime + 0.02 : null;
+        this.playCycle = this.drawnPlayCycle = 0; this.lastPlayOrdinal = ordinal;
         this.anchor = { media, context: when, perf: this.env.now() + 20, rate: this.playbackRate, loop }; this.waitingSince = null;
         if (context && this.audioBuffer) {
           let buffer = this.audioBuffer, loopBudget = null, plan;
@@ -727,7 +740,9 @@
       const target = this.target;
       if (!this.info || !target || !target.resolve || !this._valid(target.epoch) || this.state === 'error') return;
       if (this.cache.has(target.index) || this.tasks.has(target.epoch + ':' + target.index) || this.tasks.size >= 2) return;
-      try { this._decode(target.index, 'target', target); } catch (error) { this._fail(error); }
+      // Finish an already started fast-play read even if its exact display
+      // deadline moves on; otherwise slow I/O can discard every image forever.
+      try { this._decode(target.index, target.kind === 'play' && this.state === 'playing' && this.playbackRate > 1 ? 'play-ahead' : 'target', target); } catch (error) { this._fail(error); }
     }
     _startDragAheadWork() {
       const target = this.target, ordinal = target && target.predictedIndex;
@@ -746,7 +761,7 @@
       const epoch = this.epoch, info = this.info, key = epoch + ':' + ordinal;
       const existing = this.tasks.get(key); if (existing) return existing.promise;
       if (this.tasks.size >= 2) throw new Error('图像任务超过两个在途槽。');
-      const frame = info.frames[ordinal], holder = { epoch, index: ordinal, role, forwardToken: this.forwardToken, promise: null };
+      const frame = info.frames[ordinal], holder = { epoch, index: ordinal, role, forwardToken: this.forwardToken, playToken: this.playToken, fastPlayback: this.state === 'playing' && this.playbackRate > 1, promise: null };
       this.tasks.set(key, holder);
       const task = Promise.resolve().then(async () => {
         let reservation = null, bitmap = null, transferred = false;
@@ -812,7 +827,7 @@
       this._emit('cache', { epoch, phase: 'image-work-start', frameId: frame.id, role, activeImageTasks: this.tasks.size });
       task.then(() => { this._startTargetWork(); this._startDragAheadWork(); this._tryReadySubmit(); }, error => {
         if (this._valid(epoch)) {
-          if (this.target && this.target.resolve && this.target.index === ordinal) this._fail(error);
+          if (this.target && this.target.resolve && this.target.index === ordinal || holder.fastPlayback && this.state === 'playing' && holder.playToken === this.playToken) this._fail(error);
           else { this.prefetchFailed.add(ordinal); if (role === 'forward-fill') this.forwardIssue = error.message;
             this._emit('error', { epoch, phase: 'background-image', frameId: frame.id, error: error.message }); }
         }
@@ -832,7 +847,7 @@
       if (this.currentIndex === target.index) {
         // A new input can legitimately request the already displayed source frame.
         // Settle it explicitly without a canvas submission or fabricated draw sample.
-        entry.usedAt = this.env.now(); this.waitingSince = null;
+        entry.usedAt = this.env.now(); this.waitingSince = null; if (this.state === 'playing') this.drawnPlayCycle = this.playCycle;
         if (this.state !== 'playing') this.state = 'paused';
         this._settle(target, 'reused', { time: this.time, settledAt: this.env.now(), targetTime: target.targetTime,
           responseMs: this.env.now() - target.inputAt, repeatedFrame: true, drawAt: null });
@@ -845,6 +860,7 @@
       const gap = this.lastDrawAt === null ? null : drawAt - this.lastDrawAt;
       if (gap !== null) this.maxDrawGapMs = Math.max(this.maxDrawGapMs, gap);
       this.lastDrawAt = drawAt; this.waitingSince = null; this.currentIndex = target.index; this.time = frame.time;
+      if (this.state === 'playing') this.drawnPlayCycle = this.playCycle;
       entry.usedAt = drawAt; ++this.drawCount; if (this.state !== 'playing') this.state = 'paused';
       this.lastSubmissionRaf = this.rafCount;
       this.lastSubmission = { serial: ++this.submissionSerial, epoch: target.epoch, frameId: frame.id,
@@ -964,14 +980,22 @@
         if (this.info && this.state === 'playing') {
           const epoch = this.epoch, media = this._clockTime(), range = this.loopEnabled ? this._loopRange() : null;
           const raw = this.index.frameAt(this.info.frames, media), ordinal = range ? Math.max(range.first, Math.min(range.last, raw)) : raw;
+          const fast = this.playbackRate > 1;
+          if (fast && range && ordinal < this.lastPlayOrdinal) ++this.playCycle;
+          this.lastPlayOrdinal = ordinal;
+          const ready = fast ? this._readyPlayOrdinal(ordinal) : null;
+          const display = ready === null || ready === this.currentIndex ? ordinal : ready;
           if (media >= this.info.duration) {
             this._halt(false); this._request(this.info.duration, { kind: 'ended', final: true, inputAt: this.env.now() });
-          } else if (ordinal !== this.currentIndex && (!this.target || this.target.index !== ordinal || !this.target.resolve)) {
-            this._request(media, { kind: 'play', index: ordinal, inputAt: this.env.now() });
+          } else if ((display !== this.currentIndex || fast && this.drawnPlayCycle !== this.playCycle) && (!this.target || this.target.index !== display || !this.target.resolve)) {
+            this._request(fast ? this.info.frames[display].time : media, { kind: 'play', index: display, inputAt: this.env.now() });
+          }
+          if (fast && this.state === 'playing' && !this.cache.has(ordinal) && !this.tasks.has(epoch + ':' + ordinal) && this.tasks.size < 2) {
+            this._decode(ordinal, 'play-ahead', null);
           }
           if (this._valid(epoch) && this.state === 'playing') {
             // Count missing supply only after a *new source frame* becomes due. A low-fps hold is not an underrun.
-            if (ordinal !== this.currentIndex && !this.cache.has(ordinal)) {
+            if (!fast && ordinal !== this.currentIndex && !this.cache.has(ordinal)) {
               if (this.waitingSince === null) this.waitingSince = this.env.now();
               if (this.env.now() - this.waitingSince > this.playbackGuardMs) {
                 this._recoverSupply(media, ordinal);

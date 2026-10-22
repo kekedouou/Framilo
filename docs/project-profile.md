@@ -2,14 +2,13 @@
 
 ## 当前状态（2026-10-22）
 
-正式开发已到E-13，本地交付提交为e137de9。E-11同帧圈画/局部擦除、E-12画面手势及E-13六项修正与2K（1440p）试接均在同一 `plugin/` 实现；**修正后的真实Eagle集中体验待验**。默认183脚本/88根测试入口、Node16兼容、真实合成短片与Chrome103项为此前已执行结果，详见[E-13计划](experiments/E13/plan.md)与[报告](experiments/E13/report.md)。
+最新E-14本地实现完成：高倍速连续优先、R画面选区、两类右键菜单、画面拖动恢复及源尺寸画质过滤；沿用同一plugin。**本轮真实Eagle集中体验待验**，协议与实际检查见[E-14计划](experiments/E14/plan.md)和[报告](experiments/E14/report.md)。
 
-- 已有人工结果：E-07导出与标注包整体体验通过；此前颜色修复限定通过、时间轴逻辑和E-10首版的一般反馈不扩大为全部验收。
-- 当前待验：高倍速音画、1440p准备/流畅度/整进程内存、稠密圈画与最新交互；原约30分钟内存超线、完整性能/兼容性缺口保留。
-- 后续路线：整体UI与设置 → 画质/速度/长期稳定性 → 远期AI，细节和启动范围另行协定；上下视频切换暂缓。
-- 产品定位：“给特效师的播放器／流畅拆解每一帧”，见[产品原则](product.md#当前产品定位与设计原则)。四周回用目标已记录，启动日期和达成证据尚无。
+- 已有人工结果：E-07整体体验通过；颜色修复限定通过、时间轴逻辑/E-10首版一般反馈保留；用户本轮确认E-13高倍速不再报错，不扩大为全部验收。
+- 当前待验：最新右键/R操作、高倍速音画与流畅度、1440p资源/稠密圈画；旧约30分钟内存超线、完整性能/兼容性缺口保留。
+- 后续：整体UI与设置 → 画质/速度/长期稳定性 → 远期AI，启动范围另行协定；上下视频暂缓。产品仍是“给特效师的播放器／流畅拆解每一帧”，四周回用目标尚无起止日期/达成证据。
 
-本轮仅做文档一致性维护。当前交接见[进度](progress.md)，旧入口文字保存在[维护记录](progress/2026-10-22-document-maintenance.md)；旧文中的“当前/下一步”按其原日期理解。
+当前交接见[进度](progress.md)；旧入口见[历史快照](progress/2026-10-22-document-maintenance.md)，阶段原始结果见各报告，旧“当前/下一步”按当时日期理解。
 
 ## 身份与入口
 
@@ -27,10 +26,10 @@
 | 长期权限和工程规则 | 根AGENTS.md；不堆进度 |
 | 产品、架构 | docs/product.md的R/P及批准补充；docs/architecture.md的C/A-01～A-08 |
 | 愿景与未来候选 | docs/roadmap.md；EV决定、近期/中期/远期及调整理由，不是已实现功能 |
-| 任务、清理规则 | docs/development-plan.md；E-13当前交接、历史T/E任务及F-01～F-07 |
+| 任务、清理规则 | docs/development-plan.md；E-14当前交接、历史T/E任务及F-01～F-07 |
 | 验证协议 | docs/verification.md；协议、真实运行和人工反馈分开 |
 | 当前状态 | docs/progress.md；先读顶部当前交接，后段为历史 |
-| 专项结果 | docs/experiments/E13及E01～E12、Evolution、A/B/S1、T0～T4；保留原数据/失败/测量局限 |
+| 专项结果 | docs/experiments/E14及E01～E13、Evolution、A/B/S1、T0～T4；保留原数据/失败/测量局限 |
 | 发布交接 | docs/releases/v0.1.0-beta.2.md；当前已发布版本清单/风险/授权入口，开发版另见进度 |
 | 旧发行与过程 | docs/releases/旧版本、docs/progress/、demos/standalone-preview/；历史说明不冒充下载或新授权 |
 | 私人原始证据/配置 | verification-runs/和原型evidence/等Git忽略路径；不公开、不覆盖 |
@@ -85,6 +84,7 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 | plugin/drawing-model.js、drawing-ui.js | 绘图对象/擦除/淡化计算及SVG显示、文字编辑；通过Session发操作，不直接访问Eagle或媒体缓存 |
 | plugin/drawing-session.cjs、drawing-store.cjs、annotation-data/ | 同帧关联、草稿与永久图形/文字/样式存储；独立于会淘汰的预览缓存 |
 | plugin/screen-gestures.js、screen-gesture-ui.js | 纯手势识别、指针/时钟和反馈展示；通过原Session定位/调速，不接入媒体解码 |
+| plugin/context-wheel.js | 观看/圈画右键方向选择、就地菜单及取消/销毁；通过UI调用既有操作，无媒体或Eagle访问 |
 | plugin/preview-profile.cjs | 720p/1080p/1440p预览尺寸与身份；共用原缓存预算，不放大小源 |
 | plugin/session.cjs | 素材/库快照、状态与任务所有权，协调适配、准备、缓存和播放 |
 | plugin/eagle.cjs | 唯一素材/标注 API 边界；独立读回，不直接写 metadata.json |

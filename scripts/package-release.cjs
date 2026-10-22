@@ -4,7 +4,7 @@ const fs = require('fs'), path = require('path'), crypto = require('crypto'), as
 const { spawnSync } = require('child_process'), { builtinModules } = require('module');
 const VERSION = '0.1.0-beta.2', NAME = 'eagle-video-analysis-' + VERSION + '-win-x64';
 const ID = 'EVAVIDEOANALYSISBETA20261014', ROOT = path.resolve(__dirname, '..'), LIMIT = 2 * 1024 ** 2;
-const RUNTIME = Object.freeze(['manifest.json', 'index.html', 'styles.css', 'logo.png', 'app.js', 'ui.js', 'loop-selection.js', 'timeline-view.js', 'screen-gestures.js', 'screen-gesture-ui.js', 'player.js',
+const RUNTIME = Object.freeze(['manifest.json', 'index.html', 'styles.css', 'logo.png', 'app.js', 'ui.js', 'loop-selection.js', 'timeline-view.js', 'screen-gestures.js', 'screen-gesture-ui.js', 'context-wheel.js', 'player.js',
   'session.cjs', 'eagle.cjs', 'drawing-model.js', 'drawing-ui.js', 'drawing-session.cjs', 'drawing-store.cjs', 'export.cjs', 'media.cjs', 'cache.cjs', 'process-identity.cjs', 'frame-index.cjs', 'frame-pack.cjs',
   'diagnostics.cjs', 'preferences.cjs', 'preview-profile.cjs', 'task-client.cjs', 'task-worker.cjs',
   'native/task-host.cs', 'native/task-host.local.exe', 'native/task-host.local.json']);

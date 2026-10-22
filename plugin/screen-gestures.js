@@ -8,7 +8,7 @@
     function down(e,context){
       if(value||e.button!==0||!Number.isFinite(e.x)||!Number.isFinite(e.y)||!(context.width>0)||!(context.range.end>context.range.start))return false;
       value={id:e.id,epoch:context.epoch,x:e.x,y:e.y,lastX:e.x,lastY:e.y,lastAt:e.at,at:e.at,axis:null,held:false,moved:false,sustained:false,
-        range:{...context.range},width:context.width,time:context.time,rate:context.rate,step:context.step,carry:0,axisAt:null,travel:0};
+        range:{...context.range},width:context.width,time:context.time,rate:context.rate,step:context.step,carry:0,axisAt:null,travel:0,horizontalOnly:!!context.horizontalOnly};
       return true;
     }
     function hold(){if(!value||value.axis||value.moved)return false;value.held=true;return true;}
@@ -17,8 +17,11 @@
       const v=value,dx=e.x-v.x,dy=e.y-v.y,first=!v.axis;
       v.travel=Math.hypot(dx,dy); v.moved ||= v.travel >= 6;
       if(!v.axis){
+        if(v.horizontalOnly){if(Math.abs(dx)<6)return null;v.axis='x';}
+        else {
         if(Math.max(Math.abs(dx),Math.abs(dy))<6)return null;
         if(Math.abs(dx)>Math.abs(dy)*1.15)v.axis='x';else if(Math.abs(dy)>Math.abs(dx)*1.15)v.axis='y';else return null;
+        }
         v.axisAt=e.at;
       }
       const mx=e.x-v.lastX,my=v.lastY-e.y,dt=Math.max(1,e.at-v.lastAt),factor=multiplier(e);

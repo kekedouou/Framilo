@@ -1,7 +1,7 @@
 /* Screen input and quiet direction feedback; calls existing transport only. */
 (function(root,factory){const api=factory(typeof window==='object'?window.EVAScreenGestures:require('./screen-gestures.js'));if(typeof module==='object'&&module.exports)module.exports=api;if(typeof window==='object')window.EVAScreenGestureUI=api;})(typeof globalThis==='object'?globalThis:this,function(model){
   'use strict';
-  function createScreenGestureUI({document:doc,window:win,getContext,seek,rate,toggle=()=>{},now=()=>win.performance.now()}){
+  function createScreenGestureUI({document:doc,window:win,getContext,seek,rate,toggle=()=>{},start=()=>{},release:released=()=>{},now=()=>win.performance.now()}){
     const screen=doc.getElementById('screen'),ring=doc.getElementById('screenGestureRing'),toast=doc.getElementById('screenRateHint'),machine=model.createGesture();
     if(!screen||!ring||!toast)throw Error('画面手势提示元素缺失。');
     const listeners=[],on=(n,t,f,o)=>{n.addEventListener(t,f,o);listeners.push([n,t,f,o]);};
@@ -18,6 +18,7 @@
       ring.setAttribute('data-open','false');ring.setAttribute('aria-hidden','true');
       if(old)try{if(screen.hasPointerCapture?.(old.id))screen.releasePointerCapture(old.id);}catch(_){}
       origin=null;
+      released();
     }
     function show(direction){
       const value=machine.snapshot();if(!value||!origin)return;
@@ -26,6 +27,7 @@
       ring.style.top=Math.max(58,Math.min(Math.max(58,r.height-58),origin.y-r.top))+'px';
       ring.setAttribute('data-open','true');ring.setAttribute('aria-hidden','false');
       ring.setAttribute('data-direction',direction||'');ring.setAttribute('data-held',String(value.held));
+      ring.setAttribute('data-selection',String(value.horizontalOnly));
     }
     function hint(value,placement='keyboard') {
       hintEpoch=getContext().epoch;toast.textContent=Number(value.toFixed(3))+'×';toast.setAttribute('data-placement',placement);
@@ -43,6 +45,7 @@
         queued=action;
         if(frame===null)frame=(win.requestAnimationFrame||((fn)=>later(fn,16))).call(win,()=>{frame=null;const pending=queued;queued=null;if(pending)seek(pending.time,false);});
       }else if(action.kind==='rate'){
+        if(getContext().canRate===false)return;
         const v=machine.snapshot();rate(action.rate);
         if(v&&getContext().enabled&&epoch===getContext().epoch)hint(action.rate,v.held||v.sustained?'center':action.direction);
       }
@@ -50,7 +53,11 @@
     on(screen,'pointerdown',e=>{
       const context=getContext();
       if(destroyed||!context.enabled||!context.canStart||e.button!==0||e.altKey||e.metaKey||e.target?.closest?.('button,input,textarea,select,a,[contenteditable],.drawing-panel'))return;
+      // A new down proves the old same mouse press has ended even if its up
+      // was swallowed by the OS without a blur/cancel notification.
+      if(machine.snapshot()?.id===e.pointerId)release();
       if(!machine.down(event(e),context))return;
+      start();
       toast.setAttribute('data-open','false');
       e.preventDefault();screen.tabIndex=-1;screen.focus?.({preventScroll:true});epoch=context.epoch;origin={x:e.clientX,y:e.clientY};
       try{screen.setPointerCapture?.(e.pointerId);}catch(_){}
@@ -79,7 +86,7 @@
     on(win,'keydown',e=>{if(machine.snapshot()&&e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation?.();end();}},true);
     on(screen,'wheel',e=>{if(machine.snapshot())e.preventDefault();},{capture:true,passive:false});
     function reset(){release();if(hideTimer!==null)clear(hideTimer);hideTimer=null;toast.setAttribute('data-open','false');}
-    return {hint,active:()=>!!machine.snapshot(),update(){if(machine.snapshot()&&(!getContext().enabled||getContext().epoch!==epoch)||hintEpoch!==null&&getContext().epoch!==hintEpoch)reset();},
+    return {hint,finish:()=>end(),active:()=>!!machine.snapshot(),update(){if(machine.snapshot()&&(!getContext().enabled||getContext().epoch!==epoch||machine.snapshot().horizontalOnly!==!!getContext().horizontalOnly)||hintEpoch!==null&&getContext().epoch!==hintEpoch)reset();},
       reset,destroy(){destroyed=true;release();if(hideTimer!==null)clear(hideTimer);listeners.forEach(([n,t,f,o])=>n.removeEventListener(t,f,o));toast.setAttribute('data-open','false');}};
   }
   return {createScreenGestureUI};

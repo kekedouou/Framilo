@@ -6,16 +6,33 @@
   const view = typeof window === 'object' && window ? window : root && root.document ? root : null;
   const api = factory(view ? view.EVALoopSelection : require('./loop-selection.js'),
     view ? view.EVATimelineView : require('./timeline-view.js'), view ? view.EVAPlayer : require('./player.js'),
-    view ? view.EVADrawingUI : require('./drawing-ui.js'), view ? view.EVAScreenGestureUI : require('./screen-gesture-ui.js'));
+    view ? view.EVADrawingUI : require('./drawing-ui.js'), view ? view.EVAScreenGestureUI : require('./screen-gesture-ui.js'),
+    view ? view.EVAContextWheel : require('./context-wheel.js'));
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (view) view.EVAUI = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (selectionAPI, timelineAPI, playerAPI, drawingAPI, screenGestureAPI) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (selectionAPI, timelineAPI, playerAPI, drawingAPI, screenGestureAPI, contextAPI) {
   'use strict';
   function formatTime(seconds) {
     const milliseconds = Math.max(0, Math.floor((Number(seconds) || 0) * 1000 + .00001));
     return Math.floor(milliseconds / 60000) + ':' + String(Math.floor(milliseconds / 1000) % 60).padStart(2, '0') + '.' + String(milliseconds % 1000).padStart(3, '0');
   }
   const pointerTime = (x, rect, range) => timelineAPI.timeAt(x, rect, range);
+  function previewChoices(preview) {
+    const all = ['720p', '1080p', '1440p'];
+    if (!preview || !(preview.sourceWidth > 0) || !(preview.sourceHeight > 0)) return all.map(value => ({ value, original: false }));
+    const sar = String(preview.sampleAspectRatio || '1:1').split(':').map(Number), ratio = sar.length === 2 && sar.every(n => n > 0 && Number.isFinite(n)) ? sar[0] / sar[1] : 1;
+    let w = preview.sourceWidth * ratio, h = preview.sourceHeight;
+    if (Math.abs(preview.rotation % 180) === 90) [w, h] = [h, w];
+    const result = []; let previous = '';
+    for (const value of all) {
+      const [long, short] = value === '1440p' ? [2560, 1440] : value === '1080p' ? [1920, 1080] : [1280, 720];
+      const scale = Math.min(1, (w < h ? short : long) / w, (w < h ? long : short) / h);
+      const key = Math.floor(w * scale + 1e-8) + ':' + Math.floor(h * scale + 1e-8);
+      if (key !== previous) result.push({ value, original: ratio === 1 && scale === 1 });
+      previous = key;
+    }
+    return result;
+  }
   function spaceAllowed(event, timeline) {
     if (!(event.code === 'Space' || event.key === ' ') || event.repeat || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false;
     const target = event.target;
@@ -54,7 +71,7 @@
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
     let viewRange = { start: 0, end: 0, focused: false }, timelineWidth = null, rulerKey = null;
     let rateRequest = null, noteRequest = null, exportRequest = null;
-    let drawingUI = null, screenUI = null;
+    let drawingUI = null, screenUI = null, contextUI = null;
     const markerButtons = [], markerTimes = new WeakMap();
     const attributes = new Map();
     const loopAttributes = new WeakMap();
@@ -132,10 +149,11 @@
         set(el.memoryAllowance, 'textContent', '缓存上限 ' + (memory.ramBytes / 1048576).toFixed(0) + ' MB（不含程序额外占用）' +
           (memory.legacyConverted ? '；旧百分比已换算，应用后保存。' : ''));
       }
-      if (shownQuality !== (state.previewQuality || '720p')) {
-        shownQuality = state.previewQuality || '720p'; set(el.qualitySelect, 'value', shownQuality);
-      }
       const preview = state.preview;
+      const choices = previewChoices(preview), desiredQuality = state.previewQuality || '720p';
+      const effectiveQuality = choices.some(n => n.value === desiredQuality) ? desiredQuality : choices[choices.length - 1].value;
+      const qualityKey = desiredQuality + ':' + choices.map(n => n.value).join(',');
+      if (shownQuality !== qualityKey) { shownQuality = qualityKey; set(el.qualitySelect, 'value', effectiveQuality); }
       if (shownPredecode !== !!state.forwardPredecode) {
         shownPredecode = !!state.forwardPredecode; set(el.forwardPredecode, 'checked', shownPredecode);
       }
@@ -145,12 +163,12 @@
       if (shownRateStep !== (interaction.rateStep ?? .1)) { shownRateStep = interaction.rateStep ?? .1; set(el.rateStep, 'value', String(shownRateStep)); }
       if (shownFade !== (interaction.drawingFadeSeconds ?? .25)) { shownFade = interaction.drawingFadeSeconds ?? .25; set(el.drawingFadeSeconds, 'value', String(shownFade)); }
       for (const option of Array.from(el.qualitySelect.options || [])) {
-        const [long, short] = option.value === '1440p' ? [2560, 1440] : option.value === '1080p' ? [1920, 1080] : [1280, 720];
-        const original = preview && preview.sampleAspectRatio === '1:1' &&
-          Math.max(preview.sourceWidth, preview.sourceHeight) <= long && Math.min(preview.sourceWidth, preview.sourceHeight) <= short;
-        set(option, 'textContent', (option.value === '1440p' ? '2K（1440p）' : option.value) + (original ? '（原始分辨率）' : ''));
+        const choice = choices.find(n => n.value === option.value);
+        set(option, 'hidden', !choice); set(option, 'disabled', !choice);
+        set(option, 'textContent', (option.value === '1440p' ? '2K（1440p）' : option.value) + (choice?.original ? '（原始分辨率）' : ''));
       }
-      set(el.previewQuality, 'textContent', preview ? (preview.quality === '1440p' ? '2K（1440p）' : preview.quality) + ' 预览 · ' + preview.width + ' × ' + preview.height +
+      const displayedQuality = preview && choices.some(n => n.value === preview.quality) ? preview.quality : effectiveQuality;
+      set(el.previewQuality, 'textContent', preview ? (displayedQuality === '1440p' ? '2K（1440p）' : displayedQuality) + ' 预览 · ' + preview.width + ' × ' + preview.height +
         (preview.originalResolution ? '（原始分辨率）' : '') : (state.previewQuality || '720p') + ' 预览');
     }
     on(el.memoryApply, 'click', async () => {
@@ -278,7 +296,7 @@
       set(el.loopBand, 'hidden', !start || !endPoint);
       if (start && endPoint && state.duration > 0) { set(el.loopBand.style, 'left', timelineAPI.ratio(start.time, viewRange) * 100 + '%'); set(el.loopBand.style, 'width', Math.max(0, timelineAPI.ratio(endPoint.time, viewRange) - timelineAPI.ratio(start.time, viewRange)) * 100 + '%'); }
       const help = editing.message || (editing.editing ? editing.busy ? '正在固定画面…' :
-        (!start ? '点击并拖动起点，再点击并拖动终点。' : !endPoint ? '点击并拖动终点。' : '拖动端点调整，点击空白处浏览；【／】微调当前端点。') +
+        (!start ? '在画面或时间轴拖动起点，再拖动终点。' : !endPoint ? '在画面或时间轴拖动终点。' : '画面横拖或时间轴拖动调整端点；【／】微调当前端点。') +
         (editing.mode === 'hold' ? ' 临时整段；松开 R 确认，Esc 取消。' : ' 再按 R 确认，Esc 取消。') : '');
       set(el.loopHelp, 'textContent', help); set(el.loopHelp, 'hidden', !help);
     }
@@ -385,7 +403,7 @@
       event.preventDefault(); if (interactive() && !gesture && !selection.snapshot().editing && !selection.snapshot().busy && (['paused', 'playing'].includes(state.state) || state.playback?.buffering)) { clearHint(); invoke(() => session.toggle()); }
     });
     on(win, 'keyup', event => {
-      if (event.code === 'KeyR' || String(event.key || '').toLowerCase() === 'r') { if (selection.snapshot().editing && gesture) end(null); selection.keyUp(); }
+      if (event.code === 'KeyR' || String(event.key || '').toLowerCase() === 'r') { if (selection.snapshot().editing && gesture) end(null); if (selection.snapshot().editing && screenUI?.active()) screenUI.finish(); selection.keyUp(); }
     });
     on(el.timeline, 'keydown', event => {
       if (!interactive() || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
@@ -615,24 +633,46 @@
       updateTransport();
       if (drawingUI) drawingUI.update(state);
       if (screenUI) screenUI.update();
+      if (contextUI) contextUI.update();
       const hideStrip = state.interactionSettings?.showCacheStrip === false;
       if (el.decodedCache.hidden !== hideStrip) { set(el.decodedCache, 'hidden', hideStrip); coverageKey = null; }
     }
     drawingUI = drawingAPI.createDrawingUI({ document: doc, window: win, getSession: () => session, getState: () => state,
       canBegin: () => shortcutReady() && !transportBusy && state.exportState?.status !== 'unknown', isKey: letterKey });
+    let screenSelectionPoint = null;
     screenUI = screenGestureAPI.createScreenGestureUI({ document: doc, window: win, now,
       getContext: () => ({ epoch: state.epoch, enabled: interactive() && !gesture && !memoryBusy && !cleaning &&
-          !selection.snapshot().editing && !selection.snapshot().busy,
-        canStart: (shortcutReady() || interactive() && state.playback?.buffering) && !transportBusy, width: el.screen.getBoundingClientRect().width,
+          !selection.snapshot().busy,
+        canStart: interactive() && !selection.snapshot().busy && !transportBusy, canRate: shortcutReady() || !!rateRequest, horizontalOnly: selection.snapshot().editing, width: el.screen.getBoundingClientRect().width,
         range: viewRange, time: state.playback?.time || 0, rate: state.playback?.transport?.rate || 1,
         step: state.interactionSettings?.rateStep || .1 }),
-      seek: (time, final) => { clearHint(); invoke(() => session.seek(time, { final, kind: final ? 'release' : 'rapid', inputAt: now() })); },
+      start: () => { const s = selection.snapshot(); screenSelectionPoint = s.editing ? selection.nextPoint() || s.active || (Math.abs((state.playback?.time || 0) - s.start.time) <= Math.abs((state.playback?.time || 0) - s.end.time) ? 'start' : 'end') : null; },
+      release: () => { screenSelectionPoint = null; },
+      seek: (time, final) => { clearHint(); if (screenSelectionPoint && selection.snapshot().editing) selection.move(screenSelectionPoint, time, final, now()); else invoke(() => session.seek(time, { final, kind: final ? 'release' : 'rapid', inputAt: now() })); },
       rate: value => requestRate(value),
       toggle: () => { if ((shortcutReady() || interactive() && state.playback?.buffering) && !transportBusy) invoke(() => state.state === 'playing' || state.playback?.buffering ? session.pause() : session.play()); } });
+    contextUI = contextAPI.createContextWheel({ document: doc, window: win, screen: el.screen, now,
+      getContext: () => {
+        if (state.drawings?.draft) return { epoch: state.epoch, mode: 'drawing', ...drawingUI.menuState() };
+        const loop = state.playback?.transport?.loop;
+        return { epoch: state.epoch, mode: 'watch', enabled: interactive() && !gesture && !memoryBusy && !cleaning && !transportBusy && !selection.snapshot().busy,
+          items: [{ id: 'note', label: '添加标注', symbol: 'N', disabled: !shortcutReady() || state.comments?.status !== 'ready' },
+            { id: 'loop', label: loop?.enabled ? '关闭循环' : '开启循环', symbol: '↻', selected: !!loop?.enabled, disabled: selection.snapshot().editing },
+            { id: 'drawing', label: '添加圈画', symbol: '✎', disabled: !shortcutReady() || state.drawings?.status !== 'ready' },
+            { id: 'selection', label: '选择片段', symbol: '↔' }] };
+      },
+      opening: () => { screenUI.reset(); },
+      command: (id, value) => {
+        if (state.drawings?.draft) { invoke(() => drawingUI.menuCommand(id, value)); return; }
+        if (id === 'selection') invoke(() => selection.begin('toggle'));
+        else if (id === 'loop') invoke(() => selection.toggleLoop());
+        else if (id === 'note') invoke(beginNote);
+        else if (id === 'drawing') drawingUI.begin();
+      } });
     return { canvas: el.picture, confirmDrawingExit: () => drawingUI.confirmExit(), bindSession(value) {
       if (session !== value) {
         showCommentActions(null);
-        drawingUI.reset(); screenUI.reset();
+        drawingUI.reset(); screenUI.reset(); contextUI.reset();
         rateRequest = noteRequest = exportRequest = null; transportBusy = false;
         selection.destroy();
         if (session && typeof session.setCommentsVisible === 'function') session.setCommentsVisible(false);
@@ -643,7 +683,7 @@
       if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
     }, update,
       destroy() {
-        drawingUI.destroy(); screenUI.destroy();
+        drawingUI.destroy(); screenUI.destroy(); contextUI.destroy();
         rateRequest = noteRequest = exportRequest = null; transportBusy = false;
         if (session && typeof session.setCommentsVisible === 'function') session.setCommentsVisible(false);
         if (memoryTimer !== null) { win.clearInterval(memoryTimer); memoryTimer = null; }
@@ -651,5 +691,5 @@
         selection.destroy(); clearGesture(); listeners.forEach(([target, type, fn, settings]) => target.removeEventListener(type, fn, settings)); session = null; refreshMemory(); clearCoverage();
       } };
   }
-  return { createUI, formatTime, pointerTime, spaceAllowed };
+  return { createUI, formatTime, pointerTime, spaceAllowed, previewChoices };
 });
