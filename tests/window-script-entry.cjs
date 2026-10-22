@@ -6,6 +6,7 @@ const root = path.resolve(__dirname, '../plugin');
 const scripts = [...fs.readFileSync(path.join(root, 'index.html'), 'utf8').matchAll(/<script[^>]+src="([^"]+)"/g)].map(m => m[1]);
 assert(scripts.indexOf('loop-selection.js') < scripts.indexOf('ui.js'));
 assert(scripts.includes('timeline-view.js') && scripts.indexOf('timeline-view.js') < scripts.indexOf('ui.js'));
+assert(scripts.includes('drawing-erase.js') && scripts.indexOf('drawing-erase.js') < scripts.indexOf('drawing-model.js'));
 function element(id) {
   const handlers = new Map();
   return { id, style: {}, attributes: {}, hidden: false, disabled: false, offsetWidth: 80,
@@ -55,6 +56,9 @@ async function check(mode) {
   const page = context.window;
   assert.equal(typeof page.EVALoopSelection.createSelection, 'function'); assert.equal(typeof page.EVAUI.createUI, 'function');
   assert.equal(typeof page.EVATimelineView.visibleRange, 'function');
+  assert.equal(typeof page.EVADrawingErase.optimize, 'function');
+  const dot = {id:'entry',kind:'pen',color:'#ffffff',width:.004,points:[{x:.5,y:.5}]};
+  assert.equal(page.EVADrawingModel.erase([dot],{width:.05,points:[{x:.5,y:.5}]}).length,0);
   assert.equal(typeof hooks.onPluginCreate, 'function'); assert.equal(typeof hooks.onPluginRun, 'function');
   assert(!requests.some(name => name.startsWith('.')));
   await hooks.onPluginCreate({ path: root });

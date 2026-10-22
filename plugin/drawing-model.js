@@ -1,9 +1,9 @@
 /* Frame-relative drawing data and bounded edit history. No DOM, files or SDK. */
 (function (root, factory) {
-  const api = factory();
+  const api = factory(typeof window === 'object' ? window.EVADrawingErase : require('./drawing-erase.js'));
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (typeof window === 'object') window.EVADrawingModel = api;
-})(typeof globalThis === 'object' ? globalThis : this, function () {
+})(typeof globalThis === 'object' ? globalThis : this, function (eraser) {
   'use strict';
   const KINDS = Object.freeze(['pen', 'arrow', 'rect', 'ellipse', 'text']);
   const MAX_BYTES = 256 * 1024;
@@ -18,7 +18,7 @@
   }
   const point = p => p && typeof p === 'object' && Number.isFinite(p.x) && Number.isFinite(p.y) && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
   function validate(objects) {
-    if (!Array.isArray(objects) || objects.length > 128 || JSON.stringify(objects).length * 2 > MAX_BYTES) throw Error('圈画内容达到本帧容量上限，请减少对象或分开记录。');
+    if (!Array.isArray(objects) || objects.length > 128 || JSON.stringify(objects).length * 2 > MAX_BYTES) throw Error('圈画内容达到本帧容量上限，可撤销或删除对象后继续。');
     const ids = new Set();
     for (const o of objects) {
       const keys = o && Object.keys(o).filter(k => k !== 'erasures').sort().join(',');
@@ -116,7 +116,7 @@
   const FADE_SECONDS = .25, MAX_ERASURES = 64;
   function validateErasures(value) {
     if (!Array.isArray(value) || value.length > MAX_ERASURES || value.reduce((n, s) => n + (s?.points?.length || 0), 0) > 4096)
-      throw Error('擦除轨迹达到本对象上限，请减少擦除次数。');
+      throw Error('擦除轨迹达到本对象上限，可撤销或删除对象后继续。');
     for (const s of value) if (!s || Object.keys(s).sort().join(',') !== 'points,width' || !Number.isFinite(s.width) || s.width < .001 || s.width > .3 ||
         !Array.isArray(s.points) || !s.points.length || s.points.length > 2048 || !s.points.every(point)) throw Error('擦除轨迹格式无效。');
     return copy(value);
@@ -133,16 +133,9 @@
   function erasedAt(o, p, geometry) {
     return (o.erasures || []).some(s => s.points.some((v, i) => segmentDistance(p, i ? s.points[i - 1] : v, v, geometry.width, geometry.height) <= s.width * Math.min(geometry.width, geometry.height) / 2));
   }
-  function erase(objects, stroke) {
-    validateErasures([stroke]); const value = validate(objects);
-    const sx = Math.min(...stroke.points.map(p => p.x)) - stroke.width / 2, sy = Math.min(...stroke.points.map(p => p.y)) - stroke.width / 2;
-    const ex = Math.max(...stroke.points.map(p => p.x)) + stroke.width / 2, ey = Math.max(...stroke.points.map(p => p.y)) + stroke.width / 2;
-    return validate(value.map(o => {
-      const b = bounds(o);
-      if (b.right + o.width / 2 < sx || b.x - o.width / 2 > ex || b.bottom + o.width / 2 < sy || b.y - o.width / 2 > ey ||
-          (o.erasures || []).some(s => JSON.stringify(s) === JSON.stringify(stroke))) return o;
-      return { ...o, erasures: [...(o.erasures || []), copy(stroke)] };
-    }));
+  function erase(objects, stroke, geometry) {
+    validateErasures([stroke]);
+    return validate(eraser.optimize(validate(objects), stroke, geometry));
   }
   function frameIndex(frames, time, duration = Infinity) {
     if (!Array.isArray(frames) || !frames.length || !Number.isFinite(time) || time < frames[0].time || time > duration) return -1;

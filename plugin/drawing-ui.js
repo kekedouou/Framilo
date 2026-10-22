@@ -140,7 +140,9 @@
     }
     function publish(next) {
       try {
-        editor.replace(next); committed = editor.snapshot(); session()?.setDrawingObjects(committed); render(committed); return true;
+        const changed = editor.replace(next); committed = editor.snapshot();
+        if (changed) session()?.setDrawingObjects(committed);
+        render(committed); return true;
       } catch (error) { work = null; message(error.message); render(committed); return false; }
     }
     function textObject(object, value) {
@@ -148,6 +150,16 @@
       const lines = value.split('\n'), size = object.size * Math.min(width, height);
       const length = Math.max(...lines.map(s => textWidth(s, size)));
       return { ...object, text: value, b: { x: Math.min(1, object.a.x + length / width), y: Math.min(1, object.a.y + lines.length * size * 1.25 / height) } };
+    }
+    function eraserGeometry() {
+      const textBounds = Object.create(null);
+      for (const element of el.drawingLayer.querySelectorAll('[data-object-id] > text')) {
+        try {
+          const b = element.getBBox();
+          textBounds[element.parentNode.getAttribute('data-object-id')] = { x: b.x / width, y: b.y / height, right: (b.x + b.width) / width, bottom: (b.y + b.height) / height };
+        } catch (_) { /* Hidden/unavailable glyph geometry: the model retains uncertain text. */ }
+      }
+      return { ...geometry, textBounds };
     }
     function commitText() {
       if (!textDraft) return;
@@ -218,8 +230,8 @@
       try { flush(); } catch (error) { message(error.message); return; }
       event.preventDefault(); el.drawingLayer.focus?.({ preventScroll: true }); closeProperties();
       if (tool === 'eraser') {
-        selected = null; drag = { pointerId: event.pointerId, erasing: true, original: committed, stroke: { points: [p], width: eraserWidth } };
-        try { work = model.erase(committed, drag.stroke); render(work); } catch (e) { message(e.message); drag = null; work = null; }
+        selected = null; drag = { pointerId: event.pointerId, erasing: true, original: committed, geometry: eraserGeometry(), stroke: { points: [p], width: eraserWidth } };
+        try { work = model.erase(committed, drag.stroke, drag.geometry); render(work); } catch (e) { message(e.message); drag = null; work = null; }
         try { el.drawingLayer.setPointerCapture?.(event.pointerId); } catch (_) {}
         return;
       }
@@ -258,7 +270,7 @@
         if (Math.hypot((p.x - last.x) * geometry.width, (p.y - last.y) * geometry.height) < 1) return;
         if (drag.stroke.points.length >= 512) { finish(); message('这一段擦除已完成，请松手后继续。'); return; }
         drag.stroke.points.push(p);
-        try { work = model.erase(drag.original, drag.stroke); render(work); } catch (e) { finish(); message(e.message); }
+        try { work = model.erase(drag.original, drag.stroke, drag.geometry); render(work); } catch (e) { finish(); message(e.message); }
         return;
       }
       const moved = Math.hypot((p.x - drag.start.x) * geometry.width, (p.y - drag.start.y) * geometry.height) >= 3;

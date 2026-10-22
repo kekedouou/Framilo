@@ -2,10 +2,10 @@
 
 ## 当前状态（2026-10-22）
 
-最新E-14本地实现完成：高倍速连续优先、R画面选区、两类右键菜单、画面拖动恢复及源尺寸画质过滤；沿用同一plugin。**本轮真实Eagle集中体验待验**，协议与实际检查见[E-14计划](experiments/E14/plan.md)和[报告](experiments/E14/report.md)。
+E-15擦除记录优化本地完成：跳过空白/重复擦除、压缩轨迹、移除完全擦掉的对象，保持原格式、限额与撤销，见[E-15报告](experiments/E15/report.md)。E-14本地已完成；**真实Eagle集中体验待验**，见[E-14报告](experiments/E14/report.md)。
 
 - 已有人工结果：E-07整体体验通过；颜色修复限定通过、时间轴逻辑/E-10首版一般反馈保留；用户本轮确认E-13高倍速不再报错，不扩大为全部验收。
-- 当前待验：最新右键/R操作、高倍速音画与流畅度、1440p资源/稠密圈画；旧约30分钟内存超线、完整性能/兼容性缺口保留。
+- 当前待验：最新擦除、右键/R操作、高倍速音画与流畅度、1440p资源/稠密圈画；旧约30分钟内存超线、完整性能/兼容性缺口保留。
 - 后续：整体UI与设置 → 画质/速度/长期稳定性 → 远期AI，启动范围另行协定；上下视频暂缓。产品仍是“给特效师的播放器／流畅拆解每一帧”，四周回用目标尚无起止日期/达成证据。
 
 当前交接见[进度](progress.md)；旧入口见[历史快照](progress/2026-10-22-document-maintenance.md)，阶段原始结果见各报告，旧“当前/下一步”按当时日期理解。
@@ -26,10 +26,10 @@
 | 长期权限和工程规则 | 根AGENTS.md；不堆进度 |
 | 产品、架构 | docs/product.md的R/P及批准补充；docs/architecture.md的C/A-01～A-08 |
 | 愿景与未来候选 | docs/roadmap.md；EV决定、近期/中期/远期及调整理由，不是已实现功能 |
-| 任务、清理规则 | docs/development-plan.md；E-14当前交接、历史T/E任务及F-01～F-07 |
+| 任务、清理规则 | docs/development-plan.md；E-15当前交接、历史T/E任务及F-01～F-07 |
 | 验证协议 | docs/verification.md；协议、真实运行和人工反馈分开 |
 | 当前状态 | docs/progress.md；先读顶部当前交接，后段为历史 |
-| 专项结果 | docs/experiments/E14及E01～E13、Evolution、A/B/S1、T0～T4；保留原数据/失败/测量局限 |
+| 专项结果 | docs/experiments/E15及E01～E14、Evolution、A/B/S1、T0～T4；保留原数据/失败/测量局限 |
 | 发布交接 | docs/releases/v0.1.0-beta.2.md；当前已发布版本清单/风险/授权入口，开发版另见进度 |
 | 旧发行与过程 | docs/releases/旧版本、docs/progress/、demos/standalone-preview/；历史说明不冒充下载或新授权 |
 | 私人原始证据/配置 | verification-runs/和原型evidence/等Git忽略路径；不公开、不覆盖 |
@@ -81,7 +81,7 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 | plugin/ui.js、styles.css | 极简主画面与侧栏、状态及实际帧时间提示、带输入焦点保护的空格操作；只向会话发出操作，不直接访问文件或 Eagle 素材/标注 API；正式页面无测试控制 |
 | plugin/loop-selection.js | UI层短/长按与端点草稿，只通过Session预览/确认；无文件、缓存或Eagle API访问 |
 | plugin/timeline-view.js | UI纯显示映射：整段/循环片段范围、自适应刻度、时间坐标及绿条/标注裁切；不解码或分配视频缓存 |
-| plugin/drawing-model.js、drawing-ui.js | 绘图对象/擦除/淡化计算及SVG显示、文字编辑；通过Session发操作，不直接访问Eagle或媒体缓存 |
+| plugin/drawing-model.js、drawing-erase.js、drawing-ui.js | 绘图对象/擦除覆盖/淡化计算及SVG显示、文字编辑；通过Session发操作，不直接访问Eagle或媒体缓存 |
 | plugin/drawing-session.cjs、drawing-store.cjs、annotation-data/ | 同帧关联、草稿与永久图形/文字/样式存储；独立于会淘汰的预览缓存 |
 | plugin/screen-gestures.js、screen-gesture-ui.js | 纯手势识别、指针/时钟和反馈展示；通过原Session定位/调速，不接入媒体解码 |
 | plugin/context-wheel.js | 观看/圈画右键方向选择、就地菜单及取消/销毁；通过UI调用既有操作，无媒体或Eagle访问 |

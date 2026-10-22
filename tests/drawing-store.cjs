@@ -72,6 +72,21 @@ try {
     assert.throws(()=>store.save(scope,[{...extended,nativeLinks:[{id:'a',time:-1}]}],saved.token));
     assert.equal(store.read(scope).token,saved.token);
   });
+  test('Optimized erasure survives failed commit, retry, reopen and interrupted empty-group save', () => {
+    const model = require('../plugin/drawing-model.js'), g = { width: 1280, height: 720, sourceWidth: 1280 };
+    const pen = { id:'pen',kind:'pen',color:'#ffffff',width:.006,points:[{x:.2,y:.5},{x:.8,y:.5}] };
+    saved = store.save(scope, [{...note('eraser'),objects:[pen]}], saved.token);
+    const next = [{...saved.records[0],objects:model.erase([pen],{width:.05,points:[{x:.5,y:.5}]},g)}];
+    const broken = Object.create(fs); broken.linkSync = () => { throw Error('injected eraser interruption before commit'); };
+    assert.throws(() => createAnnotationStore({pluginRoot:plugin,io:broken}).save(scope,next,saved.token),/interruption/);
+    assert.deepStrictEqual(createAnnotationStore({pluginRoot:plugin}).read(scope).records,saved.records);
+    saved = store.save(scope,next,saved.token); assert.deepStrictEqual(createAnnotationStore({pluginRoot:plugin}).read(scope).records,next);
+    assert.deepStrictEqual(model.erase(next[0].objects,{width:.05,points:pen.points},g),[]);
+    const interrupted = Object.create(fs); let hit = false;
+    interrupted.unlinkSync = file => { if(!hit&&path.basename(file).startsWith('next-')){hit=true;throw Error('injected empty eraser interruption after commit');}return fs.unlinkSync(file); };
+    assert.throws(() => createAnnotationStore({pluginRoot:plugin,io:interrupted}).save(scope,[],saved.token),/可能已保存/);
+    store = createAnnotationStore({pluginRoot:plugin}); saved = store.read(scope); assert.deepStrictEqual(saved.records,[]);
+  });
   test('Unknown or corrupt data is preserved and never silently treated as an empty video', () => {
     const dir = path.join(store.root, saved.key), unknown = path.join(dir, 'unknown.json'); fs.writeFileSync(unknown, 'keep');
     assert.throws(() => store.read(scope), /未知/); assert.equal(fs.readFileSync(unknown, 'utf8'), 'keep'); fs.unlinkSync(unknown);

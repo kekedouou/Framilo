@@ -56,6 +56,19 @@ async function main() {
     await h.session.beginDrawing(); assert.equal(h.session.snapshot().drawings.draft.objects.length, 1);
     await h.session.saveDrawing(); assert.equal(h.session.snapshot().drawings.records.length, 1); await h.session.close();
   });
+  await test('Erasing the last object retries a failed save and reopens empty without deleting linked native text', async () => {
+    const store = memoryStore(), h = harness(store), model = require('../plugin/drawing-model.js');
+    const pen = {id:'pen',kind:'pen',color:'#ffffff',width:.006,points:[{x:.2,y:.5},{x:.8,y:.5}]};
+    await h.load(); await h.session.seek(.033); await h.session.beginDrawing(); h.session.setDrawingObjects([pen]);
+    assert.equal((await h.session.saveDrawing()).status,'saved'); await h.session.beginDrawing();
+    h.session.setDrawingObjects(model.erase(h.session.snapshot().drawings.draft.objects,{width:.05,points:pen.points},{width:1280,height:720}));
+    store.fail=true; assert.equal((await h.session.saveDrawing()).status,'failed'); assert.deepStrictEqual(h.session.snapshot().drawings.draft.objects,[]);
+    assert.equal(h.writes,0); assert.equal(h.native[0].annotation,'已有文字');
+    store.fail=false; assert.equal((await h.session.saveDrawing()).status,'saved'); await h.session.close();
+    const reopened=harness(store); reopened.native=clone(h.native); await reopened.load();
+    assert.deepStrictEqual(reopened.session.snapshot().drawings.records,[]); assert.equal(reopened.native[0].annotation,'已有文字');
+    assert.equal(reopened.writes,0); await reopened.session.close();
+  });
   await test('Saving a new group creates native text once, using image text and exact displayed frame', async () => {
     const store = memoryStore(), h = harness(store); await h.load(); await h.session.seek(.099); await h.session.beginDrawing();
     const text = { ...objects()[0], id: 'text', kind: 'text', text: '释放冲击\n观察落点', size: .04 };

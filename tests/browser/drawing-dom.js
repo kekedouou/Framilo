@@ -168,6 +168,41 @@
     state.playback={...state.playback,time:2.11,frameOrdinal:99};publish();check(el('drawingLayer').hidden,'Zero fade hides graphics on every other frame');state.interactionSettings={drawingFadeSeconds:1};publish();check(!el('drawingLayer').hidden,'One-second configured fade updates visibility without rebuilding media');state.interactionSettings={drawingFadeSeconds:.25};
     state.playback={...state.playback,time:2};publish();background();key('d');await delay();
 
+    if(window.E15_ERASER_CHECKS){
+      const rectangle={id:'e15-rect',kind:'rect',color:'#ffffff',width:.004,a:{x:.2,y:.2},b:{x:.8,y:.8}};
+      const restart=async value=>{state.drawings.draft=null;stored=copy(value);state.drawings.records=[];publish();background();key('d');await delay();};
+      await restart([rectangle]);tool('eraser');change('drawingWidth','.05');
+      const blankBefore=JSON.stringify(objects()),changesBefore=changes;
+      for(let i=0;i<80;i++)stroke('eraser',[.5+i*.00001,.5]);
+      check(JSON.stringify(objects())===blankBefore&&!state.drawings.draft.dirty&&changes===changesBefore,'E15: eighty blank erasures add no mask, session publication or dirty state');
+      key('z',{ctrlKey:true});check(JSON.stringify(objects())===blankBefore,'E15: blank erasure consumes no undo history');
+      stroke('eraser',[.5,.2]);const firstCut=copy(objects());
+      check(firstCut[0].erasures.length===1&&state.drawings.draft.dirty,'E15: touching the actual outline makes one partial cut');
+      for(let i=0;i<30;i++)stroke('eraser',[.5,.2]);
+      check(JSON.stringify(objects())===JSON.stringify(firstCut),'E15: thirty identical cuts consume no additional masks');
+      key('z',{ctrlKey:true});check(JSON.stringify(objects())===JSON.stringify([rectangle]),'E15: one undo crosses all repeated no-ops and restores the original outline');
+      stroke('eraser',[.5,.2]);background();key('d');await delay();background();key('d');await delay();
+      check(objects()[0].erasures.length===1&&!state.drawings.draft.dirty,'E15: partially erased records reopen unchanged and clean');
+      stroke('eraser',[.5,.2]);check(!state.drawings.draft.dirty,'E15: repeating a saved cut does not mark the reopened group dirty');
+      const base={id:'e15',color:'#ffffff',width:.006},items=[
+        {...base,kind:'pen',points:[{x:.44,y:.5},{x:.56,y:.5}]},
+        {...base,kind:'rect',a:{x:.45,y:.46},b:{x:.55,y:.54}},
+        {...base,kind:'ellipse',a:{x:.45,y:.46},b:{x:.55,y:.54}},
+        {...base,kind:'arrow',a:{x:.44,y:.5},b:{x:.56,y:.5}},
+        {...base,kind:'text',a:{x:.48,y:.48},b:{x:.52,y:.54},size:.04,text:'字'}];
+      for(const item of items){
+        await restart([item]);tool('eraser');change('drawingWidth','.15');stroke('eraser',[.4,.5],[.6,.5]);
+        check(objects().length===0&&el('drawingLayer').querySelectorAll('[data-object-id]').length===0,'E15: complete '+item.kind+' erasure removes its object and SVG content');
+        key('z',{ctrlKey:true});check(JSON.stringify(objects())===JSON.stringify([item]),'E15: one undo restores the fully erased '+item.kind);
+      }
+      await restart([rectangle]);tool('eraser');change('drawingWidth','.04');
+      pointer(el('drawingLayer'),'pointerdown',[.2,.3]);
+      for(let i=1;i<=200;i++)pointer(window,'pointermove',[.2,.3+i*.002]);
+      pointer(window,'pointerup',[.2,.7]);
+      check(objects()[0].erasures[0].points.length<=3,'E15: two hundred straight pointer samples store at most three eraser points');
+      background();key('d');await delay();background();key('d');await delay();
+      check(objects()[0].erasures[0].points.length<=3&&!state.drawings.draft.dirty,'E15: compact erasure saves and reopens through the unchanged Session contract');
+    }
     tool('text');pointer(el('drawingLayer'),'pointerdown',[.16,.66]);input('画面文字随输入增长，不会自动换行');
     window.EVAUXProof = { checks: results, state, session, ui };
     const out = document.createElement('pre'); out.id = 'drawing-results'; out.hidden = true; out.textContent = JSON.stringify({ passed: true, checks: results }); document.body.appendChild(out);

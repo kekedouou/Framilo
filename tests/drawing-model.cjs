@@ -54,10 +54,10 @@ test('Tools share one color while keeping separate valid widths and one text siz
   for (const invalid of [{ ...p, color: 'red' }, { ...p, extra: true }, { ...p, size: .5 }, { ...p, widths: { ...p.widths, pen: 0 } }]) assert.throws(() => model.validateStyles(invalid));
 });
 
-test('A local eraser cuts every tool without deleting its object or source pixels, and undo restores the complete group', () => {
-  const stroke={width:.05,points:[{x:.1,y:.2},{x:.7,y:.2}]};
+test('A partial eraser cut retains every tool and undo restores the complete group', () => {
+  const stroke={width:.05,points:[{x:.05,y:.35},{x:.4,y:.35}]};
   for(const kind of model.KINDS){
-    const object=kind==='pen'?{id:kind,kind,color:'#ffffff',width:.01,points:[{x:.1,y:.2},{x:.7,y:.2}]}:
+    const object=kind==='pen'?{id:kind,kind,color:'#ffffff',width:.01,points:[{x:.1,y:.35},{x:.7,y:.35}]}:
       {id:kind,kind,color:'#ffffff',width:.01,a:{x:.1,y:.2},b:{x:.7,y:.5},...(kind==='text'?{text:'完整文字',size:.04}:{})};
     const editor=model.createEditor([object]), next=model.erase([object],stroke);assert.equal(next.length,1);assert.equal(next[0].kind,kind);assert.equal(next[0].erasures.length,1);
     assert.equal(object.erasures,undefined);editor.replace(next);assert(editor.undo());assert.deepEqual(editor.snapshot(),[object]);
