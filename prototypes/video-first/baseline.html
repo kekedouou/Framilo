@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>现有布局结构对照</title>
+  <style>
+    :root{color-scheme:dark;font:13px/1.5 "Segoe UI","Microsoft YaHei UI",sans-serif;color:#e8e8e8;background:#202020}
+    *{box-sizing:border-box}body{margin:0;overflow:hidden}button,select,input{font:inherit;color:inherit}button,select{border:1px solid #474747;border-radius:4px;background:#303030;padding:6px 10px}button:disabled,select:disabled,input:disabled{opacity:.48;cursor:default}p{margin:0 0 12px}.workspace{height:100vh;display:grid;grid-template-columns:minmax(0,1fr) 220px}.player-pane{display:flex;flex-direction:column;min-width:0;min-height:0}.screen{position:relative;flex:1;min-height:0;background:#121212;overflow:hidden}.screen canvas{position:absolute;inset:0;width:100%;height:100%;display:block}.transport{flex:0 0 180px;min-height:180px;padding:12px 18px 13px;overflow:hidden}.timeline-area{position:relative;padding-top:60px}.ruler{position:absolute;top:0;left:0;right:0;height:20px;display:flex;justify-content:space-between;color:#aaa;font-size:11px}.ruler span{position:relative}.ruler span:after{content:"";position:absolute;left:0;bottom:-4px;width:1px;height:4px;background:#717171}.timeline{position:relative;height:26px}.cache{position:absolute;left:0;right:0;top:3px;height:3px;background:#61a16e}.rail{position:absolute;left:0;right:0;top:11px;height:4px;background:#555;border-radius:2px}.progress{height:100%;width:23.43%;background:#d6d6d6}.thumb{position:absolute;top:7px;left:23.43%;width:4px;height:12px;border-radius:2px;background:#eee}.marker{position:absolute;bottom:0;width:8px;height:7px;border-radius:1px;background:#9ab4cf;transform:translateX(-50%)}.controls,.loop-controls{display:flex;gap:8px;align-items:center;white-space:nowrap}.controls{margin-top:5px}.controls button{padding:5px 10px}.controls select{padding:4px}.time-readout{margin-left:auto;display:flex;gap:10px;color:#aaa;font-variant-numeric:tabular-nums;font-size:12px}.loop-controls{margin-top:7px;font-size:12px}.loop-controls button{padding:3px 8px}.loop-controls label{display:flex;gap:4px;align-items:center}.loop-controls output{color:#aaa}.shortcut{margin-left:auto;color:#999}.sidebar{min-width:0;border-left:1px solid #3b3b3b;padding:20px 18px;background:#292929;overflow-y:auto}.sidebar h1{font-size:13px;font-weight:600;margin:0 0 16px;color:#aaa}.source-name{font-size:15px;margin-bottom:8px}.muted{color:#aaa}.settings-summary{margin:12px 0;font-size:12px;color:#bcbcbc}.status{margin-top:24px;padding-top:16px;border-top:1px solid #3b3b3b;color:#bcbcbc}.exports{margin-top:18px;font-size:12px}.sidebar h2{font-size:13px;font-weight:600;color:#bcbcbc;margin:0 0 12px}.exports select{display:block;width:100%;margin:6px 0}.export-actions{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 12px}.export-actions button{padding:6px 10px}.comments{margin-top:22px;border-top:1px solid #3b3b3b;padding-top:12px}.comment-heading{display:flex;gap:6px;align-items:center}.comment-heading h2{margin:0 auto 0 0}.comment-heading button{padding:4px 7px}.comment-list{display:grid;gap:6px;margin-top:12px}.comment-item{text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}.quality{margin-bottom:12px}.memory{line-height:1.7}.cache-status{font-size:12px;margin:4px 0 10px}
+    @media(max-width:760px){.transport{padding-inline:12px}.controls{gap:5px}.controls button{padding-inline:7px}.time-readout{display:none}.shortcut{display:none}.sidebar{padding:16px 12px}}
+  </style>
+</head>
+<body>
+  <main class="workspace" aria-label="现有布局结构静态对照，操作不可用">
+    <section class="player-pane" aria-label="画面与传输控制布局">
+      <div class="screen"><canvas id="baselineScene" aria-label="同帧合成特效画面"></canvas></div>
+      <div class="transport">
+        <div class="timeline-area" aria-hidden="true">
+          <div class="ruler"><span>0s</span><span>1s</span><span>2s</span><span>3s</span><span>4s</span><span>5s</span><span>6s</span><span>7s</span><span>8s</span><span>9s</span><span>10s</span></div>
+          <div class="timeline"><div class="cache"></div><div class="rail"><div class="progress"></div></div><div class="thumb"></div><div id="baselineMarkers"></div></div>
+        </div>
+        <div class="controls"><button disabled>播放</button><button disabled>上一帧</button><button disabled>下一帧</button><label>速度 <select disabled aria-label="播放速度"><option>1×</option></select></label><span class="time-readout"><span>第 57 / 240 帧</span><span>0:02.333 / 0:10.000</span></span></div>
+        <div class="loop-controls"><button disabled>选择片段（R）</button><label><input type="checkbox" disabled>循环（L）</label><output>未设置范围</output><span class="shortcut">▸ 操作提示</span></div>
+      </div>
+    </section>
+    <aside class="sidebar" aria-label="固定侧栏布局">
+      <h1>素材</h1><p class="source-name">合成示例</p><p class="muted quality">1080p 预览 · 原始分辨率</p>
+      <p class="muted memory">视频缓存 RAM：—</p><p class="muted cache-status">缓存状态：—</p><p class="settings-summary">▸ 设置</p>
+      <p class="status">已暂停</p>
+      <section class="exports"><h2>导出</h2><label>保存位置<select disabled aria-label="导出保存位置"><option>本地文件夹</option></select></label><div class="export-actions"><button disabled>导出当前画面</button><button disabled>导出所选片段</button></div><p class="muted">从原视频导出，预览画质不影响结果。</p></section>
+      <section class="comments"><div class="comment-heading"><h2>标注</h2><button disabled>文字</button><button disabled>圈画（D）</button></div><div id="baselineComments" class="comment-list"></div></section>
+    </aside>
+  </main>
+  <script src="model.js"></script><script src="scene.js"></script><script src="baseline.js"></script>
+</body>
+</html>

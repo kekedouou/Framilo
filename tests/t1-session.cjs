@@ -403,7 +403,7 @@ async function main() {
     }
     const prefs={snapshot:()=>({ramMiB:1024}),quality:()=> '720p',preview(){},save(){throw Error('write refused');}};
     const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>({...m.makeInfo(v),preview:{quality:o.previewQuality}})});assert.equal((await h.session.loadSelected()).status,'ready');await assert.rejects(()=>h.session.setPlaybackSettings({ramMiB:1024,wheelFrames:5,showCacheStrip:false}));
-    assert.equal(h.players.length,1);assert.equal(h.session.snapshot().state,'paused');assert.deepEqual(h.session.snapshot().interactionSettings,{wheelFrames:1,showCacheStrip:true,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});await h.session.close();
+    assert.equal(h.players.length,1);assert.equal(h.session.snapshot().state,'paused');assert.deepEqual(h.session.snapshot().interactionSettings,{wheelFrames:1,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});await h.session.close();
   });
   await test('Only changing rate step pauses in place without recreating media or losing a nonpreset speed/range',async()=>{
     let interaction={wheelFrames:1,showCacheStrip:true,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false},saves=0;

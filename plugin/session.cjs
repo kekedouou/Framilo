@@ -482,7 +482,7 @@ function createSession(options) {
       if (!liveDraft(draft.id, token)) return { status: 'superseded' };
       if (comments.draft.status === 'obsolete') return { status: 'obsolete' };
       commentChange({ draft: Object.freeze({ ...draft, status: 'editing', message: kind === 'delete'
-        ? '确认从Eagle删除这条文字？本帧共享圈画会保留。' : '修改文字，原标注时间保持不变。' }) });
+        ? '确认删除这条标注？仅保留仍由同帧其他文字使用的圈画。' : '修改文字，原标注时间保持不变。' }) });
       return { status: 'editing' };
     } catch (failure) {
       if (liveDraft(draft.id, token)) commentChange({ draft: null, message: failure.message });
@@ -538,7 +538,7 @@ function createSession(options) {
     const sameDraft = !closed && comments.draft && comments.draft.id === id && comments.libraryPath === record.draft.libraryPath &&
       source && source.id === record.draft.source.id && source.filePath === record.draft.source.filePath && source.sha256 === record.draft.source.sha256;
     if (sameDraft && result.status === 'saved' && record.draft.kind === 'delete') {
-      const cleanup = drawings.nativeDeleted(record.draft.original.id);
+      const cleanup = drawings.nativeDeleted(record.draft.original.id, result.items, record.draft.original);
       if (cleanup.status === 'failed') result = { ...result, message: '原生文字已删除，但圈画仍保留：' + cleanup.message };
     }
     if (liveDraft(id, token) || sameDraft) {
@@ -682,6 +682,7 @@ function createSession(options) {
       const native = await freshNative(owned, token); if (!valid()) return { status: 'superseded' };
       target = drawings.resolveFrame({ frameId: actual.frameId, frameOrdinal: actual.frameOrdinal }, native);
       drawings.begin(reservation, { frameId: actual.frameId, frameOrdinal: actual.frameOrdinal, time: actual.time }, target, kind);
+      drawings.noteSetup(drawingModel.nativeAtFrame(native, owned.info.frames, actual.frameOrdinal, owned.info.duration), id);
       return { status: 'editing' };
     } catch (failure) { if (valid()) drawings.fail(failure); return { status: 'failed', message: failure.message }; }
   }
@@ -691,7 +692,8 @@ function createSession(options) {
     if (drawingWrite) return drawingWrite;
     const d = drawings.snapshot().draft, owned = owner, token = epoch;
     if (!d || !owned?.ready || closed || !['editing', 'failed', 'unknown'].includes(d.status)) return Promise.resolve({ status: 'ignored' });
-    if (d.kind === 'delete' || !d.objects.length) return Promise.resolve(drawings.save());
+    if (d.kind === 'delete' || !d.objects.length && !d.noteDirty && !d.nativeAttempt) return Promise.resolve(drawings.save());
+    if (d.noteDirty && d.noteChoices?.length > 1 && !d.noteOriginal) { drawings.fail(Error('请选择要修改的文字，圈画和输入仍保留。')); return Promise.resolve({status:'failed'}); }
     const valid = () => !closed && epoch === token && owner === owned && drawings.snapshot().draft?.id === d.id;
     drawings.saveState('saving', d.nativeAttempt ? '正在核对原保存结果…' : '正在核对Eagle文字…');
     drawingWrite = Promise.resolve().then(async () => {
@@ -702,19 +704,20 @@ function createSession(options) {
         if (!valid()) return { status: 'superseded' };
         if (result.status !== 'saved') { drawings.saveState('unknown', result.message || '文字保存结果未确认，请再次核对，勿重复添加。', d.nativeAttempt); return result; }
         drawings.saveState('saving', '文字已确认，正在保存圈画…', null);
+        drawings.noteSaved();
         commentChange({ items: result.items }); items = result.items;
       } else items = await freshNative(owned, token);
       if (!valid()) return { status: 'superseded' };
       let links = drawingModel.nativeAtFrame(items, owned.info.frames, d.frameOrdinal, owned.info.duration);
-      if (!links.length) {
+      if ((!links.length && d.objects.length) || d.noteDirty && !d.nativeAttempt) {
         if (typeof eagleAdapter.saveComment !== 'function') throw Error('当前Eagle没有可用的文字保存接口。');
-        const text = d.objects.find(o => o.kind === 'text' && o.text.trim())?.text.trim().slice(0, 4096) || '第' + (d.frameOrdinal + 1) + '帧';
+        const text = d.noteDirty ? d.noteText : d.objects.find(o => o.kind === 'text' && o.text.trim())?.text.trim().slice(0, 4096) || '第' + (d.frameOrdinal + 1) + '帧';
         let attempt = null;
         commentWriteRevision++;
         let result;
         try {
           result = await eagleAdapter.saveComment({ source, libraryPath: comments.libraryPath, frameId: d.frameId, time: d.time, text,
-            frameBounds: frameBounds(owned, d.frameOrdinal), reuseSameFrame: true },
+            ...(d.noteDirty && d.noteOriginal ? {kind:'edit',original:d.noteOriginal,time:d.noteOriginal.time} : {frameBounds: frameBounds(owned, d.frameOrdinal), reuseSameFrame: !d.noteDirty}) },
             { isCurrent: valid, onIssued(value) { attempt = value; if (valid()) drawings.saveState('saving', '正在保存并核对Eagle文字…', value); } });
         } catch (failure) { result = { status: attempt ? 'unknown' : 'failed', attempt, message: failure.message }; }
         commentWriteRevision++;
@@ -724,6 +727,7 @@ function createSession(options) {
           return result;
         }
         drawings.saveState('saving', '文字已确认，正在保存圈画…', null);
+        drawings.noteSaved();
         items = result.items; commentChange({ items });
         links = drawingModel.nativeAtFrame(items, owned.info.frames, d.frameOrdinal, owned.info.duration);
         if (!links.length) throw Error('新文字未能关联当前源帧，圈画草稿仍保留。');
@@ -746,6 +750,10 @@ function createSession(options) {
   }
   return Object.freeze({ loadSelected, retry: settings => loadSelected({ ...settings, trigger: 'retry' }),
     beginDrawing, clearDrawing, setDrawingObjects: drawings.objects, touchDrawing: drawings.touch,
+    setDrawingNote: drawings.noteText,
+    timelineFrames: () => owner?.ready ? owner.info.frames : null,
+    annotationFrame: time => owner?.ready ? drawingModel.frameIndex(owner.info.frames,time,owner.info.duration) : null,
+    renderThumbnail: (time, canvas) => owner?.ready && owner.player.paintThumbnail ? owner.player.paintThumbnail(time,canvas) : Promise.resolve(null),
     saveDrawing, cancelDrawing: drawings.discard, setDrawingsVisible: drawings.setVisible, setDrawingStyles: drawings.setStyles,
     hasDrawingDraft: () => !!drawings.snapshot().draft,
     play: () => control('play', [], ['paused']), pause: () => control('pause', [], ['paused', 'playing', 'seeking']),

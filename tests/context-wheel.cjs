@@ -4,7 +4,7 @@ function harness(){let time=0,serial=0,listeners=0;const timers=new Map(),calls=
  function node(tag='div'){const events=new Map();return{tag,style:{},attributes:{},children:[],hidden:false,
   addEventListener(t,f){if(!events.has(t))events.set(t,new Set());if(!events.get(t).has(f)){events.get(t).add(f);listeners++;}},
   removeEventListener(t,f){if(events.get(t)?.delete(f))listeners--;},emit(t,v={}){const e={type:t,pointerId:1,button:2,buttons:2,clientX:300,clientY:200,preventDefault(){this.defaultPrevented=true;},...v};for(const f of [...(events.get(t)||[])])f(e);return e;},
-  setAttribute(k,v){this.attributes[k]=v;},appendChild(c){this.children.push(c);},replaceChildren(...c){this.children=c;},getBoundingClientRect:()=>({left:0,top:0,width:800,height:500}),closest(){return null;},focus(){},setPointerCapture(){},hasPointerCapture(){return false;}};
+  setAttribute(k,v){this.attributes[k]=v;},getAttribute(k){return this.attributes[k];},appendChild(c){this.children.push(c);},replaceChildren(...c){this.children=c;},getBoundingClientRect:()=>({left:0,top:0,width:800,height:500}),closest(){return null;},focus(){},setPointerCapture(){},hasPointerCapture(){return false;}};
  }
  const screen=node(),win=node();win.setTimeout=(f)=>{const id=++serial;timers.set(id,f);return id;};win.clearTimeout=id=>timers.delete(id);
  const ctx={epoch:1,mode:'watch',enabled:true,items:['up','right','down','left'].map(id=>({id,label:id}))};
@@ -23,10 +23,11 @@ test('Mode taps execute once; hold, small flick, return, escape and lost capture
 });
 test('Entering a type sector opens children without selecting; continuing movement chooses only one child',()=>{
  const h=harness();h.ctx.mode='drawing';h.ctx.tap='save';h.ctx.items[0]={id:'types',label:'类型',children:['pen','arrow','rect','ellipse','text'].map(id=>({id,label:id}))};
- h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientY:160});h.win.emit('pointerup',{clientY:160,buttons:0});assert.equal(h.calls.length,0);
- h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientY:160});h.win.emit('pointermove',{clientY:120});h.win.emit('pointerup',{clientY:120,buttons:0});assert.deepEqual(h.calls,['pen']);
+ h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientY:160});h.win.emit('pointerup',{clientY:160,buttons:0});assert.equal(h.calls.length,0);h.api.reset();
+ h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientY:160});h.hold();h.win.emit('pointermove',{clientX:170,clientY:160});h.win.emit('pointerup',{clientX:170,clientY:160,buttons:0});assert.deepEqual(h.calls,['pen']);
  const base=h.count();for(let i=0;i<80;i++){h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientY:160});h.win.emit('keydown',{key:'Escape'});assert.equal(h.count(),base);}h.api.destroy();assert.equal(h.count(),0);
 });
 test('Long gestures in the note editor without wheel items never save',()=>{const h=harness();h.ctx.mode='note';h.ctx.items=[];h.ctx.tap='save-note';h.screen.emit('pointerdown',{target:h.screen});h.hold();h.win.emit('pointerup',{buttons:0});h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientX:360});h.win.emit('pointerup',{buttons:0,clientX:360});assert.equal(h.calls.length,0);h.api.destroy();});
 test('A right tap closes an open color palette without saving its drawing',()=>{const h=harness();h.ctx.mode='drawing';h.ctx.tap='save';h.ctx.items[1]={id:'color',label:'颜色'};h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientX:360});h.win.emit('pointerup',{clientX:360,buttons:0});assert(h.api.active());h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointerup',{buttons:0});assert(!h.api.active());assert.equal(h.calls.length,0);h.api.destroy();});
+test('Pending secondary dwell is cancelled by another root sector and destruction',()=>{const h=harness();h.ctx.items[0]={id:'types',label:'类型',children:[{id:'pen',label:'手写'}]};h.ctx.items[1]={id:'color',label:'颜色'};h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientY:150});assert(h.timers.size===1);h.win.emit('pointermove',{clientY:250});assert.equal(h.timers.size,0);h.hold();assert.equal(h.screen.children[0].getAttribute('data-level'),'root');h.win.emit('pointermove',{clientX:350});h.hold();assert.equal(h.screen.children[0].getAttribute('data-level'),'color');h.api.destroy();assert.equal(h.timers.size,0);assert.equal(h.count(),0);});
 console.log('Right wheel: '+count+' model lifecycle checks; no real Eagle.');

@@ -1,0 +1,5 @@
+'use strict';
+const assert=require('assert'),{createDrawingSession}=require('../plugin/drawing-session.cjs');
+let reads=0;const frames=Array.from({length:1000},(_,i)=>({id:i,time:i*.01})),records=frames.map((f,i)=>({id:'r'+i,sourceSha256:'a',get frameOrdinal(){reads++;return i;},frameId:i,time:f.time,nativeLinks:[],objects:[]}));
+const drawing=createDrawingSession({store:{readVisibility:()=>({visible:true}),read:()=>({records,token:'1'})}});drawing.open({sourceSha256:'a',frames,duration:10});reads=0;
+const texts=frames.map((f,i)=>({id:'t'+i,time:f.time,text:'old'})),result=drawing.list(texts);assert.equal(result.length,1000);result.forEach((r,i)=>assert.equal(r.drawingId,'r'+i));assert(reads<10000,'Frame lookup must remain linear');const count=reads;assert.strictEqual(drawing.list(texts),result);assert.equal(reads,count);const changed=texts.map(r=>({...r,text:'new'}));assert.equal(drawing.list(changed)[0].text,'new');console.log('E29 annotation index: 1000 correct mappings, linear lookup, cached repeat and text invalidation passed.');

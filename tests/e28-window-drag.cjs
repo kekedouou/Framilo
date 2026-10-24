@@ -1,0 +1,4 @@
+'use strict';
+const assert=require('assert'),{createWindowDrag}=require('../plugin/window-drag.cjs');
+(async()=>{let reads=0,positions=[],scheduled=[];const host={setFullScreen:async()=>{},isMaximized:async()=>{reads++;return false;},getSize:async()=>{reads++;return[1000,700];},setPosition:async(x,y)=>positions.push([x,y])};const d=createWindowDrag({host,schedule:fn=>{scheduled.push(fn);return scheduled.length;}});
+ await d.start({x:700,y:80,ratio:.5,offsetY:20,restore:{size:[1000,700],maximized:false}});assert.equal(reads,0);assert.deepEqual(positions,[[200,60]]);for(let i=0;i<100;i++)d.move({x:700+i,y:90});assert.equal(scheduled.length,1);await scheduled.shift()();assert.deepEqual(positions.at(-1),[299,70]);d.end();await scheduled.shift()();d.cancel();console.log('E28 drag: cached restoration skips two SDK queries; burst movement coalesces into one scheduled position. SDK model only.');})().catch(e=>{console.error(e);process.exitCode=1;});

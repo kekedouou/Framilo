@@ -55,7 +55,7 @@ for (const kind of ['link', 'links', 'large', 'foreign', 'broken']) {
 {
   const m=model();m.put(file,JSON.stringify({owner:OWNER,percent:2.5}));const before=Buffer.from(m.files.get(file).data);
   assert.equal(m.create(42551783424).snapshot().ramMiB,1024);assert(m.create().snapshot().legacyConverted);assert(m.files.get(file).data.equals(before));
-  const p=m.create();p.save(1024);assert.deepEqual(JSON.parse(m.files.get(file).data),{owner:OWNER,ramMiB:1024,previewQuality:'720p',forwardPredecode:true,wheelFrames:1,showCacheStrip:true,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});assert(!m.create().snapshot().legacyConverted);
+  const p=m.create();p.save(1024);assert.deepEqual(JSON.parse(m.files.get(file).data),{owner:OWNER,ramMiB:1024,previewQuality:'720p',forwardPredecode:true,wheelFrames:1,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});assert(!m.create().snapshot().legacyConverted);
 }
 {
   const m=model();m.put(file,JSON.stringify({owner:OWNER,ramMiB:1024,previewQuality:'1080p'}));
@@ -73,12 +73,12 @@ for (const kind of ['link', 'links', 'large', 'foreign', 'broken']) {
   m.io.failRename=false; m.put(temp,'interrupted write'); assert.throws(()=>m.create().save(1024,'720p')); assert.equal(m.create().quality(),'1080p');
 }
 {
-  const m=model(),p=m.create();assert.deepEqual(p.interaction(),{wheelFrames:1,showCacheStrip:true,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});
+  const m=model(),p=m.create();assert.deepEqual(p.interaction(),{wheelFrames:1,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});
   p.save(1024,'1080p',true,{wheelFrames:5,showCacheStrip:false});const saved=Buffer.from(m.files.get(file).data);
   assert.deepEqual(m.create().interaction(),{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});p.save(2048);assert.deepEqual(m.create().interaction(),{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});
-  for(const value of [0,3,1.5,11,NaN,'2'])assert.throws(()=>p.save(1024,'720p',true,{wheelFrames:value,showCacheStrip:true}));
+  for(const value of [0,3,1.5,11,NaN,'2'])assert.throws(()=>p.save(1024,'720p',true,{wheelFrames:value,showCacheStrip:false}));
   assert.throws(()=>p.save(1024,'720p',true,{wheelFrames:1,showCacheStrip:'no'}));
-  const original=Buffer.from(m.files.get(file).data);m.io.failRename=true;assert.throws(()=>p.save(1024,'720p',true,{wheelFrames:2,showCacheStrip:true}));
+  const original=Buffer.from(m.files.get(file).data);m.io.failRename=true;assert.throws(()=>p.save(1024,'720p',true,{wheelFrames:2,showCacheStrip:false}));
   assert(m.files.get(file).data.equals(original));assert.deepEqual(p.interaction(),{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});assert(!m.files.has(temp));
   m.io.failRename=false;m.put(file,saved);m.put(temp,'interrupted settings');assert.throws(()=>m.create().save(1024));assert.deepEqual(m.create().interaction(),{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});
 }
@@ -95,7 +95,9 @@ for(const extra of [{wheelFrames:3},{showCacheStrip:0},{rateStep:.3},{rateStep:'
 }
 {
  const m=model();m.put(file,JSON.stringify({owner:OWNER,ramMiB:1024,previewQuality:'1080p'}));const before=Buffer.from(m.files.get(file).data);assert.equal(m.create().interaction().drawingFadeSeconds,.25);assert(m.files.get(file).data.equals(before));
- const p=m.create();for(const drawingFadeSeconds of [0,.05,.25,1]){p.save(1024,'1440p',true,{wheelFrames:1,showCacheStrip:true,rateStep:.1,drawingFadeSeconds});assert.equal(m.create().interaction().drawingFadeSeconds,drawingFadeSeconds);assert.equal(m.create().quality(),'1440p');}
+ const p=m.create();for(const drawingFadeSeconds of [0,.05,.25,1]){p.save(1024,'1440p',true,{wheelFrames:1,showCacheStrip:false,rateStep:.1,drawingFadeSeconds});assert.equal(m.create().interaction().drawingFadeSeconds,drawingFadeSeconds);assert.equal(m.create().quality(),'1440p');}
  const saved=Buffer.from(m.files.get(file).data);for(const drawingFadeSeconds of [-1,1.01,NaN,'0'])assert.throws(()=>p.save(1024,'1440p',true,{drawingFadeSeconds}));assert(m.files.get(file).data.equals(saved));
 }
 console.log('Memory preference models: fixed tiers/limits/proportion, legacy read-only conversion, quality/predecode/wheel/strip persistence, atomic failure/concurrent/interrupted save, unsafe files and writer protection passed; no actual files written.');
+
+{const m=model();m.put(file,JSON.stringify({owner:OWNER,ramMiB:1024,previewQuality:'720p',forwardPredecode:true,showCacheStrip:true}));const p=m.create();assert.equal(p.interaction().showCacheStrip,true);p.save(2048);assert.equal(m.create().interaction().showCacheStrip,true);}

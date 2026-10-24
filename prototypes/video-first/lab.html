@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>交互样稿 · 实验工作台</title>
+  <link rel="stylesheet" href="lab.css">
+  <script src="lab.js" defer></script>
+</head>
+<body>
+  <div class="lab-shell">
+    <aside class="lab-controls" aria-label="样稿实验控制">
+      <header class="lab-heading">
+        <h1>交互样稿</h1>
+        <p>合成画面 / 内存示例，不写Eagle</p>
+        <a href="index.html" target="_blank" rel="noopener">独立打开播放器 ↗</a>
+      </header>
+      <p id="labMessage" class="lab-message" role="status" aria-live="polite"></p>
+      <section class="control-group" aria-labelledby="viewHeading">
+        <h2 id="viewHeading">比较布局</h2>
+        <div class="button-pair">
+          <button id="newView" type="button" aria-pressed="true">新样稿</button>
+          <button id="baselineView" type="button" aria-pressed="false">现状结构</button>
+        </div>
+        <p id="viewNote" class="helper">现状结构只比较布局，不运行旧正式产品。</p>
+        <label for="aspect">画面比例</label>
+        <select id="aspect"><option value="wide">横屏 16∶9</option><option value="portrait">竖屏 9∶16</option><option value="square">方形 1∶1</option></select>
+      </section>
+      <section class="control-group" aria-labelledby="paramsHeading">
+        <h2 id="paramsHeading">设计参数</h2>
+        <div id="paramControls"></div>
+        <button id="resetParams" type="button" class="quiet-button">恢复参数初值</button>
+      </section>
+      <section class="control-group" aria-labelledby="versionsHeading">
+        <h2 id="versionsHeading">保存版本 <span id="versionCount">0 / 12</span></h2>
+        <label for="versionName">版本名</label>
+        <input id="versionName" type="text" maxlength="40" placeholder="例如：更轻的玻璃" autocomplete="off">
+        <button id="saveVersion" type="button">保存当前参数</button>
+        <label for="versionList">已有版本</label>
+        <select id="versionList" aria-label="已有版本"></select>
+        <div class="button-pair"><button id="applyVersion" type="button">应用</button><button id="deleteVersion" type="button" class="quiet-button">删除</button></div>
+        <div class="button-pair"><button id="exportVersion" type="button" class="quiet-button">导出 JSON</button><button id="importVersion" type="button" class="quiet-button">导入 JSON</button></div>
+        <input id="importFile" type="file" accept="application/json,.json" hidden>
+        <p class="helper">只保存设计参数和比例；不保存媒体、标注或播放位置。最多12个版本。</p>
+      </section>
+      <section class="control-group" aria-labelledby="compareHeading">
+        <h2 id="compareHeading">A / B 对照</h2>
+        <label for="compareA">A 版本</label><select id="compareA"></select>
+        <label for="compareB">B 版本</label><select id="compareB"></select>
+        <div class="button-pair"><button id="applyA" type="button">查看 A</button><button id="applyB" type="button">查看 B</button></div>
+        <button id="toggleCompare" type="button">切换到 A</button>
+        <p id="compareState" class="helper">先保存两个版本，再比较参数。</p>
+      </section>
+      <details class="control-group fault-group">
+        <summary>保存保护演示</summary>
+        <p class="helper">仅内存模拟。进入标注，输入或圈画后，保存时触发所选结果；不会调用Eagle。</p>
+        <label for="fault">下次保存结果</label>
+        <select id="fault"><option value="none">正常完成</option><option value="failed">失败，保留全部草稿</option><option value="partial">文字成功，圈画未完成</option><option value="unknown">结果未知，先核对</option></select>
+        <button id="resetSample" type="button" class="quiet-button">重置内存示例</button>
+      </details>
+      <section class="control-group final-group">
+        <div class="button-pair"><button id="showGuide" type="button" class="quiet-button">查看操作提示</button><button id="hideGuide" type="button" class="quiet-button">关闭提示</button></div>
+      </section>
+    </aside>
+    <main class="preview-region" aria-label="可交互播放器样稿">
+      <iframe id="preview" title="视频优先交互样稿" src="index.html" allow="fullscreen" allowfullscreen></iframe>
+    </main>
+  </div>
+</body>
+</html>

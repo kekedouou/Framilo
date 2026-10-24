@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>视频分析</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="graphite.css">
 </head>
 <body>
   <main class="workspace">
@@ -107,7 +108,7 @@
         <label class="predecode-option"><input id="drawingToolbar" type="checkbox"> 显示圈画工具条</label>
         <p class="muted">立即生效并记住选择，不删除标注，不需点击应用。</p>
         <p class="muted">优先准备光标附近，自动替换远处画面。绿条表示已解压；未覆盖处首次拖动可能等待。</p>
-        <label class="predecode-option"><input id="showCacheStrip" type="checkbox" checked disabled> 显示缓存绿条</label>
+        <label class="predecode-option"><input id="showCacheStrip" type="checkbox" disabled> 显示缓存绿条</label>
         <label for="drawingFadeSeconds">标注淡入淡出时长（秒）</label>
         <input id="drawingFadeSeconds" type="number" min="0" max="1" step="0.05" value="0.25" aria-label="标注淡入淡出时长" disabled>
         <p class="muted">0关闭；标注帧前后各该时长。点击应用生效，不重建缓存。</p>
@@ -166,6 +167,10 @@
   <script src="drawing-ui.js"></script>
   <script src="screen-gestures.js"></script>
   <script src="screen-gesture-ui.js"></script>
+  <script src="interface-icons.js"></script>
+  <script src="timeline-strip.js"></script>
+  <script src="settings-view.js"></script>
+  <script src="graphite-shell.js"></script>
   <script src="context-wheel.js"></script>
   <script src="ui.js"></script>
   <script src="app.js"></script>

@@ -32,6 +32,7 @@ function harness(settings = {}) {
   };
   modules['task-client.cjs'] = { createTaskClient: options => require('./support/task-client-model.cjs').createModel(modules, options) };
   const eagle = Object.fromEntries(['onPluginCreate', 'onPluginRun', 'onLibraryChanged', 'onPluginBeforeExit', 'onPluginShow', 'onPluginHide'].map(name => [name, callback => { hooks[name] = callback; }]));
+  if(settings.hostWindow)eagle.window=settings.hostWindow;
   function requestClose() {
     closeAttempts++;
     if (settings.deferNativeAck && nativeCloseBusy) { mergedCloseAttempts++; return { merged: true }; }
@@ -78,6 +79,9 @@ async function bounded(pending) {
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 async function main() {
+  {const calls=[],h=harness({hostWindow:{show:async()=>calls.push('show'),focus:async()=>calls.push('focus')}});await h.hooks.onPluginCreate({path:h.root});await tick();assert.deepEqual(calls,['show','focus']);h.hooks.onPluginRun();await tick();assert.deepEqual(calls,['show','focus','show','focus']);await h.hooks.onPluginBeforeExit();console.log('T1 app: create/run show then focus without permanent topmost');}
+  {const h=harness({hostWindow:{show(){throw Error('host closing');}}});await h.hooks.onPluginCreate({path:h.root});await tick();assert(h.config);await h.hooks.onPluginBeforeExit();console.log('T1 app: display failure does not abort session wiring');}
+
   {
     const h = harness(); await h.hooks.onPluginCreate({ path: h.root });
     h.hooks.onPluginHide(); h.hooks.onPluginShow();

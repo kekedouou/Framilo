@@ -2,7 +2,26 @@
 (function () {
   'use strict';
   const path = require('path'), fs = require('fs');
-  let ui = window.EVAUI.createUI();
+  let fullscreenProbe=0,fullscreenTransition=false;
+  async function syncFullscreen(){if(fullscreenTransition)return;try{const token=++fullscreenProbe,value=await eagle.window.isFullScreen();if(token!==fullscreenProbe)return;if(!value)windowedGeometry=null;document.documentElement.dataset.evaFullscreen=String(!!value);window.dispatchEvent(new Event('eva-fullscreen-change'));}catch(_){/* Host may not be ready yet. */}}
+  let fullscreenTimer=null;window.addEventListener('resize',()=>{clearTimeout(fullscreenTimer);fullscreenTimer=setTimeout(syncFullscreen,100);});window.addEventListener('focus',syncFullscreen);syncFullscreen();
+  let windowDrag=null,windowedGeometry=null;
+  function dragAdapter(){if(!windowDrag){if(!lastPlugin?.path)throw Error('窗口尚未准备完成');windowDrag=require(path.join(lastPlugin.path,'window-drag.cjs')).createWindowDrag({host:eagle.window,sync:syncFullscreen,schedule:fn=>window.requestAnimationFrame(fn),cancel:id=>window.cancelAnimationFrame(id),report:error=>{const n=document.getElementById('error');n.hidden=false;n.textContent='窗口拖动未完成：'+error.message;}});}return windowDrag;}
+  window.addEventListener('unload',()=>windowDrag?.cancel());
+  async function hostAction(action,details) {
+    try {
+      if(action==='window-drag-start'){await dragAdapter().start({...details,restore:windowedGeometry});return;}
+      if(action==='window-drag-move'){windowDrag?.move(details);return;}
+      if(action==='window-drag-end'){windowDrag?.end(details);return;}
+      if(action==='close'){windowDrag?.cancel();window.close();return;}
+      const host=eagle.window;
+      if(action==='minimize')await host.minimize();
+      else if(action==='maximize')await (await host.isMaximized()?host.unmaximize():host.maximize());
+      else if(action==='windowed'){await host.setFullScreen(false);await syncFullscreen();}
+      else if(action==='fullscreen'){fullscreenTransition=true;++fullscreenProbe;try{const full=await host.isFullScreen();if(!full){try{const [size,maximized]=await Promise.all([host.getSize(),host.isMaximized()]);windowedGeometry={size,maximized};}catch(_){windowedGeometry=null;}}await host.setFullScreen(!full);}finally{fullscreenTransition=false;await syncFullscreen();}}
+    } catch(error) { const node=document.getElementById('error');node.hidden=false;node.textContent='窗口操作未完成：'+error.message; }
+  }
+  let ui = window.EVAUI.createUI({hostAction});
   let session = null, diagnostics = null, initializing = false, closed = false;
   let closeTask = null, allowUnload = false, exitScheduled = false;
   let drawingCloseIntent = null, drawingLoadSequence = 0;
@@ -40,6 +59,7 @@
     const entryAt = entryOverride === null ? now() : entryOverride; entryOverride = null;
     if (closed || initializing || session) return;
     initializing = true;
+    presentWindow();
     try {
       if (!plugin || typeof plugin.path !== 'string' || !path.isAbsolute(plugin.path)) throw new Error('Eagle 未提供有效插件目录，请从插件入口打开。');
       const root = fs.realpathSync(plugin.path);
@@ -133,7 +153,9 @@
       .finally(() => { if (drawingCloseIntent === intent) drawingCloseIntent = null; });
     drawingCloseIntent = intent; return intent;
   }
+  async function presentWindow(){try{const host=eagle.window;if(!host?.show)return;await host.show();if(!closed)await host.focus?.();}catch(_){/* Host may already be closing. */}}
   function run() {
+    presentWindow();
     if (session && !closed) return loadSelected({ startedAt: now(), trigger: 'plugin-run' }).catch(() => {});
     if (!closed || !lastPlugin || !adapter) return;
     const startedAt = now(); let captured;
@@ -145,7 +167,7 @@
       if (result && result.status === 'error') throw new Error(result.error && result.error.message || '旧任务未能正常释放。');
       pendingOpen = null; initialSelection = request.captured; entryOverride = request.startedAt;
       session = null; backend = null; closeTask = null; closed = false; allowUnload = false; exitScheduled = false;
-      ui = window.EVAUI.createUI(); return initialize(lastPlugin);
+      ui = window.EVAUI.createUI({hostAction}); return initialize(lastPlugin);
     }).catch(startupError);
   }
   function closeFailed(error) {

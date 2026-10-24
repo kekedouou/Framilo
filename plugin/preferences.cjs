@@ -6,8 +6,8 @@ const OWNER = 'eva-memory-preference-v1', DEFAULT_BYTES = 1024 ** 3, MAX_FILE = 
 const OPTIONS = Object.freeze([512, ...Array.from({ length: 10 }, (_, i) => (i + 1) * 1024)]);
 const WHEEL_OPTIONS = Object.freeze([1, 2, 5, 10]);
 const RATE_STEP_OPTIONS = Object.freeze([.1, .2, .25, .5]);
-const DEFAULT_INTERACTION = Object.freeze({ wheelFrames: 1, showCacheStrip: true, rateStep: .1, drawingFadeSeconds: .25, drawingToolbar: false });
-function interactionValue(wheelFrames = 1, showCacheStrip = true, rateStep = .1, drawingFadeSeconds = .25, drawingToolbar = false) {
+const DEFAULT_INTERACTION = Object.freeze({ wheelFrames: 1, showCacheStrip: false, rateStep: .1, drawingFadeSeconds: .25, drawingToolbar: false });
+function interactionValue(wheelFrames = 1, showCacheStrip = false, rateStep = .1, drawingFadeSeconds = .25, drawingToolbar = false) {
   if (!WHEEL_OPTIONS.includes(wheelFrames)) throw new Error('滚轮灵敏度请选择1、2、5或10帧。');
   if (typeof showCacheStrip !== 'boolean') throw new Error('缓存绿条显示设置必须为开或关。');
   if (!RATE_STEP_OPTIONS.includes(rateStep)) throw new Error('倍速步长请选择0.1、0.2、0.25或0.5。');

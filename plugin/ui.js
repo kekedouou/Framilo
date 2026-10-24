@@ -71,7 +71,7 @@
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
     let viewRange = { start: 0, end: 0, focused: false }, timelineWidth = null, rulerKey = null;
     let rateRequest = null, noteRequest = null, exportRequest = null;
-    let drawingUI = null, screenUI = null, contextUI = null;
+    let drawingUI = null, screenUI = null, contextUI = null, shellUI = null;
     const markerButtons = [], markerTimes = new WeakMap();
     const attributes = new Map();
     const loopAttributes = new WeakMap();
@@ -213,7 +213,7 @@
       set(el.commentEditor.style, 'maxHeight', Math.max(1, imageHeight - inset - 12) + 'px');
     }
     on(win, 'resize', () => { coverageKey = null; coverageSize = null; timelineWidth = null; rulerKey = null; updateTransport(); refreshCoverage(); layoutComment(); });
-    const interactive = () => !!session && !noteRequest && !exportRequest && !state.comments?.draft && !state.drawings?.draft && state.exportState?.status !== 'busy' && ['paused', 'playing', 'seeking'].includes(state.state);
+    const interactive = () => !!session && !shellUI?.blocked?.() && !noteRequest && !exportRequest && !state.comments?.draft && !state.drawings?.draft && state.exportState?.status !== 'busy' && ['paused', 'playing', 'seeking'].includes(state.state);
     const invoke = fn => {
       try { Promise.resolve(fn()).catch(() => {}); } catch (_) { /* session publishes operation errors */ }
     };
@@ -246,6 +246,7 @@
       const key = [viewRange.start, viewRange.end, viewRange.focused, timelineWidth].join(':');
       if (rulerKey === key) return;
       rulerKey = key;
+      if (shellUI) return;
       // Non-DOM unit harnesses may omit createElement; browser/loader tests
       // exercise the actual bounded tick nodes and their geometry.
       if (typeof doc.createElement !== 'function') return;
@@ -417,6 +418,7 @@
       }
       if (letterKey(event, 'N')) { if (shortcutReady() && !transportBusy && !el.commentAdd.disabled) { event.preventDefault(); beginNote(); } return; }
       for (const [key, kind] of [['S', 'frame'], ['E', 'clip']]) if (letterKey(event, key)) {
+        if (shellUI) return;
         if (shortcutReady() && !transportBusy) { event.preventDefault(); exportSelected(kind); } return;
       }
       const delta = frameStepKey(event);
@@ -468,6 +470,7 @@
       if (selectedComment && !state.comments?.draft && !state.drawings?.draft && !event.target?.closest?.('.comment-row')) showCommentActions(null);
     });
     async function beginNote() {
+      if (shellUI) { drawingUI.begin(); return; }
       if (!shortcutReady() || transportBusy || el.commentAdd.disabled) return;
       const job = noteRequest = { session, epoch: state.epoch }; update(state);
       try { const pending = job.session.beginComment(selectedComment); if (pending && typeof pending.then === 'function') await pending; }
@@ -601,7 +604,7 @@
       set(el.commentEditorStatus, 'textContent', draft?.message || '');
       if (value === renderedComments) return;
       const previous = renderedComments; renderedComments = value;
-      set(el.commentStatus, 'textContent', draft?.message || value?.syncMessage || value?.message || (!draft && value?.status === 'ready' && !items.length ? '暂无标注' : ''));
+      set(el.commentStatus, 'textContent', draft?.message || value?.syncMessage || value?.message || '');
       // Hiding a focused editor can synchronously move activeElement to body.
       const editorHadFocus = [el.commentText, el.commentSave, el.commentCancel].includes(doc.activeElement);
       set(el.commentEditor, 'hidden', !draft);
@@ -674,6 +677,7 @@
       if (drawingUI) drawingUI.update(state);
       if (screenUI) screenUI.update();
       if (contextUI) contextUI.update();
+      if (shellUI) shellUI.update(state);
       const hideStrip = state.interactionSettings?.showCacheStrip === false;
       if (el.decodedCache.hidden !== hideStrip) { set(el.decodedCache, 'hidden', hideStrip); coverageKey = null; }
     }
@@ -695,6 +699,8 @@
       toggle: () => { if ((shortcutReady() || interactive() && state.playback?.buffering) && !transportBusy) invoke(() => state.state === 'playing' || state.playback?.buffering ? session.pause() : session.play()); } });
     contextUI = contextAPI.createContextWheel({ document: doc, window: win, screen: el.screen, now,
       getContext: () => {
+        const deletion = state.drawings?.draft?.kind === 'delete' ? state.drawings.draft : state.comments?.draft?.kind === 'delete' ? state.comments.draft : null;
+        if (deletion) return { epoch: state.epoch, mode: 'note', enabled: ['editing','failed','pausing','obsolete'].includes(deletion.status), tap: 'cancel-delete', items: [] };
         if (state.drawings?.draft) return { epoch: state.epoch, mode: 'drawing', ...drawingUI.menuState() };
         if (state.comments?.draft) return { epoch: state.epoch, mode: 'note', enabled: !commentComposing && now() - commentCompositionEnd >= 50 && state.comments.draft.kind !== 'delete' && ['editing', 'failed', 'unknown'].includes(state.comments.draft.status), tap: 'save-note', items: [] };
         if (selection.snapshot().editing) return { epoch: state.epoch, mode: 'selection', enabled: interactive() && !gesture && !selection.snapshot().busy,
@@ -704,11 +710,12 @@
         return { epoch: state.epoch, mode: 'watch', enabled: interactive() && !gesture && !memoryBusy && !cleaning && !transportBusy && !selection.snapshot().busy,
           items: [{ id: 'note', label: '添加标注', symbol: 'N', disabled: !shortcutReady() || state.comments?.status !== 'ready' },
             { id: 'loop', label: loop?.enabled ? '关闭循环' : '开启循环', symbol: '↻', selected: !!loop?.enabled, disabled: selection.snapshot().editing },
-            { id: 'drawing', label: '添加圈画', symbol: '✎', disabled: !shortcutReady() || state.drawings?.status !== 'ready' },
+            { id: shellUI ? 'records' : 'drawing', label: shellUI ? '记录' : '添加圈画', symbol: '✎', disabled: !shortcutReady() || state.drawings?.status !== 'ready' },
             { id: 'selection', label: '选择片段', symbol: '↔' }] };
       },
       opening: () => { screenUI.reset(); },
       command: (id, value) => {
+        if (id === 'cancel-delete') { if(state.drawings?.draft?.kind==='delete')session.cancelDrawing();else session.cancelComment(); return; }
         if (id === 'save-note') { saveNote(); return; }
         if (id === 'finish-selection') { invoke(() => selection.finish()); return; }
         if (id === 'endpoint-start' || id === 'endpoint-end') { invoke(() => selection.selectEndpoint(id === 'endpoint-start' ? 'start' : 'end')); return; }
@@ -717,7 +724,11 @@
         else if (id === 'loop') invoke(() => selection.toggleLoop());
         else if (id === 'note') invoke(beginNote);
         else if (id === 'drawing') drawingUI.begin();
+        else if (id === 'records') shellUI?.records();
       } });
+    if (win.EVAGraphite) shellUI = win.EVAGraphite.createShell({document:doc,window:win,getState:()=>state,getSession:()=>session,getRange:()=>viewRange,
+      annotate:(id,kind)=>drawingUI.begin(id,kind),clip:()=>{if(interactive())selection.clearOrChoose();},
+      exitDrawing:()=>drawingUI.confirmExit('退出标注'),hostAction:options.hostAction});
     const commentResize = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(layoutComment) : null;
     commentResize?.observe(el.screen);
     return { canvas: el.picture, confirmDrawingExit: () => drawingUI.confirmExit(), bindSession(value) {
@@ -734,6 +745,7 @@
       if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
     }, update,
       destroy() {
+        shellUI?.destroy();
         commentResize?.disconnect();
         drawingUI.destroy(); screenUI.destroy(); contextUI.destroy();
         rateRequest = noteRequest = exportRequest = null; transportBusy = false;

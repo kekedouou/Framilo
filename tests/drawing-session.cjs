@@ -116,13 +116,13 @@ async function main() {
     assert.equal((await h.session.saveDrawing()).status, 'failed'); assert.equal(h.writes, 1); assert(h.session.snapshot().drawings.draft.dirty);
     h.store.fail = false; assert.equal((await h.session.saveDrawing()).status, 'saved'); assert.equal(h.writes, 1); await h.session.close();
   });
-  await test('Deleting one or the final native comment never deletes the shared graphics', async () => {
+  await test('Deleting a shared text preserves graphics; deleting the last text removes them', async () => {
     const h = harness(); h.native.push({ id: 'two', duration: .04, annotation: '第二条' }); await h.load(); await h.session.seek(.033);
     await h.session.beginDrawing(); h.session.setDrawingObjects(objects()); await h.session.saveDrawing();
     await h.session.deleteComment('native'); await h.session.saveComment(); assert.equal(h.session.snapshot().drawings.records.length, 1);
     assert.equal(h.session.snapshot().comments.items[0].id, 'two'); assert(h.session.snapshot().comments.items[0].drawingId);
-    await h.session.deleteComment('two'); await h.session.saveComment(); assert.equal(h.session.snapshot().drawings.records.length, 1);
-    assert(h.session.snapshot().comments.items[0].localDrawing); await h.session.close();
+    await h.session.deleteComment('two'); await h.session.saveComment(); assert.equal(h.session.snapshot().drawings.records.length, 0);
+    assert.equal(h.session.snapshot().comments.items.length, 0); await h.session.close();
   });
   await test('External move/delete cannot move the source-frame group or silently remove it', async () => {
     const h = harness(); await h.load(); await h.session.beginDrawing('native'); h.session.setDrawingObjects(objects()); await h.session.saveDrawing();

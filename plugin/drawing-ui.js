@@ -288,6 +288,18 @@
       if (firstMove) session()?.touchDrawing(); render(work);
     });
     on(win, 'pointerup', finish); on(win, 'pointercancel', finish); on(win, 'blur', () => finish());
+    // Element resizing (including sidebar transitions) does not emit window resize.
+    // Relayout only: keep SVG objects, drafts and pointer state intact.
+    const layoutObserver = win.ResizeObserver ? new win.ResizeObserver(() => {
+      if (!destroyed && snapshot?.drawings && !el.drawingLayer.hidden) layout();
+    }) : null;
+    layoutObserver?.observe(el.screen); layoutObserver?.observe(el.picture);
+    on(el.drawingLayer, 'selectstart', event => event.preventDefault());
+    on(el.screen, 'pointerdown', event => {
+      if (event.target?.closest?.('input,textarea,[contenteditable]')) return;
+      const selection = win.getSelection?.();
+      if (selection && (el.drawingLayer.contains?.(selection.anchorNode) || el.drawingLayer.contains?.(selection.focusNode))) selection.removeAllRanges();
+    }, true);
     on(win, 'resize', () => { if (snapshot?.drawings && (editor || !el.drawingLayer.hidden)) { finish(); layout(); render(editor ? committed : normalObjects()); } });
     on(el.screen, 'wheel', event => {
       if (!editor || !temporaryVisible || !['editing', 'failed'].includes(draft()?.status) || event.altKey || event.metaKey || !Number.isFinite(event.deltaY) || !event.deltaY) return;
@@ -383,7 +395,7 @@
         el.drawingText.hidden = true; el.drawingLayer.replaceChildren(); closeProperties();
       } else if (d && !editor && d.status !== 'pausing') { editor = model.createEditor(d.objects); committed = editor.snapshot(); }
       const active = !!d;
-      el.drawingPanel.hidden = !active || !value.interactionSettings?.drawingToolbar; el.drawingMessage.hidden = !active; el.showDrawings.checked = state?.visible !== false;
+      el.drawingPanel.hidden = !active || !value.interactionSettings?.drawingToolbar && d.kind !== 'delete'; el.drawingMessage.hidden = !active; el.showDrawings.checked = state?.visible !== false;
       el.showDrawings.disabled = active || !session(); el.drawingNew.disabled = !canBegin() || state?.status !== 'ready';
       el.drawingStatus.textContent = state?.message || '';
       const shown = active ? temporaryVisible : state?.visible !== false;
@@ -395,7 +407,9 @@
       if (active) {
         if (geometry === null || normalKey !== key) { layout(); normalKey = key; }
         message(d.message || (shown ? d.kind === 'delete' ? '确认删除这条圈画标注？' : '右键短点保存 · 甩动/长按选工具 · 滚轮调整 · Esc退出' : '圈画已临时隐藏，按H恢复后继续绘图。'));
-        set(el.drawingSave, 'textContent', d.status === 'unknown' ? '核对并保存' : d.kind === 'delete' ? '确认清除' : '保存（D）');
+        set(el.drawingSave, 'textContent', '✓');
+        set(el.drawingSave, 'title', d.status === 'unknown' ? '核对并保存' : d.kind === 'delete' ? '确认清除' : '保存（D）');
+        set(el.drawingSave, 'ariaLabel', el.drawingSave.title);
         set(el.drawingSave, 'disabled', !['editing', 'failed', 'unknown'].includes(d.status));
         for (const control of [...Object.values(buttons), el.drawingColorButton, el.drawingOptions, el.drawingColor, el.drawingWidth, el.drawingSize, el.drawingText, el.drawingDelete]) control.disabled = !shown || d.kind === 'delete' || !['editing', 'failed'].includes(d.status);
         // Playback/status notifications do not change the editor's picture.
@@ -429,7 +443,7 @@
       else if (id === 'undo') undo();
     }
     return { update, begin, confirmExit, flush, menuState, menuCommand,
-      destroy() { destroyed = true; listeners.forEach(([n, t, f, o]) => n.removeEventListener(t, f, o)); if (exitResolve) finishExit(false); },
+      destroy() { destroyed = true; layoutObserver?.disconnect(); listeners.forEach(([n, t, f, o]) => n.removeEventListener(t, f, o)); if (exitResolve) finishExit(false); },
       reset() { editorKey = null; editor = null; committed = []; drag = null; work = null; textDraft = null; normalKey = null; normalOrder = []; normalGroups = []; groupNodes.clear(); if (exitResolve) finishExit(false); } };
   }
   return { createDrawingUI };

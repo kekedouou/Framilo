@@ -118,7 +118,7 @@
       this.observedSerial = 0; this.observedFrame = null;
       this.info = null; this.state = 'empty'; this.epoch = 0; this.playToken = 0; this.requestId = 0;
       this.target = null; this.currentIndex = null; this.time = 0; this.targetTime = 0;
-      this.cache = new Map(); this.tasks = new Map(); this.loads = new Set(); this.prefetchFailed = new Set();
+      this.cache = new Map(); this.tasks = new Map(); this.loads = new Set(); this.prefetchFailed = new Set();this.thumbnailLeases=new Set();
       this.audioContext = null; this.audioBuffer = null; this.audioBudget = null; this.contexts = new Set(); this.graph = null; this.anchor = null;
       this.decodeDelayMs = 0; this.verifyMarkers = true; this.rafCount = 0; this.drawCount = 0; this.lastDrawAt = null; this.maxDrawGapMs = 0;
       this.lastTickAt = null; this.displayInterval = 1000 / 60; this.recovery = null;
@@ -152,6 +152,27 @@
         loadTimings: this.loadTimings ? { ...this.loadTimings } : null,
         transport: this.transportSnapshot(),
         memoryScope: 'managed decoded RGBA, audio, compressed/copy buffers and in-flight reservations; browser/GPU/internal decoder copies excluded' };
+    }
+    async paintThumbnail(time, canvas) {
+      const epoch=this.epoch,info=this.info;
+      if(!info||!canvas?.getContext||this.disposed)return null;
+      const ordinal=this.index.frameAt(info.frames,time),bytes=240*135*4;
+      let reservation=null;
+      try {
+        // Thumbnail canvases share the existing ledger. Never evict playback
+        // frames or start a new decoder while playback/seek is in progress.
+        reservation=this.budget.reserve(bytes,'record-thumbnail');
+        let entry=this.cache.get(ordinal);
+        if(!entry){if(this.state!=='paused'||this.tasks.size||this.target?.resolve)return null;entry=await this._decode(ordinal,'thumbnail',null);}
+        if(!entry||!this._valid(epoch))return null;
+        const factor=Math.min(240/info.width,135/info.height);canvas.width=Math.max(1,Math.round(info.width*factor));canvas.height=Math.max(1,Math.round(info.height*factor));const ctx=canvas.getContext('2d');
+        ctx.fillStyle='#141619';ctx.fillRect(0,0,canvas.width,canvas.height);
+        const scale=Math.min(canvas.width/info.width,canvas.height/info.height),w=info.width*scale,h=info.height*scale;
+        ctx.drawImage(entry.bitmap,(canvas.width-w)/2,(canvas.height-h)/2,w,h);
+        const token=reservation;reservation=null;let released=false;
+        const lease={release:()=>{if(!released){released=true;this.budget.release(token);canvas.width=canvas.height=1;this.thumbnailLeases.delete(lease);}}};this.thumbnailLeases.add(lease);return lease;
+      } catch (_) { return null; }
+      finally {if(reservation)this.budget.release(reservation);}
     }
     setForwardPredecode(enabled) {
       if (typeof enabled !== 'boolean') throw new Error('提前解压设置必须为开或关。');
@@ -595,7 +616,7 @@
       }
       return victim ? this._dropDecoded(victim) : false;
     }
-    _clearCache() { for (const entry of this.cache.values()) this._closeEntry(entry); this.cache.clear(); ++this.coverageVersion; }
+    _clearCache() { for(const lease of this.thumbnailLeases)lease.release();for (const entry of this.cache.values()) this._closeEntry(entry); this.cache.clear(); ++this.coverageVersion; }
     _dropCompressed(ordinal) {
       const entry = this.compressed.get(ordinal); if (!entry) return;
       this.compressed.delete(ordinal); this.compressedBytes -= entry.bytes.byteLength; this.budget.release(entry.budget);
@@ -771,7 +792,7 @@
           if (role === 'target' && (!this.target || this.target.index !== ordinal)) return null;
           if (role === 'drag-ahead' && (!this.target || this.target.index !== ordinal && this.target.predictedIndex !== ordinal)) return null;
           const rgba = info.width * info.height * 4;
-          reservation = this.budget.reserve(rgba + frame.bytes * 2, 'frame-inflight', role === 'forward-fill' ? undefined : () => this._evict());
+          reservation = this.budget.reserve(rgba + frame.bytes * 2, 'frame-inflight', ['forward-fill','thumbnail'].includes(role) ? undefined : () => this._evict());
           const readStartedAt = this.env.now();
           const compressed = this.compressed.get(ordinal);
           if (compressed) { this.compressed.delete(ordinal); this.compressed.set(ordinal, compressed); }

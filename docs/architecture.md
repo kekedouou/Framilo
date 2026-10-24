@@ -1,5 +1,11 @@
 # 技术架构：阶段 3B 已批准
 
+## E-19正式界面接入
+
+graphite-shell.js仅组合DOM、面板状态和缩略图租约；interface-icons.js提供静态SVG，graphite.css提供局部轻模糊的透明表面与短动效（E30替代无模糊决定）。UI依旧分发原手势和选区命令，app集中调用Eagle窗控，manifest使用无边框窗口。Session在原drawing draft中协调文字与圈画，文字提交确认后才保存圈画；部分成功重试不重复文字写入，结果未知沿原verifyComment核对。新增字段仅在内存草稿，原生文字、永久圈画格式不变。
+
+Player.paintThumbnail使用原帧索引和解码池，只在暂停且无待处理定位/解码时为缺失缩略图解码；播放时只用已有缓存。每张240×135画布占129600字节，视口最多10张，纳入原Budget；E30关闭记录保留最近预览，活动加保留最多20张且仍受原Budget约束；换源、标注变化和关闭播放器释放租约。缩略图包含图形及原擦除遮罩，不改变当前播放帧。此项不证明真实宿主响应提升。
+
 2026-10-22 E-16沿原边界：context-wheel承载模式短点/层级/输入取消，ui分发选择端点/确认和标注保存，菜单活动依赖只用于Esc优先级。loop-selection允许同帧草稿但不提交同帧循环，完整未改旧范围也确认，未齐取消/同帧清除。drawing-ui仅暴露四项/类型子项和原编辑事务，HTML/CSS移动文字框并由ui镜像草稿，不额外写原生标注。Preferences兼容可选drawingToolbar，Session新增纯设置入口、其它设置入口保留字段；不重建播放器/改变标注固定帧。圈画数据/媒体缓存/预算与SDK边界不变；完整读写/中断盘点及证据见[E-16记录](experiments/E16/report.md)。
 
 2026-10-22 E-15：drawing-erase是无DOM/文件/SDK的纯几何辅助模块，由drawing-model验证输入/输出；按实际长宽比计算线条与圆头擦除胶囊的接触/覆盖，压缩新轨迹并保守证明完全擦除。drawing-ui只提供SVG文字getBBox、显示比例和原有Session提交；无法证明擦净时保留，计算超过有界工作量则拒绝该预览并保留最后有效状态。HTML及未来打包白名单同步，原erasures格式/存储限额/Store原子修订与读写边界不变，见[E-15计划](experiments/E15/plan.md)和[报告](experiments/E15/report.md)。
@@ -346,3 +352,19 @@ Eagle 启动事件的 plugin.path 用于核对磁盘目录；app.js 的批准路
 首次体验反馈的清理后重开失败属于持久化格式回归：所有清理计划的目录身份统一经`captureDirectoryIdentity`从BigInt写为十进制字符串，覆盖手动/过期、容量、损坏重建及两种恢复；不能只修改恢复端。写盘后先由同一读取规则验证，再进入删除。旧记录若数字已失真，只允许有归属/原计划摘要相符completed回执的历史只读核验，不改原字节、不把失真ID用于新删除或未完成恢复；路径被重新生成也不改变此边界。此为A-07实现修复，不新增产品行为；实际窗口关窗验收仍未通过。
 
 最终候选补齐：等待Mutex交接时收到关闭通知，守护立即取消本实例等待并报告cancelled，客户端把未启动准备结算为MEDIA_CANCELLED且正常结束关闭；原持有者不受影响。完整缓存复用的临时标记改为`owner.next-<writerToken>.json`，完整/截断/零字节均可在原writer及任务终止证据充分时定点恢复，原owner/manifest/资产不改；回收前保存既有reap-plan中的受限recency快照，目录精确ID、owner/manifest SHA、缓存token及临时文件身份/摘要须再次匹配。恢复自己中断也沿同一原计划继续，禁止跨cache根或追踪链接。旧固定owner.next.json只接受内容完整且不可变owner字段一致的旧标记，未知/失真旧临时文件不猜测删除。cleanup与reap记录写出均以读取规则自校验。两项旧候选人工反馈通过保留为局部结果。2026-10-15用户认可bd7481f集中体验，来源与范围见[T2记录](experiments/T2/report.md#2026-10-15-用户集中体验认可与后续证据盘点)；这不改变A-07架构，也不代替新进程资源与T4全项技术验证。
+
+## E-26 设置呈现边界
+
+`settings-view.js`只重排原设置DOM、分组、延迟说明与主次面板位置，保留原控件ID和`ui.js`写入监听器，销毁时还原。设置应用结果在主次面板同步，观察器及事件随UI销毁清理；隐藏时跳过面板几何读取。`graphite-shell.js`处理顶栏拖动识别，仍由`app.js`调用既有`eagle.window.setFullScreen(false)`；不引入移窗API、不修改Player/Session/存储格式。
+
+## E-27 窗口拖动适配
+
+用户要求恢复后仍跟随鼠标，替代E26仅setFullScreen(false)的实现边界。window-drag.cjs是SDK移窗适配层，由app按已核实插件路径加载；恢复后用getSize计算标题栏抓取锚点，setPosition串行使用最新坐标，结束/取消释放状态，重复坐标去重。graphite-shell仅负责指针捕获与手势分发，保持窗口模式原生拖动区域；不引入操作系统原生调用，不改变播放器/存储架构。真实宿主行为见E27待验边界。
+
+## E-28/E-29 当前补充
+
+E28原生删除确认成功后，drawing-session依据同源帧最新剩余文字决定保留共享圈画或删除最后关联组；结果未知不重复写。E29仅索引该查找、减少重复DOM写入与按需调度缩略图，存储格式与Player缓存账本不变。窗口仍使用官方SDK真全屏和setPosition；app注入requestAnimationFrame调度，替代固定16ms额外等待。详见[E29](experiments/E29/report.md)。
+
+## E-30 界面职责补充
+
+settings-view.js只负责逐级展示和转交原控件事件，不新增偏好写入端；原bool即时/应用语义不变。context-wheel.js用独立240ms悬停计时器，类型和颜色共享外圈，跨一级项取消旧分支。app.js在创建和主动调用时依次show/focus，不设置永久置顶。缩略图取消逐张250ms等待，每次解码后让出浏览器绘制帧，失败延迟重试；播放时依旧不抢占解码。见[E-30报告](experiments/E30/report.md)。

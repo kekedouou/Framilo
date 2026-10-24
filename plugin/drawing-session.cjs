@@ -30,9 +30,10 @@ function createDrawingSession({ store, onChange = () => {} } = {}) {
   function list(native = []) {
     if (!records.length) return native;
     if (listKey === native && merged) return merged;
+    const byFrame = new Map();for(const note of records)if(!byFrame.has(note.frameOrdinal))byFrame.set(note.frameOrdinal,note);
     const used = new Set(), result = native.map(item => {
       const ordinal = binding?.frames ? model.frameIndex(binding.frames, item.time, binding.duration) : null;
-      const note = records.find(n => ordinal !== null ? n.frameOrdinal === ordinal : linksOf(n).some(l => l.id === item.id && l.time === item.time));
+      const note = ordinal !== null ? byFrame.get(ordinal) : records.find(n => linksOf(n).some(l => l.id === item.id && l.time === item.time));
       if (!note) return item;
       used.add(note.id);
       // Each old native entry stays editable, but points to exactly the same group.
@@ -83,11 +84,28 @@ function createDrawingSession({ store, onChange = () => {} } = {}) {
   }
   function objects(value) {
     if (!draft || !['editing', 'failed'].includes(draft.status) || draft.kind === 'delete') return { status: 'ignored' };
-    try { const next = model.validate(value); draft = Object.freeze({ ...draft, objects: next, dirty: !!draft.mergeNeeded || !!draft.linkChanged || JSON.stringify(next) !== draft.original, status: 'editing', message: '' }); }
+    try { const next = model.validate(value); draft = Object.freeze({ ...draft, objects: next, dirty: !!draft.noteDirty || !!draft.mergeNeeded || !!draft.linkChanged || JSON.stringify(next) !== draft.original, status: 'editing', message: '' }); }
     catch (e) { draft = Object.freeze({ ...draft, message: e.message }); }
     notify(); return { status: draft.message ? 'failed' : 'editing' };
   }
   function touch() { if (draft && draft.status === 'editing' && !draft.dirty) { draft = Object.freeze({ ...draft, dirty: true }); notify(); } }
+  // Text stays in this in-memory draft; persisted graphics schema is unchanged.
+  function noteSetup(items, preferred) {
+    if (!draft) return;
+    const choices = items.map(n => ({ id:n.id, time:n.nativeTime ?? n.time, text:n.text, ...(n.revision===undefined?{}:{revision:n.revision}) }));
+    const original = choices.find(n => n.id === preferred) || (choices.length === 1 ? choices[0] : null);
+    draft = Object.freeze({ ...draft, noteChoices:choices, noteOriginal:original, noteText:original?.text || '', noteDirty:false }); notify();
+  }
+  function noteText(text, id) {
+    if (!draft || !['editing','failed'].includes(draft.status) || draft.kind === 'delete') return false;
+    if (typeof text !== 'string' || text.length > 4096) { fail(Error('文字最多4096字，草稿仍保留。')); return false; }
+    const original = id === undefined ? draft.noteOriginal : draft.noteChoices?.find(n => n.id === id);
+    if (id !== undefined && !original) return false;
+    if (id !== undefined && draft.noteDirty && draft.noteOriginal) { fail(Error('请先保存当前文字，再选择另一条。')); return false; }
+    const value = id === undefined ? text : draft.noteDirty ? draft.noteText : original.text, dirty = !!value.trim() && value !== (original?.text || '');
+    draft = Object.freeze({ ...draft,noteOriginal:original,noteText:value,noteDirty:dirty,dirty:dirty || !!draft.mergeNeeded || !!draft.linkChanged || JSON.stringify(draft.objects)!==draft.original,status:'editing',message:'' }); notify();return true;
+  }
+  function noteSaved() { if(draft){draft=Object.freeze({...draft,noteDirty:false,noteOriginal:draft.noteOriginal?{...draft.noteOriginal,text:draft.noteText}:null});notify();} }
   function discard() { if (draft && ['saving', 'unknown'].includes(draft.status)) return false; draft = null; notify(); return true; }
   function fail(e) { if (draft) draft = Object.freeze({ ...draft, status: 'failed', message: e.message }); else message = e.message; notify(); }
   function saveState(value, text = '', attempt) {
@@ -128,15 +146,20 @@ function createDrawingSession({ store, onChange = () => {} } = {}) {
     try { saveRecords(document.records.filter(n => !(n.sourceSha256 === binding.sourceSha256 && sameFrame(n, target)))); message = '圈画已清除，文字保留。'; notify(); return { status: 'saved' }; }
     catch (e) { message = '圈画仍保留：' + e.message; notify(); return { status: 'failed', message }; }
   }
-  function nativeDeleted(id) {
-    if (!records.some(n => linksOf(n).some(l => l.id === id))) return { status: 'saved' };
+  function nativeDeleted(id, remaining, original) {
+    const ordinal = original && binding?.frames ? model.frameIndex(binding.frames, original.time, binding.duration) : null;
+    const affected = n => n.sourceSha256 === binding.sourceSha256 && (n.frameOrdinal === ordinal || linksOf(n).some(l => l.id === id));
+    if (!records.some(affected)) return { status: 'saved' };
     try {
-      saveRecords(document.records.map(n => {
-        if (n.sourceSha256 !== binding.sourceSha256 || !linksOf(n).some(l => l.id === id)) return n;
-        const links = linksOf(n).filter(l => l.id !== id);
-        return { ...n, nativeId: links[0]?.id || null, nativeTime: links[0]?.time ?? null, nativeLinks: links };
+      let retained = false;
+      saveRecords(document.records.flatMap(n => {
+        if (!affected(n)) return [n];
+        const links = atFrame(remaining || [], n.frameOrdinal).map(row => ({ id: row.id, time: row.nativeTime ?? row.time }));
+        if (!links.length) return [];
+        retained = true;
+        return [{ ...n, nativeId: links[0].id, nativeTime: links[0].time, nativeLinks: links }];
       }));
-      message = '文字已删除，圈画保留。'; notify(); return { status: 'saved' };
+      message = retained ? '文字已删除，同帧共享圈画保留。' : '文字与圈画已删除。'; notify(); return { status: 'saved' };
     } catch (e) { message = '原生文字已删除，关联圈画仍保留：' + e.message; notify(); return { status: 'failed', message }; }
   }
   function setVisible(next) {
@@ -151,7 +174,7 @@ function createDrawingSession({ store, onChange = () => {} } = {}) {
     } catch (e) { message = '工具设置未保存：' + e.message; notify(); return { status: 'failed', message }; }
   }
   function deactivate() { if (draft) return false; binding = null; records = Object.freeze([]); document = { records: [], token: null }; status = store ? 'idle' : 'disabled'; listKey = null; return true; }
-  return Object.freeze({ open, list, resolve, resolveFrame, reserve, begin, objects, touch, discard, fail, saveState, setLinks, save, remove, nativeDeleted, setVisible, setStyles, deactivate,
+  return Object.freeze({ open, list, resolve, resolveFrame, reserve, begin, objects, touch, discard, fail, saveState, setLinks, noteSetup, noteText, noteSaved, save, remove, nativeDeleted, setVisible, setStyles, deactivate,
     snapshot: () => Object.freeze({ status, records, draft, visible, styles, message: message || stylesReadError }),
     atFrame: (ordinal, id) => records.filter(n => n.frameOrdinal === ordinal && n.frameId === id).flatMap(n => n.objects) });
 }
