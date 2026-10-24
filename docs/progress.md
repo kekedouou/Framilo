@@ -1,8 +1,20 @@
 # 当前进度
 
-当前：E-30已接入窗口显示/聚焦、缩略图复用、类型和颜色延迟二级轮盘，以及直角半透明分级设置。默认回归和浏览器检查通过；真实Eagle窗口层级、缩略图耗时及模糊开销待复验。见[E-30报告](experiments/E30/report.md)。
+当前：E-31完成无标题设置、父项对齐、淡蓝悬停及标注工具直角统一；已补录UI历史Git提交，并修正文档现行说明。本地检查与真实Eagle体验分别记录。见[E-31报告](experiments/E31/report.md)。
 
 UI设计以来阶段、被替代决定及缺失登记补齐见[审计](experiments/E29/ui-audit.md)。以下旧阶段结论按当时日期理解，不作为当前待办或最新实现。
+
+## UI正式迭代索引
+
+| 阶段 | 本地实施内容 | 记录 |
+| --- | --- | --- |
+| E22～E23 | 灰带时间轴、帧刻度、蓝色光标与片段 | [E22](experiments/E22/report.md)、[E23](experiments/E23/report.md) |
+| E24～E25 | 提示/轮盘大小/侧栏动画、标注对齐和文字选中修复 | [E24](experiments/E24/report.md)、[E25](experiments/E25/report.md) |
+| E26～E28 | 设置/记录组织、竖工具条、循环过滤与删除保护 | [E26](experiments/E26/report.md)、[E27](experiments/E27/report.md)、[E28](experiments/E28/report.md) |
+| E29～E30 | 全屏调度、资源整理、预览复用和三级设置 | [E29](experiments/E29/report.md)、[E30](experiments/E30/report.md) |
+| E31 | 子菜单锚定、统一材质与交接修复 | [报告](experiments/E31/report.md)、[文档核查](experiments/E31/document-audit.md) |
+
+历史积累已在7f4b544补录；本轮独立提交。各报告中的模型/浏览器/真实宿主状态分别有效，用户反馈修复不自动代表所有技术标准通过。
 
 ## E-21 点阵试版（2026-10-23）
 

@@ -1,4 +1,4 @@
-/* E-19 graphite view. Transparent surfaces use alpha, not costly backdrop blur. */
+/* Graphite player surfaces; E30 uses local, bounded backdrop blur. */
 :root{background:#202124;color:#e5e8ec;--panel:#17191c;--panel-detail:#1d2024;--accent:#6f93b0;--surface:rgba(20,23,27,.88);--highlight:rgba(76,105,129,.6);--record-width:280px}
 .workspace[data-graphite]{display:block;position:relative;height:100vh;padding-top:44px;background:#202124}
 .workspace[data-graphite]>.player-pane{height:100%;margin:0 14px;transition:none}
@@ -170,10 +170,10 @@
 .shell-record-card[aria-pressed="true"]:after{border-color:transparent}
 .shell-record-card:hover:not(:disabled):after{border-color:#627d91}
 .workspace[data-window-dragging="true"] .shell-header{-webkit-app-region:no-drag;opacity:1;transform:none;pointer-events:auto}
-.workspace[data-graphite]>.drawing-panel{position:absolute;left:8px;z-index:23;width:48px;padding:0;background:var(--surface);border:1px solid #ffffff12;border-radius:3px;animation:toolrail-in 130ms ease-out}
+.workspace[data-graphite]>.drawing-panel{position:absolute;left:8px;z-index:23;width:48px;padding:0;background:var(--surface);border:1px solid #ffffff12;border-radius:0;animation:toolrail-in 130ms ease-out}
 .workspace[data-graphite]>.drawing-panel .drawing-tools{flex-direction:column-reverse;flex-wrap:nowrap;gap:2px;padding:4px;max-height:var(--toolrail-height,360px);overflow:auto;align-items:center}
 .workspace[data-graphite]>.drawing-panel .drawing-tool-group{flex-direction:column-reverse;gap:2px;flex:none}
-.workspace[data-graphite]>.drawing-panel .drawing-tools>button,.workspace[data-graphite]>.drawing-panel .drawing-tool-group button{width:30px;height:28px;min-height:28px;flex:none;padding:4px;border-radius:2px}
+.workspace[data-graphite]>.drawing-panel .drawing-tools>button,.workspace[data-graphite]>.drawing-panel .drawing-tool-group button{width:30px;height:28px;min-height:28px;flex:none;padding:4px;border-radius:0}
 .workspace[data-graphite]>.drawing-panel .drawing-divider{width:22px;height:1px;min-height:1px;margin:3px 0;flex:none;background:#ffffff15}
 .workspace[data-graphite]>.drawing-panel .drawing-save{font-size:20px;line-height:1;color:#a8c7df}
 .workspace[data-graphite]>.drawing-panel .drawing-tools button:hover:enabled,.workspace[data-graphite]>.drawing-panel .drawing-tools button[aria-pressed="true"]{background:#6f93b02e;color:#a8c7df}
@@ -197,7 +197,7 @@
 .shell-settings .shell-panel-heading,.shell-advanced .shell-panel-heading {background:rgba(0,0,0,.15)}
 .shell-settings-body {padding:6px;overflow:auto;min-height:0}
 .shell-setting-choice {display:block;width:100%;min-height:38px;padding:10px 12px;text-align:left;font:inherit;color:#d7e1e9;background:transparent;border:0;border-radius:0;cursor:pointer;transition:background-color 120ms,color 120ms}
-.shell-setting-choice:hover,.shell-setting-choice[aria-expanded="true"],.shell-setting-choice[aria-pressed="true"] {background:rgba(142,180,207,.16);color:#b6d4e9}
+.shell-setting-choice:hover:enabled,.shell-setting-choice[aria-expanded="true"],.shell-setting-choice[aria-pressed="true"] {background:var(--control-highlight);color:#b6d4e9}
 .shell-setting-choice:focus-visible {outline:1px solid #8eb4cf;outline-offset:-1px}
 .shell-setting-choice:disabled {opacity:.4;cursor:default}
 .shell-setting-row {display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;min-height:38px}
@@ -210,3 +210,15 @@
 .context-wheel-item[data-secondary="true"] .context-wheel-label {display:none}
 .context-wheel-symbol.is-color {display:block;width:19px;height:19px;border:1px solid rgba(255,255,255,.3);border-radius:50%;margin:auto}
 @media(prefers-reduced-motion:reduce){.shell-setting-choice{transition:none}}
+
+/* E31: child menus follow the activating row, with no duplicate title strips. */
+.workspace[data-graphite]{--control-highlight:rgba(110,181,231,.22)}
+.shell-settings-level.shell-advanced{transform:none;animation:settings-branch-in 140ms ease-out}
+.shell-setting-row{border-radius:0;margin:0;border:0}
+.shell-settings input,.shell-settings select,.shell-setting-tooltip{border-radius:0}
+.workspace[data-graphite]>.drawing-panel{background:rgba(23,25,28,.58);backdrop-filter:blur(6px)}
+.workspace[data-graphite]>.drawing-panel .drawing-popover{border-radius:0;background:rgba(23,25,28,.66);backdrop-filter:blur(6px);box-shadow:none}
+.workspace[data-graphite]>.drawing-panel .drawing-tools button:hover:enabled,.workspace[data-graphite]>.drawing-panel .drawing-tools button[aria-pressed="true"],.workspace[data-graphite]>.drawing-panel .drawing-tools button[aria-expanded="true"],.shell-setting-row:hover,.shell-setting-row:focus-within,.shell-settings-footer button:hover:enabled,.shell-advanced #cacheClearOther:hover:enabled{background:var(--control-highlight);color:#b6d4e9}
+.workspace[data-graphite]>.drawing-panel .drawing-palette button{border-radius:0;background:var(--swatch)}
+@keyframes settings-branch-in{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.shell-settings-level.shell-advanced{animation:none}}

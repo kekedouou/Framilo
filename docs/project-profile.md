@@ -1,8 +1,8 @@
 # 项目说明
 
-当前：E-30已接入窗口显示/聚焦、缩略图复用、类型和颜色延迟二级轮盘，以及直角半透明分级设置。默认回归和浏览器检查通过；真实Eagle窗口层级、缩略图耗时及模糊开销待复验。见[E-30报告](experiments/E30/report.md)。
+当前：E-31完成无标题设置、父项对齐、淡蓝悬停及标注工具直角统一；已补录UI历史Git提交，并修正文档现行说明。本地检查与真实Eagle体验分别记录。见[E-31报告](experiments/E31/report.md)。
 
-正式开发入口仍为plugin/manifest.json，冻结发行包未替换。UI01～UI05是设计历史；E19～E28为正式UI迭代，不再按“候选待选/整体UI尚未开始”理解。
+正式开发入口仍为plugin/manifest.json，冻结发行包未替换。UI01～UI05是设计历史；E19～E31为正式UI迭代，不再按“候选待选/整体UI尚未开始”理解。
 
 ## 身份与入口
 
@@ -20,10 +20,10 @@
 | 长期权限和工程规则 | 根AGENTS.md；不堆进度 |
 | 产品、架构 | docs/product.md的R/P及批准补充；docs/architecture.md的C/A-01～A-08 |
 | 愿景与未来候选 | docs/roadmap.md；EV决定、近期/中期/远期及调整理由，不是已实现功能 |
-| 任务、清理规则 | docs/development-plan.md；E-29当前交接、历史T/E任务及F-01～F-07 |
+| 任务、清理规则 | docs/development-plan.md；E-31当前交接、历史T/E任务及F-01～F-07 |
 | 验证协议 | docs/verification.md；协议、真实运行和人工反馈分开 |
 | 当前状态 | docs/progress.md；先读顶部当前交接，后段为历史 |
-| 专项结果 | docs/experiments/E29及UI01～UI05/E01～E28、Evolution、A/B/S1、T0～T4；保留原数据/失败/测量局限 |
+| 专项结果 | docs/experiments/E31及UI01～UI05/E01～E30、Evolution、A/B/S1、T0～T4；保留原数据/失败/测量局限 |
 | 发布交接 | docs/releases/v0.1.0-beta.2.md；当前已发布版本清单/风险/授权入口，开发版另见进度 |
 | 旧发行与过程 | docs/releases/旧版本、docs/progress/、demos/standalone-preview/；历史说明不冒充下载或新授权 |
 | 私人原始证据/配置 | verification-runs/和原型evidence/等Git忽略路径；不公开、不覆盖 |
@@ -46,7 +46,7 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 
 - 既有poc-a-verified、poc-b-performance-verified、phase3c-approved、T1体验/早期技术、T3及生命周期体验标签保留，各自只是限定节点，不是所有R/P通过。
 - 标签固定源码；原始证据另存有界本机记录，用户反馈明确标注来源，不假称Codex亲测。
-- 当前v0.1.0-beta.2标签已发布，指向包来源9e2fd0d；后续main文档提交记录验收/整理/交接，不改冻结包。
+- 当前v0.1.0-beta.2标签指向包来源9e2fd0d，冻结；main继续正式开发。UI01～UI05/E19～E30积累已在7f4b544补录，E31独立提交，不伪造旧阶段逐轮提交。
 - 正式磁盘缓存5GiB，实际插件根下cache，与安装同盘且非C盘。运行缓存1天未用及容量淘汰，与开发生成物清理分开；不能以文件年龄删除写锁。
 - 发行本地清理记录固定verification-runs/release-0.1.0-beta.2，总1MiB/单份128KiB/最多16文件；不挤占或扩大原T4等配额，不进包、不入Git。
 
@@ -72,7 +72,11 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 | --- | --- |
 | plugin/manifest.json、index.html | Eagle Window 与页面入口 |
 | plugin/app.js | 宿主生命周期、依赖装配和事件接线，不承载媒体、缓存、标注业务 |
-| plugin/ui.js、styles.css | 极简主画面与侧栏、状态及实际帧时间提示、带输入焦点保护的空格操作；只向会话发出操作，不直接访问文件或 Eagle 素材/标注 API；正式页面无测试控制 |
+| plugin/ui.js、styles.css | 原始控件/输入路由、会话状态；正式可见布局由graphite模块承载，默认不显示帧数/秒数、带输入焦点保护的空格操作；只向会话发出操作，不直接访问文件或 Eagle 素材/标注 API；正式页面无测试控制 |
+| plugin/graphite-shell.js、graphite.css、interface-icons.js | 视频优先布局、直角透明材质、图标、左工具/右记录、缩略图租约和标注输入位置；不访问素材库 |
+| plugin/settings-view.js | 原设置控件的分级展示；子菜单跟随父项，保留原应用/即时生效写入端 |
+| plugin/timeline-strip.js | 灰色带、蓝光标、白标注、内嵌片段及真实帧刻度的正式呈现 |
+| plugin/window-drag.cjs | 宿主窗口恢复和拖动调度，不改播放核心 |
 | plugin/loop-selection.js | UI层短/长按与端点草稿，只通过Session预览/确认；无文件、缓存或Eagle API访问 |
 | plugin/timeline-view.js | UI纯显示映射：整段/循环片段范围、自适应刻度、时间坐标及绿条/标注裁切；不解码或分配视频缓存 |
 | plugin/drawing-model.js、drawing-erase.js、drawing-ui.js | 绘图对象/擦除覆盖/淡化计算及SVG显示、文字编辑；通过Session发操作，不直接访问Eagle或媒体缓存 |
@@ -95,4 +99,8 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 
 ### 工作区整理入口
 
-统一规则见[开发计划F机制](development-plan.md#发行产物统一整理f-01f-05f-06f-072026-10-16-用户批准)。此前两次发行整理累计清理278文件、975407862B（约930.22MiB），见[发布整理记录](releases/v0.1.0-beta.2.md#工作区整理与文档一致性2026-10-16)；2026-10-18本轮另清5份旧演示测试副本及空目录，74974B，当前汇总及保留项见[本轮进度](progress.md#当前主线文档同步与残留整理2026-10-18)。dist仍仅最新ZIP/校验共104994B。日常安装路径由用户指定，实际路径只记本机清理回执，不写进公开包。用户已确认仓库外新位置载入正常，旧安装/构建目录已退役；verify和verify-install所需暂存目录已不存在，不要直接重跑，复核发行用ZIP/远程摘要及保全回执。冻结原型、原始证据及工具链不随dist整理删除。
+统一规则见[开发计划F机制](development-plan.md#发行产物统一整理f-01f-05f-06f-072026-10-16-用户批准)。此前两次发行整理累计清理278文件、975407862B（约930.22MiB），见[发布整理记录](releases/v0.1.0-beta.2.md#工作区整理与文档一致性2026-10-16)；2026-10-18本轮另清5份旧演示测试副本及空目录，74974B，当时汇总及保留项见[历史进度](progress.md#当前主线文档同步与残留整理2026-10-18)。dist仍仅最新ZIP/校验共104994B。日常安装路径由用户指定，实际路径只记本机清理回执，不写进公开包。用户已确认仓库外新位置载入正常，旧安装/构建目录已退役；verify和verify-install所需暂存目录已不存在，不要直接重跑，复核发行用ZIP/远程摘要及保全回执。冻结原型、原始证据及工具链不随dist整理删除。
+
+## 开发收尾检查
+
+默认检查包含现行文档阶段一致性；提交前运行 `node scripts/check-handoff.cjs --base HEAD`，提交后运行 `node scripts/check-handoff.cjs --require-clean`。本地提交不代表宿主验收或发行，不能因应用没有变更按钮而跳过Git核对。
