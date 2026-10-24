@@ -21,7 +21,7 @@ function harness(settings = {}) {
     discoverTools() { discovered++; return new Promise((resolve, reject) => { discoveries.push({ resolve, reject }); }); }
   };
   const modules = {
-    'cache.cjs': { createCache(options) { assert.strictEqual(options.pluginRoot, root); return { readAsset() {}, release() {} }; } },
+    'cache.cjs': { createCache(options) { assert.strictEqual(options.pluginRoot, root); return settings.backendCache || { readAsset() {}, release() {} }; } },
     'eagle.cjs': { createEagleAdapter() { return Object.freeze(adapter); } },
     'drawing-store.cjs': { createAnnotationStore: () => null },
     'preferences.cjs': { createMemoryPreferences() { return { forwardPredecode:()=>true, snapshot: () => ({ ramBytes: 1024 ** 3, compressedRamBytes: 128 * 1024 ** 2, percent: 2.5 }) }; } },
@@ -79,6 +79,22 @@ async function bounded(pending) {
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 async function main() {
+  {
+    const calls = [], info = { streaming: 'segments-v1' }, pcm = { bytes: Buffer.from('pcm') };
+    const backendCache = {
+      readAudioSegment(value, ordinal) { assert.strictEqual(this, backendCache); assert.strictEqual(value, info); calls.push(['audio', ordinal]); return Promise.resolve(pcm); },
+      target(value, time) { assert.strictEqual(this, backendCache); assert.strictEqual(value, info); calls.push(['target', time]); },
+      cancelReads(value) { assert.strictEqual(this, backendCache); assert.strictEqual(value, info); calls.push(['cancel']); }
+    };
+    const h = harness({ backendCache }); await h.hooks.onPluginCreate({ path: h.root });
+    const pending = h.config.media.prepare({ id: 'fixed' }, {});
+    await tick(); h.discoveries[0].resolve({ ffmpeg: 'existing-only' }); await pending;
+    assert.strictEqual(await h.config.cache.readAudioSegment(info, 31), pcm);
+    h.config.cache.target(info, 31.5); h.config.cache.cancelReads(info);
+    assert.deepStrictEqual(calls, [['audio', 31], ['target', 31.5], ['cancel']]);
+    await h.hooks.onPluginBeforeExit();
+    console.log('E33 app: actual entry forwards segmented audio, seek cancellation and close cancellation with original owner identity');
+  }
   {const calls=[],h=harness({hostWindow:{show:async()=>calls.push('show'),focus:async()=>calls.push('focus')}});await h.hooks.onPluginCreate({path:h.root});await tick();assert.deepEqual(calls,['show','focus']);h.hooks.onPluginRun();await tick();assert.deepEqual(calls,['show','focus','show','focus']);await h.hooks.onPluginBeforeExit();console.log('T1 app: create/run show then focus without permanent topmost');}
   {const h=harness({hostWindow:{show(){throw Error('host closing');}}});await h.hooks.onPluginCreate({path:h.root});await tick();assert(h.config);await h.hooks.onPluginBeforeExit();console.log('T1 app: display failure does not abort session wiring');}
 

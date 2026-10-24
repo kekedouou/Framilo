@@ -4,6 +4,8 @@
 
 ### E-33 已执行与未执行
 
+入口回归补充：tests/t1-app.cjs实际执行app.js并经延迟media.prepare建立后台，核对分段音频读取、seek目标取消和关闭取消三项转发，保留原info引用与接收对象。独立Player或Chrome通过不能代替窗口入口装配检查。
+
 第一关显式node prototypes/long-video/compare.cjs --tools=tests/host/t0/config.local.json只取工具路径，三轮已用满并封存。正式接入使用node scripts/check-long-media.cjs及--final --with-worker --browser的新独立预算；合成CFR/VFR带B帧、非零起点、音频长尾，核对分段PTS/确定性PCM/取消/租约/重开。普通Node运行真实Windows守护，独立Chrome运行正式Player、真实JPEG/Web Audio并核对跨段播放、循环与释放；不启动Eagle。默认tests/long-playback.cjs检查时钟排程、倍速/循环、挂起关闭、租约复用淘汰和Player闭环；long-video-window.cjs仍是第一关候选模型。未测真实Eagle、4K/高帧率长片、HEVC/VP9长片、听感/物理音画同步与长期资源；这些不是本地通过的结论。
 
 新合成现场/证据预算和技术关卡见[E-33计划](experiments/E33/plan.md)。首先比对同一源的PTS与解码画面、首帧等待和取消；随后覆盖分段音频、循环、换片/关闭/重开以及旧缓存。低分辨率合成结果不是真实Eagle或4K性能结论。

@@ -4,6 +4,8 @@
 
 ## 正式接入与交付核对
 
+后续用户实测失败与修复：截图报cache.readAudioSegment is not a function。app.js仍只转发旧cache方法，遗漏readAudioSegment、target、cancelReads，导致长片音频加载失败并遗漏取消通知。已补齐三项延迟转发；t1-app新增执行实际入口的装配回归，在Node24及Eagle Node16命令行通过，long-playback模型通过。全套默认检查日志为verification-runs/e33-integration/app-wiring-fix-check.log。未重新生成媒体、未写真实素材标注；真实宿主再次打开尚待用户。产品、路线与预算未改变，项目模块导航仍适用，无需伪改这些文档；进度、架构、验证与CHANGELOG登记本次缺陷。上一版“链路已接入”的判断缺少app入口验证，不能将此前本地通过描述成用户实际加载成功。
+
 新增long-media、segment-reader、segment-audio，分别负责按源PTS准备有界分段、受限租约读取和分段音频排程；由原media/task/session/player链路接线。完整预览缓存格式保持，长片使用派生分段缓存身份，永久标注仍使用原素材SHA。跳转取消旧目标，关闭等待读写退出并释放租约和受管RAM。修正关闭期间取消读取后再次重试，以及事务关闭失败的租约释放。
 
 首版限制为24,000源帧、6MiB索引、单段64MiB图片/4MiB PCM；保留现有RAM与磁盘预算。首次仍需整文件哈希和轻量索引，不承诺任意时长或瞬时打开。重复/无效PTS明确失败，不猜测帧定位。正式入口仍为plugin/manifest.json，冻结Beta与已安装副本没有被替换。

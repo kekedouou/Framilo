@@ -82,6 +82,9 @@
       const sessionAdapter = { ...adapter };
       sessionAdapter.captureSelected = () => { if (initialSelection) { const captured = initialSelection; initialSelection = null; return captured; } return adapter.captureSelected(); };
       const cache = { readAsset: (...args) => backend.cache.readAsset(...args),
+        readAudioSegment: (...args) => backend.cache.readAudioSegment(...args),
+        target: (...args) => backend.cache.target(...args),
+        cancelReads: (...args) => backend.cache.cancelReads(...args),
         readFrameBatch: (...args) => backend.cache.readFrameBatch(...args),
         release: (...args) => backend.cache.release(...args), clearOther: (...args) => backend.cache.clearOther(...args) };
       let preparedMedia = null, discovery = null;
