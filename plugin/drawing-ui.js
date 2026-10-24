@@ -192,7 +192,7 @@
       if (!editor || composing || exitPromise || draft()?.kind === 'delete') return;
       try { flush(); } catch (error) { message(error.message); return; }
       if (tool !== kind) selected = null; eraserPoint = null; tool = kind;
-      el.drawingProperties.hidden = false; el.drawingPalette.hidden = true; render(committed); el.drawingLayer.focus?.({ preventScroll: true });
+      el.drawingProperties.hidden = el.drawingPalette.hidden = true; render(committed); el.drawingLayer.focus?.({ preventScroll: true });
     }
     for (const [kind, button] of Object.entries(buttons)) on(button, 'click', () => chooseTool(kind));
     on(el.drawingOptions, 'click', () => { el.drawingProperties.hidden = !el.drawingProperties.hidden; el.drawingPalette.hidden = true; properties(); });

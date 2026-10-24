@@ -165,10 +165,10 @@ canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
 .screen-gesture-ring[data-selection="true"] .gesture-up,.screen-gesture-ring[data-selection="true"] .gesture-down { display:none; }
 .context-wheel { position:absolute; z-index:12; width:120px; height:120px; transform:translate(-50%,-50%); user-select:none; opacity:.76; }
 .context-wheel[data-open="true"] { animation:wheel-in 110ms ease both; }
-.context-wheel[data-open="true"][data-level="types"] { animation-name:wheel-types-in; }
+
 .context-wheel[hidden][data-closing="true"] { display:block !important; pointer-events:none; animation:wheel-out 110ms ease both; }
 @keyframes wheel-in { from { opacity:0; transform:translate(-50%,-50%) scale(.94); } to { opacity:.76; transform:translate(-50%,-50%) scale(1); } }
-@keyframes wheel-types-in { from { opacity:0; transform:translate(-50%,-50%) scale(.94); } to { opacity:.76; transform:translate(-50%,-50%) scale(1); } }
+
 @keyframes wheel-out { from { opacity:.76; transform:translate(-50%,-50%) scale(1); } to { opacity:0; transform:translate(-50%,-50%) scale(.94); } }
 .context-wheel-ring { position:absolute; inset:0; border-radius:50%; background:#20202080; border:1px solid #d3d7dd22; box-shadow:0 2px 8px #0002; }
 .context-wheel-item { position:absolute; width:43px; height:35px; padding:1px 0; transform:translate(-50%,-50%); border:0; background:transparent; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0; transition:color 80ms ease,background-color 80ms ease; }

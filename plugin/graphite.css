@@ -222,3 +222,17 @@
 .workspace[data-graphite]>.drawing-panel .drawing-palette button{border-radius:0;background:var(--swatch)}
 @keyframes settings-branch-in{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){.shell-settings-level.shell-advanced{animation:none}}
+
+/* E32: same rail edges, material and feedback; outer wheel only fades locally. */
+.workspace[data-graphite]{--rail-width:50px;--rail-material:rgba(23,25,28,.58)}
+.shell-dock,.workspace[data-graphite]>.drawing-panel{width:var(--rail-width);background:var(--rail-material)}
+.workspace[data-graphite]>.drawing-panel .drawing-tools{padding:5px 0;overflow-x:hidden}
+.workspace[data-graphite]>.drawing-panel .drawing-tool-group{width:100%;padding-left:5px;align-items:flex-start;scrollbar-width:thin}
+.workspace[data-graphite]>.drawing-panel .drawing-tool-group::-webkit-scrollbar{width:4px}
+.workspace[data-graphite]>.drawing-panel .drawing-tools>button,.workspace[data-graphite]>.drawing-panel .drawing-tool-group button{width:38px}
+.shell-dock .shell-icon:hover:enabled,.shell-dock .shell-icon[aria-expanded="true"],.workspace[data-annotating="true"] .shell-dock .shell-icon:first-child{background:var(--control-highlight);color:#b6d4e9}
+.shell-editor,.shell-editor.in-records{background:var(--rail-material);backdrop-filter:blur(6px)}
+.context-wheel-branch{position:absolute;inset:0;pointer-events:none;animation:wheel-branch-in 70ms ease-out}
+.context-wheel-branch .context-wheel-item,.context-wheel-branch .context-wheel-wedge{pointer-events:auto}
+@keyframes wheel-branch-in{from{opacity:0}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){.context-wheel-branch{animation:none}}

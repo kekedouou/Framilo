@@ -1,8 +1,8 @@
 # 项目说明
 
-当前：E-31完成无标题设置、父项对齐、淡蓝悬停及标注工具直角统一；已补录UI历史Git提交，并修正文档现行说明。本地检查与真实Eagle体验分别记录。见[E-31报告](experiments/E31/report.md)。
+当前：E-32优化二级轮盘节点复用和100ms悬停，切换工具不自动展开属性；统一文字框模糊、工具轨宽度与高亮，设置可直接切换标注/片段。实施与验证状态见[E-32报告](experiments/E32/report.md)。
 
-正式开发入口仍为plugin/manifest.json，冻结发行包未替换。UI01～UI05是设计历史；E19～E31为正式UI迭代，不再按“候选待选/整体UI尚未开始”理解。
+正式开发入口仍为plugin/manifest.json，冻结发行包未替换。UI01～UI05是设计历史；E19～E32为正式UI迭代，不再按“候选待选/整体UI尚未开始”理解。
 
 ## 身份与入口
 
@@ -20,7 +20,7 @@
 | 长期权限和工程规则 | 根AGENTS.md；不堆进度 |
 | 产品、架构 | docs/product.md的R/P及批准补充；docs/architecture.md的C/A-01～A-08 |
 | 愿景与未来候选 | docs/roadmap.md；EV决定、近期/中期/远期及调整理由，不是已实现功能 |
-| 任务、清理规则 | docs/development-plan.md；E-31当前交接、历史T/E任务及F-01～F-07 |
+| 任务、清理规则 | docs/development-plan.md；E-32当前交接、历史T/E任务及F-01～F-07 |
 | 验证协议 | docs/verification.md；协议、真实运行和人工反馈分开 |
 | 当前状态 | docs/progress.md；先读顶部当前交接，后段为历史 |
 | 专项结果 | docs/experiments/E31及UI01～UI05/E01～E30、Evolution、A/B/S1、T0～T4；保留原数据/失败/测量局限 |
@@ -82,7 +82,7 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 | plugin/drawing-model.js、drawing-erase.js、drawing-ui.js | 绘图对象/擦除覆盖/淡化计算及SVG显示、文字编辑；通过Session发操作，不直接访问Eagle或媒体缓存 |
 | plugin/drawing-session.cjs、drawing-store.cjs、annotation-data/ | 同帧关联、草稿与永久图形/文字/样式存储；独立于会淘汰的预览缓存 |
 | plugin/screen-gestures.js、screen-gesture-ui.js | 纯手势识别、指针/时钟和反馈展示；通过原Session定位/调速，不接入媒体解码 |
-| plugin/context-wheel.js | 观看/圈画右键方向选择、就地菜单及取消/销毁；通过UI调用既有操作，无媒体或Eagle访问 |
+| plugin/context-wheel.js | 观看/圈画右键方向选择、单次打开预建并复用类型/颜色外圈、悬停取消及销毁；通过UI调用既有操作，无媒体或Eagle访问 |
 | plugin/preview-profile.cjs | 720p/1080p/1440p预览尺寸与身份；共用原缓存预算，不放大小源 |
 | plugin/session.cjs | 素材/库快照、状态与任务所有权，协调适配、准备、缓存和播放 |
 | plugin/eagle.cjs | 唯一素材/标注 API 边界；独立读回，不直接写 metadata.json |

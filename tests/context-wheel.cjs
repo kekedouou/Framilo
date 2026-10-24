@@ -1,15 +1,15 @@
 'use strict';
 const assert=require('assert'),{wheelIndex,createContextWheel}=require('../plugin/context-wheel.js');
-function harness(){let time=0,serial=0,listeners=0;const timers=new Map(),calls=[];
+function harness(){let time=0,serial=0,listeners=0;const timers=new Map(),due=new Map(),calls=[];
  function node(tag='div'){const events=new Map();return{tag,style:{},attributes:{},children:[],hidden:false,
   addEventListener(t,f){if(!events.has(t))events.set(t,new Set());if(!events.get(t).has(f)){events.get(t).add(f);listeners++;}},
   removeEventListener(t,f){if(events.get(t)?.delete(f))listeners--;},emit(t,v={}){const e={type:t,pointerId:1,button:2,buttons:2,clientX:300,clientY:200,preventDefault(){this.defaultPrevented=true;},...v};for(const f of [...(events.get(t)||[])])f(e);return e;},
   setAttribute(k,v){this.attributes[k]=v;},getAttribute(k){return this.attributes[k];},appendChild(c){this.children.push(c);},replaceChildren(...c){this.children=c;},getBoundingClientRect:()=>({left:0,top:0,width:800,height:500}),closest(){return null;},focus(){},setPointerCapture(){},hasPointerCapture(){return false;}};
  }
- const screen=node(),win=node();win.setTimeout=(f)=>{const id=++serial;timers.set(id,f);return id;};win.clearTimeout=id=>timers.delete(id);
+ const screen=node(),win=node();win.setTimeout=(f,ms)=>{const id=++serial;timers.set(id,f);due.set(id,time+ms);return id;};win.clearTimeout=id=>{timers.delete(id);due.delete(id);};
  const ctx={epoch:1,mode:'watch',enabled:true,items:['up','right','down','left'].map(id=>({id,label:id}))};
  const api=createContextWheel({document:{createElement:node},window:win,screen,getContext:()=>ctx,now:()=>time,command:id=>calls.push(id)});
- return{api,screen,win,ctx,calls,timers,count:()=>listeners,hold(){time+=500;for(const[id,f]of [...timers]){timers.delete(id);f();}}};
+ return{api,screen,win,ctx,calls,timers,count:()=>listeners,advance(ms){time+=ms;for(const[id,f]of [...timers])if(due.get(id)<=time){timers.delete(id);due.delete(id);f();}},hold(){time+=500;for(const[id,f]of [...timers]){timers.delete(id);f();}}};
 }
 let count=0;function test(name,fn){fn();console.log('ok right wheel: '+name);count++;}
 test('Four and eight direction choice has a center dead zone',()=>{assert.equal(wheelIndex(1,1,4),null);assert.equal(wheelIndex(0,-60,4),0);assert.equal(wheelIndex(60,0,4),1);assert.equal(wheelIndex(0,60,4),2);assert.equal(wheelIndex(-60,0,4),3);assert.equal(wheelIndex(60,60,8),3);});
@@ -30,4 +30,16 @@ test('Entering a type sector opens children without selecting; continuing moveme
 test('Long gestures in the note editor without wheel items never save',()=>{const h=harness();h.ctx.mode='note';h.ctx.items=[];h.ctx.tap='save-note';h.screen.emit('pointerdown',{target:h.screen});h.hold();h.win.emit('pointerup',{buttons:0});h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientX:360});h.win.emit('pointerup',{buttons:0,clientX:360});assert.equal(h.calls.length,0);h.api.destroy();});
 test('A right tap closes an open color palette without saving its drawing',()=>{const h=harness();h.ctx.mode='drawing';h.ctx.tap='save';h.ctx.items[1]={id:'color',label:'颜色'};h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientX:360});h.win.emit('pointerup',{clientX:360,buttons:0});assert(h.api.active());h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointerup',{buttons:0});assert(!h.api.active());assert.equal(h.calls.length,0);h.api.destroy();});
 test('Pending secondary dwell is cancelled by another root sector and destruction',()=>{const h=harness();h.ctx.items[0]={id:'types',label:'类型',children:[{id:'pen',label:'手写'}]};h.ctx.items[1]={id:'color',label:'颜色'};h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientY:150});assert(h.timers.size===1);h.win.emit('pointermove',{clientY:250});assert.equal(h.timers.size,0);h.hold();assert.equal(h.screen.children[0].getAttribute('data-level'),'root');h.win.emit('pointermove',{clientX:350});h.hold();assert.equal(h.screen.children[0].getAttribute('data-level'),'color');h.api.destroy();assert.equal(h.timers.size,0);assert.equal(h.count(),0);});
+test('Secondary dwell is 100 ms, root remains identical, and returning to a branch cannot rearm it',()=>{
+ const h=harness();h.ctx.items[0]={id:'types',label:'类型',children:[{id:'pen',label:'手写'}]};h.ctx.items[1]={id:'color',label:'颜色'};
+ h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientY:150});const menu=h.screen.children[0],ring=menu.children[0],nodes=[...ring.children],base=h.count();
+ h.advance(99);assert.equal(menu.getAttribute('data-level'),'root');h.advance(1);assert.equal(menu.getAttribute('data-level'),'types');
+ h.win.emit('pointermove',{clientY:149});assert.equal(h.timers.size,0);
+ for(let i=0;i<30;i++){h.win.emit('pointermove',i%2?{clientY:150}:{clientX:350});h.advance(100);assert.equal(menu.getAttribute('data-level'),i%2?'types':'color');assert.deepEqual(ring.children,nodes);assert.equal(h.count(),base);}
+ h.win.emit('pointermove',{clientY:250});assert.equal(menu.getAttribute('data-level'),'root');h.api.destroy();assert.equal(h.count(),0);assert.equal(h.timers.size,0);
+});
+test('Moving to another root before the dwell deadline cannot open stale children',()=>{
+ const h=harness();h.ctx.items[0]={id:'types',label:'类型',children:[{id:'pen',label:'手写'}]};h.ctx.items[1]={id:'color',label:'颜色'};
+ h.screen.emit('pointerdown',{target:h.screen});h.win.emit('pointermove',{clientY:150});h.advance(70);h.win.emit('pointermove',{clientX:350});h.advance(30);assert.equal(h.screen.children[0].getAttribute('data-level'),'root');h.advance(70);assert.equal(h.screen.children[0].getAttribute('data-level'),'color');h.api.destroy();assert.equal(h.timers.size,0);
+});
 console.log('Right wheel: '+count+' model lifecycle checks; no real Eagle.');
