@@ -4,6 +4,8 @@
 
 ### E-33 已执行与未执行
 
+用户体验失败后的验收增加：正式compressed-ram模式、真实720p/60fps合成媒体与Windows后台；独立Chrome在未完全预热区域连续播放10秒，要求无supply-buffer-start且媒体推进至少9秒；连续三个跳转必须显示最后目标且等待低于2秒。记录阶段和样本限定，不能将总maxDrawGap（包含人工定位/暂停）当连续播放间隔。实际通过9.9秒/10.002秒、0次缓冲、最终跳转883.5ms。模型额外覆盖播放窗口保护、释放回执不阻塞画面但关闭等待、预取失败不重试风暴、取消不报旧目标错误。
+
 入口回归补充：tests/t1-app.cjs实际执行app.js并经延迟media.prepare建立后台，核对分段音频读取、seek目标取消和关闭取消三项转发，保留原info引用与接收对象。独立Player或Chrome通过不能代替窗口入口装配检查。
 
 第一关显式node prototypes/long-video/compare.cjs --tools=tests/host/t0/config.local.json只取工具路径，三轮已用满并封存。正式接入使用node scripts/check-long-media.cjs及--final --with-worker --browser的新独立预算；合成CFR/VFR带B帧、非零起点、音频长尾，核对分段PTS/确定性PCM/取消/租约/重开。普通Node运行真实Windows守护，独立Chrome运行正式Player、真实JPEG/Web Audio并核对跨段播放、循环与释放；不启动Eagle。默认tests/long-playback.cjs检查时钟排程、倍速/循环、挂起关闭、租约复用淘汰和Player闭环；long-video-window.cjs仍是第一关候选模型。未测真实Eagle、4K/高帧率长片、HEVC/VP9长片、听感/物理音画同步与长期资源；这些不是本地通过的结论。

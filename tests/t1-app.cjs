@@ -84,14 +84,15 @@ async function main() {
     const backendCache = {
       readAudioSegment(value, ordinal) { assert.strictEqual(this, backendCache); assert.strictEqual(value, info); calls.push(['audio', ordinal]); return Promise.resolve(pcm); },
       target(value, time) { assert.strictEqual(this, backendCache); assert.strictEqual(value, info); calls.push(['target', time]); },
+      prefetch(value, time, loop) { assert.strictEqual(value, info); calls.push(['prefetch', time, loop]); },
       cancelReads(value) { assert.strictEqual(this, backendCache); assert.strictEqual(value, info); calls.push(['cancel']); }
     };
     const h = harness({ backendCache }); await h.hooks.onPluginCreate({ path: h.root });
     const pending = h.config.media.prepare({ id: 'fixed' }, {});
     await tick(); h.discoveries[0].resolve({ ffmpeg: 'existing-only' }); await pending;
     assert.strictEqual(await h.config.cache.readAudioSegment(info, 31), pcm);
-    h.config.cache.target(info, 31.5); h.config.cache.cancelReads(info);
-    assert.deepStrictEqual(calls, [['audio', 31], ['target', 31.5], ['cancel']]);
+    h.config.cache.target(info, 31.5); h.config.cache.prefetch(info,31.5,null); h.config.cache.cancelReads(info);
+    assert.deepStrictEqual(calls, [['audio', 31], ['target', 31.5], ['prefetch',31.5,null], ['cancel']]);
     await h.hooks.onPluginBeforeExit();
     console.log('E33 app: actual entry forwards segmented audio, seek cancellation and close cancellation with original owner identity');
   }

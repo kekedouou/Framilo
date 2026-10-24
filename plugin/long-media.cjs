@@ -7,7 +7,7 @@ const frameIndex = require('./frame-index.cjs');
 const profile = require('./preview-profile.cjs');
 const { OWNER, RECIPE } = require('./cache.cjs');
 const LIMITS = Object.freeze({ frames: 24000, indexBytes: 6 * 1024 ** 2,
-  segmentFrames: 24, segmentSeconds: 1, segmentBytes: 64 * 1024 ** 2, timeoutMs: 30000 });
+  segmentFrames: 120, segmentSeconds: 2, segmentBytes: 64 * 1024 ** 2, timeoutMs: 30000 });
 const fail = (message, code = 'LONG_MEDIA_INVALID') => { throw Object.assign(new Error(message), { code }); };
 function packetIndex(text, video, helpers) {
   const end = helpers.videoEnd({ streams: [video] });

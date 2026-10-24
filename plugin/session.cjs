@@ -142,6 +142,7 @@ function createSession(options) {
       const player = createPlayer({ experimentMode: 'compressed-ram',
         readAsset: (_copiedInfo, file) => cache.readAsset(info, file),
         setMediaTarget: time => { if (cache.target) cache.target(info, time); },
+        prefetchMedia: (time, loop) => { if (cache.prefetch) cache.prefetch(info, time, loop); },
         cancelMediaReads: () => { if (cache.cancelReads) cache.cancelReads(info); },
         createSegmentAudio: info.streaming && info.audio ? settings => require('./segment-audio.cjs').createSegmentAudio({ ...settings,
           read: ordinal => cache.readAudioSegment(info, ordinal) }) : undefined,

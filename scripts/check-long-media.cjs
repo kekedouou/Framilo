@@ -4,11 +4,12 @@ const fs = require('fs'), path = require('path'), crypto = require('crypto'), as
 const { spawnSync } = require('child_process');
 const { createMedia, _test } = require('../plugin/media.cjs');
 const { createCache } = require('../plugin/cache.cjs');
-const root = path.resolve(__dirname, '..'), final = process.argv.includes('--final'), evidence = path.join(root, final ? 'verification-runs/e33-final' : 'verification-runs/e33-integration');
+const root = path.resolve(__dirname, '..'), continuity = process.argv.includes('--continuity'), throughput = process.argv.includes('--throughput') || continuity, final = process.argv.includes('--final'), evidence = path.join(root, continuity ? 'verification-runs/e33-continuity' : throughput ? 'verification-runs/e33-throughput' : final ? 'verification-runs/e33-final' : 'verification-runs/e33-integration');
 fs.mkdirSync(evidence, { recursive: true });
-assert(fs.readdirSync(evidence).filter(n => /^media-.*\.json$/.test(n)).length < (final ? 4 : 8), 'Integration run budget reached');
+assert(fs.readdirSync(evidence).filter(n => /^media-.*\.json$/.test(n)).length < (continuity ? 3 : final || throughput ? 4 : 8), 'Integration run budget reached');
 const id = crypto.randomBytes(8).toString('hex'), scratch = path.join(evidence, 'scratch-' + id);
 fs.mkdirSync(scratch); const record = { id, started: new Date().toISOString(), checks: [], status: 'running', cleanup: [] };
+const fps = process.argv.includes('--high-fps') ? 60 : 24;
 const config = JSON.parse(fs.readFileSync(path.join(root, 'tests/host/t0/config.local.json')));
 const tools = { ffmpeg: config.ffmpeg, ffprobe: config.ffprobe };
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -17,16 +18,16 @@ function run(args) {
   if (result.error || result.status !== 0) throw result.error || new Error(result.stderr.toString().slice(-3000)); return result.stdout;
 }
 async function main() {
-  for (const variant of process.argv.includes('--diagnostic') ? ['cfr'] : ['cfr', 'vfr-offset', 'audio-tail']) await checkCase(variant);
+  for (const variant of process.argv.includes('--diagnostic') || throughput && !process.argv.includes('--all-variants') ? ['cfr'] : ['cfr', 'vfr-offset', 'audio-tail']) await checkCase(variant);
   record.status = process.argv.includes('--diagnostic') ? 'diagnostic' : 'passed';
 }
 async function checkCase(variant) {
   const directory = path.join(scratch, variant); fs.mkdirSync(directory);
   const file = path.join(directory, 'synthetic.mp4');
   const offset = variant === 'vfr-offset' ? 5 : 0;
-  run(['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=24:duration=45', '-f', 'lavfi', '-i', `sine=frequency=431:sample_rate=48000:duration=${variant === 'audio-tail' ? 47 : 45}`,
+  run(['-v', 'error', '-f', 'lavfi', '-i', `testsrc2=size=${throughput ? '1280x720' : '320x180'}:rate=${fps}:duration=45`, '-f', 'lavfi', '-i', `sine=frequency=431:sample_rate=48000:duration=${variant === 'audio-tail' ? 47 : 45}`,
     ...(variant === 'vfr-offset' ? ['-vf', 'select=not(eq(mod(n\\,7)\\,3))', '-fps_mode', 'passthrough'] : []),
-    '-c:v', 'libx264', '-threads', '1', '-bf', '3', '-g', '48', '-c:a', 'aac', ...(process.argv.includes('--diagnostic') ? [] : ['-aac_pns', '0']),
+    '-c:v', 'libx264', '-threads', '4', '-preset', 'ultrafast', '-bf', '3', '-g', String(fps*2), '-c:a', 'aac', ...(process.argv.includes('--diagnostic') ? [] : ['-aac_pns', '0']),
     '-output_ts_offset', String(offset), '-movflags', '+faststart', file]);
   if (process.argv.includes('--diagnostic')) {
     for (const copy of [false, true]) for (const seek of [null, 0, 42, 44]) {
@@ -40,10 +41,11 @@ async function checkCase(variant) {
   const cache = createCache({ pluginRoot: directory, packFrames: true, diskBytes: 64 * 1024 ** 2 });
   const media = createMedia({ tools, cache }), before = performance.now();
   const info = await media.prepare({ id: 'synthetic-only', filePath: file, ext: 'mp4' }, { previewQuality: '720p' });
-  assert.equal(info.streaming, 'segments-v1'); assert.equal(info.frames.length, variant === 'vfr-offset' ? 926 : 1080); assert.equal(info.source.sha256, hash(fs.readFileSync(file)));
+  assert.equal(info.streaming, 'segments-v1'); assert.equal(info.frames.length, variant === 'vfr-offset' ? 926 : fps*45); assert.equal(info.source.sha256, hash(fs.readFileSync(file)));
   record.checks.push({ name: 'formal-long-prepare', variant, frames: info.frames.length, duration: info.duration, ms: performance.now() - before });
-  for (const ordinal of [...new Set([0, 1, 31, info.segments.length - 1])]) {
-    const segment = await media.prepareSegment(info, ordinal), group = info.segments[ordinal];
+  const atTime = time => info.segments.findIndex(g=>g.start<=time && g.end>time);
+  for (const ordinal of [...new Set([0, 1, atTime(31.5), info.segments.length - 1])]) {
+    const began = performance.now(); const segment = await media.prepareSegment(info, ordinal), group = info.segments[ordinal];
     assert.equal(segment.frames.length, group.last - group.first + 1);
     for (let i = 0; i < segment.frames.length; i++) {
       assert.equal(segment.frames[i].ptsTicks, info.frames[group.first + i].ptsTicks);
@@ -60,12 +62,12 @@ async function checkCase(variant) {
     }
     record.checks.push({ name: 'audio-byte-comparison', ordinal, actual: actual.length, reference: reference.length, firstDifference: difference, maxDelta, changed, start: segment.audio.start, group });
     assert.equal(hash(actual), hash(reference), 'audio samples differ at segment ' + ordinal);
-    record.checks.push({ name: 'segment-exact-PTS-and-audio', ordinal, frames: segment.frames.length, bytes: wav.length });
+    record.checks.push({ name: 'segment-exact-PTS-and-audio', ms: performance.now()-began, ordinal, frames: segment.frames.length, bytes: wav.length });
     await cache.release(segment);
   }
   const cancel = new AbortController(); cancel.abort();
   await assert.rejects(media.prepareSegment(info, 20, { signal: cancel.signal }), e => e.code === 'MEDIA_CANCELLED');
-  const reused = await media.prepareSegment(info, 31); await cache.release(reused);
+  const reused = await media.prepareSegment(info, atTime(31.5)); await cache.release(reused);
   media.releaseLong(info);
   await assert.rejects(media.prepareSegment(info, 0), /失效/);
   assert.equal(cache.inventory().leases.length, 0);
@@ -83,12 +85,13 @@ async function checkCase(variant) {
     try {
       const runtime = await client.ping(), selected = { id: 'worker-synthetic', filePath: file, ext: 'mp4' };
       const loaded = await client.media.prepare(selected, { previewQuality: '720p' });
+      if (throughput) { for (const ordinal of [0,1,2,3,4,5,20]) { const began=performance.now(); await client.cache.readAsset(loaded,loaded.frames[loaded.segments[ordinal].first].file); record.checks.push({name:'worker-cold-segment',ordinal,ms:performance.now()-began,seconds:loaded.segments[ordinal].end-loaded.segments[ordinal].start}); } }
       assert((await client.cache.readAsset(loaded, loaded.frames[0].file)).length > 0);
-      assert((await client.cache.readAudioSegment(loaded, 31)).bytes.length > 0);
+      assert((await client.cache.readAudioSegment(loaded, atTime(31.5))).bytes.length > 0);
       const old = client.cache.readAsset(loaded, loaded.frames[800].file).catch(error => error);
       client.cache.target(loaded, 10); await old;
       assert((await client.cache.readAsset(loaded, loaded.frames[240].file)).length > 0);
-      if (process.argv.includes('--browser')) record.checks.push(await require('../tests/support/long-browser.cjs').checkBrowser({ root, scratch, client, info: loaded }));
+      if (process.argv.includes('--browser')) record.checks.push(await require('../tests/support/long-browser.cjs').checkBrowser({ root, scratch, client, info: loaded, throughput }));
       await client.cache.release(loaded); await client.close(); client = make();
       const reopened = await client.media.prepare(selected, { previewQuality: '720p' });
       assert((await client.cache.readAsset(reopened, reopened.frames[0].file)).length > 0);

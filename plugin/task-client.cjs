@@ -90,6 +90,7 @@ function createTaskClient(options) {
     readAsset: (info, file) => failure ? Promise.reject(failure) : readers.has(info) ? readers.get(info).frame(file) : local.readAsset(info, file),
     readAudioSegment: (info, ordinal) => readers.get(info).audio(ordinal),
     target: (info, time) => { if (readers.has(info)) readers.get(info).cancelExcept(time); },
+    prefetch: (info, time, loop) => { if (readers.has(info)) readers.get(info).prefetch(time, loop); },
     cancelReads: info => { if (readers.has(info)) readers.get(info).cancelAll(); },
     readFrameBatch: (...args) => failure ? Promise.reject(failure) : local.readFrameBatch(...args),
     async release(info) { if (!leases.has(info)) return false;

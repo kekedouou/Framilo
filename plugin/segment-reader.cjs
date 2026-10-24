@@ -4,7 +4,7 @@
 // A reader keeps a lease until all reads have settled, including cancellation.
 function createSegmentReader({ info, acquire, release, readAsset }) {
   const entries = new Map(); let closed = false, stopping = false, clock = 0, targetOrdinal = 0;
-  const active = new Set();
+  const active = new Set(), maintenance = new Set(); let prefetchKey = null, cleanupFailure = null; let protectedOrdinals = new Set();
   function groupAt(time) {
     let low = 0, high = info.segments.length;
     while (low < high) { const mid = (low + high) >>> 1; if (info.segments[mid].start <= time) low = mid + 1; else high = mid; }
@@ -12,7 +12,7 @@ function createSegmentReader({ info, acquire, release, readAsset }) {
   }
   async function evict() {
     while (entries.size > 3) {
-      const candidates = [...entries.values()].filter(e => !e.users && e.value).sort((a, b) => a.used - b.used);
+      const candidates = [...entries.values()].filter(e => !e.users && e.value && !protectedOrdinals.has(e.ordinal)).sort((a, b) => a.used - b.used);
       if (!candidates.length) break;
       const old = candidates[0]; entries.delete(old.ordinal); await release(old.value);
     }
@@ -27,7 +27,13 @@ function createSegmentReader({ info, acquire, release, readAsset }) {
     }
     entry.users++; entry.used = ++clock;
     const task = (async () => { try { const value = await entry.promise; if (closed) throw new Error('视频分段读取已关闭。'); return await callback(value); }
-      finally { entry.users--; await evict(); } })();
+      finally {
+        entry.users--;
+        // Release acknowledgement is serialized behind worker decoding. Do not
+        // hold an already-read frame hostage to a future segment's completion.
+        const cleanup = evict(); maintenance.add(cleanup);
+        cleanup.then(() => maintenance.delete(cleanup), error => { cleanupFailure = error; maintenance.delete(cleanup); });
+      } })();
     active.add(task); task.then(() => active.delete(task), () => active.delete(task)); return task;
   }
   function frame(file) {
@@ -47,17 +53,33 @@ function createSegmentReader({ info, acquire, release, readAsset }) {
   }
   function cancelExcept(time) {
     const wanted = groupAt(time);
-    targetOrdinal = wanted;
+    targetOrdinal = wanted; prefetchKey = null; protectedOrdinals = new Set([wanted]);
     for (const entry of entries.values()) if (!entry.value && entry.ordinal !== wanted) entry.controller.abort();
+  }
+  function prefetch(time, loop) {
+    if (closed || stopping) return;
+    const current = groupAt(time), key = current + ':' + (loop ? loop.start + ':' + loop.end : '');
+    if (key === prefetchKey) return; prefetchKey = key;
+    let next = current; const seen = new Set([current]); protectedOrdinals = seen;
+    for (let n = 0; n < 2; n++) {
+      const boundary = info.segments[next].end;
+      const wanted = loop && boundary >= loop.end ? groupAt(loop.start) : next + 1;
+      if (wanted >= info.segments.length || seen.has(wanted)) break;
+      seen.add(wanted); next = wanted;
+      // Preparation is independent of optional bitmap predecode. At most two
+      // upcoming disk segments share the same coalesced demand/PCM lease pool.
+      use(wanted, () => null).catch(() => {}); // A real demand reports failures.
+    }
   }
   function cancelAll() { stopping = true; for (const entry of entries.values()) if (!entry.value) entry.controller.abort(); }
   async function close() {
     closed = true; for (const entry of entries.values()) entry.controller.abort();
     await Promise.allSettled([...active]);
+    await Promise.allSettled([...maintenance]);
     const retained = [...entries.values()]; entries.clear();
     const results = await Promise.allSettled(retained.map(async entry => { const value = await entry.promise.catch(() => null); if (value) await release(value); }));
-    const failed = results.find(result => result.status === 'rejected'); if (failed) throw failed.reason;
+    const failed = results.find(result => result.status === 'rejected'); if (failed) throw failed.reason; if (cleanupFailure) throw cleanupFailure;
   }
-  return { frame, audio, cancelExcept, cancelAll, close };
+  return { frame, audio, prefetch, cancelExcept, cancelAll, close };
 }
 module.exports = { createSegmentReader };

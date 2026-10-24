@@ -98,7 +98,7 @@
       this.ctx = this.canvas.getContext('2d', { alpha: false, colorSpace: 'srgb' }); if (!this.ctx) throw new Error('无法取得2D画布。');
       this.readAsset = options.readAsset; this.readFrameBatch = options.readFrameBatch;
       this.setMediaTarget = options.setMediaTarget; this.createSegmentAudio = options.createSegmentAudio; this.segmentAudio = null;
-      this.cancelMediaReads = options.cancelMediaReads;
+      this.cancelMediaReads = options.cancelMediaReads; this.prefetchMedia = options.prefetchMedia;
       this.emit = options.emit || (() => {}); this.onChange = options.onChange || (() => {});
       this.budget = options.budget || new Budget(options.ramBytes === undefined ? RAM_LIMIT : options.ramBytes);
       if (['reserve', 'shrink', 'release', 'snapshot'].some(name => typeof this.budget[name] !== 'function')) throw new Error('注入的RAM账本无效。');
@@ -863,6 +863,9 @@
       this._emit('cache', { epoch, phase: 'image-work-start', frameId: frame.id, role, activeImageTasks: this.tasks.size });
       task.then(() => { this._startTargetWork(); this._startDragAheadWork(); this._tryReadySubmit(); }, error => {
         if (this._valid(epoch)) {
+          if (info.streaming && error.code === 'MEDIA_CANCELLED' && (!this.target || this.target.index !== ordinal)) {
+            this._startTargetWork(); return; // Seeking intentionally cancelled this obsolete segment.
+          }
           if (this.target && this.target.resolve && this.target.index === ordinal || holder.fastPlayback && this.state === 'playing' && holder.playToken === this.playToken) this._fail(error);
           else { this.prefetchFailed.add(ordinal); if (role === 'forward-fill') this.forwardIssue = error.message;
             this._emit('error', { epoch, phase: 'background-image', frameId: frame.id, error: error.message }); }
@@ -997,6 +1000,7 @@
       if (this.target && this.target.resolve) return;
       if (this.state !== 'playing' && this.target && !this.target.final && ['drag', 'rapid'].includes(this.target.kind)) { this._startBackground(); return; }
       const base = this.currentIndex, playing = this.state === 'playing';
+      if (playing && this.info.streaming && this.prefetchMedia) this.prefetchMedia(this._clockTime(), this.loopEnabled ? this._loopRange() : null);
       if (this.forwardPredecode && !playing) { this._startBackground(); return; }
       const maximumTasks = playing ? 2 : 1, direction = this.target && this.target.stepDirection || 1;
       // Reserve the spare task slot for new input. Paused inspection prepares

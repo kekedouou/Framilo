@@ -3,7 +3,7 @@
 // PCM blocks share Player's Web Audio clock and RAM ledger. Scheduling uses
 // absolute context times; no timer callback is used as an audio boundary.
 function createSegmentAudio({ info, context, read, budget, evict, onError }) {
-  const entries = new Map(), sources = new Set(), loads = new Set();
+  const entries = new Map(), sources = new Set(), loads = new Set(), prefetchFailed = new Set();
   let closed = false, cursor = null, generation = 0, serial = 0;
   function indexAt(time) {
     let low = 0, high = info.segments.length;
@@ -49,12 +49,25 @@ function createSegmentAudio({ info, context, read, budget, evict, onError }) {
     if (nextTime < info.duration) await load(indexAt(nextTime));
   }
   function stop() {
-    generation++; cursor = null;
+    generation++; cursor = null; prefetchFailed.clear();
     for (const graph of sources) { graph.node.onended = null; try { graph.node.stop(); graph.node.disconnect(); } catch (_) { /* already ended */ } graph.entry.users--; }
     sources.clear(); prune();
   }
   function update() {
     if (!cursor || closed) return true;
+    // Prepare PCM before the scheduling deadline; a cold segment may take
+    // longer than the 350ms scheduling horizon. Keep at most two ahead.
+    let playing = cursor.media - Math.max(0, cursor.when - context.currentTime) * cursor.rate;
+    if (cursor.loop) { const span = cursor.loop.end - cursor.loop.start; playing = cursor.loop.start + ((playing-cursor.loop.start)%span+span)%span; }
+    let upcoming = indexAt(Math.max(0, playing)); const seen = new Set();
+    for (let n = 0; n < 3; n++) {
+      if (seen.has(upcoming)) break; seen.add(upcoming);
+      const candidate = upcoming, token = generation;
+      if (!prefetchFailed.has(candidate)) load(candidate).catch(() => { if(generation===token)prefetchFailed.add(candidate); }); // Demand reports failures, without an idle retry loop.
+      const end = info.segments[upcoming].end;
+      if (cursor.loop && end >= cursor.loop.end) upcoming = indexAt(cursor.loop.start);
+      else if (++upcoming >= info.segments.length) break;
+    }
     for (let count = 0; count < 32 && cursor.when < context.currentTime + .35; count++) {
       if (cursor.media >= info.duration && !cursor.loop) return true;
       const index = indexAt(cursor.media), range = info.segments[index], entry = entries.get(index);

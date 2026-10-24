@@ -84,6 +84,7 @@
       const cache = { readAsset: (...args) => backend.cache.readAsset(...args),
         readAudioSegment: (...args) => backend.cache.readAudioSegment(...args),
         target: (...args) => backend.cache.target(...args),
+        prefetch: (...args) => backend.cache.prefetch(...args),
         cancelReads: (...args) => backend.cache.cancelReads(...args),
         readFrameBatch: (...args) => backend.cache.readFrameBatch(...args),
         release: (...args) => backend.cache.release(...args), clearOther: (...args) => backend.cache.clearOther(...args) };
