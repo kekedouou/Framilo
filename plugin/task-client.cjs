@@ -26,6 +26,7 @@ function createTaskClient(options) {
   let guardCancelled = false;
   const exited = new Promise(resolve => { exitResolve = resolve; });
   const pending = new Map(), leases = new Set();
+  const readers = new Map();
   function failed(error) {
     if (failure) return; failure = error;
     if (readyReject) readyReject(error);
@@ -86,9 +87,15 @@ function createTaskClient(options) {
     try { return await work; } finally { if (settings.signal) settings.signal.removeEventListener('abort', cancel); }
   }
   const cache = {
-    readAsset: (...args) => failure ? Promise.reject(failure) : local.readAsset(...args),
+    readAsset: (info, file) => failure ? Promise.reject(failure) : readers.has(info) ? readers.get(info).frame(file) : local.readAsset(info, file),
+    readAudioSegment: (info, ordinal) => readers.get(info).audio(ordinal),
+    target: (info, time) => { if (readers.has(info)) readers.get(info).cancelExcept(time); },
+    cancelReads: info => { if (readers.has(info)) readers.get(info).cancelAll(); },
     readFrameBatch: (...args) => failure ? Promise.reject(failure) : local.readFrameBatch(...args),
-    async release(info) { if (!leases.has(info)) return false; local.detachReadLease(info); await ask('release', { leaseId: info.leaseId }); leases.delete(info); return true; },
+    async release(info) { if (!leases.has(info)) return false;
+      if (readers.has(info)) { await readers.get(info).close(); readers.delete(info); }
+      else local.detachReadLease(info);
+      await ask('release', { leaseId: info.leaseId }); leases.delete(info); return true; },
     clearOther: settings => ask('clearOther', { settings }),
     inventory: local.inventory
   };
@@ -96,7 +103,17 @@ function createTaskClient(options) {
     const tools = await options.discoverTools(settings.signal);
     const info = await ask('prepare', { snapshot, tools, previewQuality: settings.previewQuality }, settings);
     if (settings.signal && settings.signal.aborted) { await ask('release', { leaseId: info.leaseId }); throw issue('MEDIA_CANCELLED', '视频准备已取消。'); }
-    try { local.adoptReadLease(info, taskOwner); } catch (error) { await ask('release', { leaseId: info.leaseId }); throw error; }
+    if (info.streaming) {
+      const reader = require('./segment-reader.cjs').createSegmentReader({ info,
+        acquire: async (ordinal, signal) => {
+          const value = await ask('segment', { leaseId: info.leaseId, ordinal }, { signal });
+          try { if (signal.aborted) throw issue('MEDIA_CANCELLED', '分段准备已取消。'); local.adoptReadLease(value, taskOwner); }
+          catch (error) { await ask('release', { leaseId: value.leaseId }); throw error; }
+          return value;
+        }, release: async value => { local.detachReadLease(value); await ask('release', { leaseId: value.leaseId }); },
+        readAsset: (value, file) => local.readAsset(value, file) });
+      readers.set(info, reader);
+    } else try { local.adoptReadLease(info, taskOwner); } catch (error) { await ask('release', { leaseId: info.leaseId }); throw error; }
     leases.add(info); return info;
   } };
   function close() {
@@ -104,7 +121,8 @@ function createTaskClient(options) {
     closing = (async () => {
       if (!host && !ready) return { status: 'closed' };
       beginClose();
-      for (const info of leases) local.detachReadLease(info);
+      for (const reader of readers.values()) await reader.close(); readers.clear();
+      for (const info of leases) if (!info.streaming) local.detachReadLease(info);
       leases.clear();
       try { if (!failure && !ended) await ask('close'); }
       catch (error) { if (!guardCancelled) throw error; }

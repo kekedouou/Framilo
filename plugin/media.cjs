@@ -180,7 +180,7 @@ function streamRatio(stream, field, fallback) {
   if (stream[fallback] != null && stream[fallback] !== 'N/A') return decimalRatio(stream[fallback]);
   return null;
 }
-function validateProbe(probe) {
+function validateProbe(probe, maximumDuration = LIMITS.duration) {
   if (!probe || !Array.isArray(probe.streams)) fail('视频分析结果无效。', 'MEDIA_PROBE');
   const formats = String(probe.format && probe.format.format_name || '').split(',');
   if (!formats.includes('mp4') && !formats.includes('mov')) fail('文件内容不是 MP4 容器。', 'MEDIA_CONTAINER');
@@ -188,7 +188,7 @@ function validateProbe(probe) {
   if (![video.width, video.height].every(value => Number.isSafeInteger(value) && value > 0) || video.disposition && video.disposition.attached_pic)
     fail('首视频流不是可播放画面。', 'MEDIA_VIDEO');
   const start = ratio(video.start_pts, end.timeBase), videoDuration = ratio(video.duration_ts, end.timeBase);
-  if (videoDuration.n <= 0n || videoDuration.n > BigInt(LIMITS.duration) * videoDuration.d) fail('当前支持不超过30秒的视频。', 'MEDIA_DURATION');
+  if (videoDuration.n <= 0n || maximumDuration !== Infinity && videoDuration.n > BigInt(maximumDuration) * videoDuration.d) fail('当前支持不超过30秒的视频。', 'MEDIA_DURATION');
   let first = start, last = ratioAdd(start, videoDuration);
   const audio = probe.streams.find(value => value.codec_type === 'audio');
   if (audio) {
@@ -206,7 +206,7 @@ function validateProbe(probe) {
     if (ratioCompare(audioEnd, last) > 0) last = audioEnd;
   }
   const span = ratioSubtract(last, first);
-  if (span.n <= 0n || span.n > BigInt(LIMITS.duration) * span.d) fail('音视频实际跨度超过30秒。', 'MEDIA_DURATION');
+  if (span.n <= 0n || maximumDuration !== Infinity && span.n > BigInt(maximumDuration) * span.d) fail('音视频实际跨度超过30秒。', 'MEDIA_DURATION');
   return { videoDuration: ratioSeconds(videoDuration), mediaSpan: ratioSeconds(span), hasAudioStream: !!audio };
 }
 function validateDecodedSpan(info) {
@@ -415,6 +415,12 @@ function createMedia(options) {
   const cache = options.cache, frameIndex = options.frameIndex || defaultIndex;
   if (['buildIndex', 'validateIndex'].some(name => typeof frameIndex[name] !== 'function')) fail('缺少源帧索引能力。', 'MEDIA_DEPENDENCY');
   let active = false;
+  let long;
+  function longMedia() { return long || (long = require('./long-media.cjs').createLongMedia({ cache, tools, helpers: {
+    hashSource, sourceStamp, sameStamp, regular, snapshotCopy, captureProbe, validateProbe, videoEnd,
+    childProcess, guarded, check, settleJob, stopChildren, boundedAdd, JpegParser, patchWav,
+    ffmpegArgs, previewColor, COLOR_VERSION, streamRatio, ratioSeconds, ratio, ratioSubtract
+  } })); }
   async function prepare(value, settings = {}) {
     // Everything captured here is independent of later UI/Eagle changes.
     const snapshot = snapshotCopy(value), signal = settings.signal, onProgress = settings.onProgress;
@@ -423,6 +429,7 @@ function createMedia(options) {
     active = true;
     const started = process.hrtime.bigint(), job = { signal, onProgress, previewQuality, children: new Set(), operations: new Set(), failure: null, observerError: null };
     const abort = () => stopChildren(job); if (signal) signal.addEventListener('abort', abort, { once: true });
+    const deadline = setTimeout(() => { job.failure = job.failure || Object.assign(new Error('视频身份检查或准备超时，请重试。'), { code: 'MEDIA_TOOL_TIMEOUT' }); stopChildren(job); }, LIMITS.timeoutMs);
     let tx = null, returned = null, primaryError = null;
     const phases = {}, elapsed = start => Number(process.hrtime.bigint() - start) / 1e6;
     try {
@@ -432,7 +439,11 @@ function createMedia(options) {
       phaseStart = process.hrtime.bigint(); tx = await cache.begin({ sourceSha256: fingerprint.sha256, signal, previewQuality }); job.tx = tx; check(job); phases.writerAcquireMs = elapsed(phaseStart);
       notify(job, { stage: 'analyze' }); phaseStart = process.hrtime.bigint();
       const analyzed = await captureProbe(job, tools, snapshot.filePath); check(job); phases.probeMs = elapsed(phaseStart);
-      const selectedMetadata = validateProbe(analyzed.probe);
+      const selectedMetadata = validateProbe(analyzed.probe, Infinity);
+      if (selectedMetadata.mediaSpan > LIMITS.duration) {
+        const info = await longMedia().prepare(snapshot, fingerprint, analyzed.probe, { ...settings, tx });
+        await tx.abort(); return info;
+      }
       notify(job, { stage: 'cache' }); phaseStart = process.hrtime.bigint();
       let manifest = await tx.readComplete({ colorVersion: COLOR_VERSION }); check(job); phases.existingCacheValidationMs = elapsed(phaseStart);
       const reused = !!manifest;
@@ -456,6 +467,7 @@ function createMedia(options) {
       if (tx) { try { await tx.abort(); } catch (cleanupError) { error.cleanupError = cleanupError.message; } }
       throw error;
     } finally {
+      clearTimeout(deadline);
       await settleJob(job);
       if (signal) signal.removeEventListener('abort', abort);
       try {
@@ -477,7 +489,7 @@ function createMedia(options) {
       }
     }
   }
-  return Object.freeze({ prepare });
+  return Object.freeze({ prepare, prepareSegment: (...args) => longMedia().segment(...args), releaseLong: info => long ? long.release(info) : false });
 }
 module.exports = { createMedia, LIMITS, previewRgbFilter,
   _test: { COLOR_VERSION, previewColor, previewRgbFilter, boundedAdd, snapshotCopy, JpegParser, patchWav, videoEnd, resolveVideoEnd, validateProbe, validateDecodedSpan, ffmpegArgs, ratioSeconds, ratioSubtract, ratio } };

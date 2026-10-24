@@ -4,7 +4,7 @@
 
 ### E-33 已执行与未执行
 
-显式node prototypes/long-video/compare.cjs --tools=tests/host/t0/config.local.json只取已有工具路径，不读取该配置中的素材sources；最多三轮已经用满，不自动删记录腾预算。原始失败/通过记录见verification-runs/e33-long-video。默认node tests/long-video-window.cjs不生成媒体。未测Eagle、4K/高帧率、HEVC/VP9、非零源起点、长音频连续播放、缓存重开恢复；不能据此移除正式兼容限制。
+第一关显式node prototypes/long-video/compare.cjs --tools=tests/host/t0/config.local.json只取工具路径，三轮已用满并封存。正式接入使用node scripts/check-long-media.cjs及--final --with-worker --browser的新独立预算；合成CFR/VFR带B帧、非零起点、音频长尾，核对分段PTS/确定性PCM/取消/租约/重开。普通Node运行真实Windows守护，独立Chrome运行正式Player、真实JPEG/Web Audio并核对跨段播放、循环与释放；不启动Eagle。默认tests/long-playback.cjs检查时钟排程、倍速/循环、挂起关闭、租约复用淘汰和Player闭环；long-video-window.cjs仍是第一关候选模型。未测真实Eagle、4K/高帧率长片、HEVC/VP9长片、听感/物理音画同步与长期资源；这些不是本地通过的结论。
 
 新合成现场/证据预算和技术关卡见[E-33计划](experiments/E33/plan.md)。首先比对同一源的PTS与解码画面、首帧等待和取消；随后覆盖分段音频、循环、换片/关闭/重开以及旧缓存。低分辨率合成结果不是真实Eagle或4K性能结论。
 

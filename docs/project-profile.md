@@ -1,10 +1,10 @@
 # 项目说明
 
-当前：E-33长视频升级已获批准，先比较有界分段JPEG与直接解码；正式播放器仍保留30秒限制，待准确定位、音频与缓存关卡通过后接入。见[计划](experiments/E33/plan.md)。
+当前：E-33首个长视频开发版已接入正式plugin，超过30秒采用按需分段图片/音频，短片沿原路径；本地验证与真实宿主体验分开登记。见[交付记录](experiments/E33/report.md)。
 
 ## E-33 新增开发文件
 
-prototypes/long-video/compare.cjs为显式合成对照，window-cache.cjs为串行取消/有界窗口候选，tests/long-video-window.cjs为默认无媒体模型检查。正式plugin不依赖它们。完整帧索引/整段音频/全文件哈希仍是正式就绪前提，30秒限制尚未解除；不会通过单改数字假装支持长视频。
+plugin/long-media.cjs负责轻量帧索引、分段解码和实际音频尾部检测；segment-reader.cjs负责分段租约/取消/释放；segment-audio.cjs负责有界PCM与Web Audio排程。正式plugin不引用prototypes/long-video中的比较或候选模型。完整源文件哈希与轻量帧表仍在首帧前读取，整片JPEG/PCM不再是长视频就绪前提。scripts/check-long-media.cjs显式执行合成集成检查，tests/long-playback.cjs为默认模型检查。
 
 
 上一阶段E-32优化二级轮盘节点复用和100ms悬停，切换工具不自动展开属性；统一文字框模糊、工具轨宽度与高亮，设置可直接切换标注/片段。实施与验证状态见[E-32报告](experiments/E32/report.md)。
@@ -14,7 +14,7 @@ prototypes/long-video/compare.cjs为显式合成对照，window-cache.cjs为串�
 ## 身份与入口
 
 - 正式主线是Eagle Window视频分析插件，唯一实现位于 `plugin/`；开发入口 `plugin/manifest.json`，界面名“视频分析”。
-- 当前开发版支持不超过30秒的MP4及720p/1080p/1440p JPEG预览，默认720p/1GiB，提供512MiB及1～10GiB档位；JPEG池≤总额度1/8。额度不是整个程序内存硬上限，1440p试接不代表性能通过。
+- 当前开发版支持MP4及720p/1080p/1440p JPEG预览，超过30秒走有界分段路径（首版24,000帧/6MiB索引上限，重复/缺失PTS不猜测）。默认720p/1GiB，提供512MiB及1～10GiB档位；JPEG池≤总额度1/8。额度不是整个程序内存硬上限，1440p与真实长片性能仍需实际体验。
 - 已发布MVP Beta2/R4已归档；冻结的是发行包、标签与仓库外安装，不表示后续开发停止。发行入口名“视频分析 · MVP Beta”、独立ID，功能固定720p；历史路径公开已接受，许可证未指定。
 - Git根为 `eagle-video-analysis/`，保留单一仓库。原型A/B/S1及preview-quality受局部AGENTS约束，默认封存；旧T2/T4自动测量入口停用。
 - 技术栈：HTML/CSS/JavaScript、Eagle API、Node内置模块和Eagle现有FFmpeg/ffprobe；Windows守护使用系统已有.NET Framework编译器。
@@ -95,6 +95,8 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 | plugin/eagle.cjs | 唯一素材/标注 API 边界；独立读回，不直接写 metadata.json |
 | plugin/export.cjs、export-work/ | 源视频图片/片段导出、本次暂存及本地保存；由既有后台任务执行，暂存累计1GiB、正常结束清本次，异常/导入未知保留核对，不受预览缓存清理器删除 |
 | plugin/media.cjs | 只读源媒体、分析和 FFmpeg；通过缓存句柄受限写入，不自行淘汰目录 |
+| plugin/long-media.cjs | 长片源帧索引、按需JPEG/PCM分段与源身份核对；复用cache事务 |
+| plugin/segment-reader.cjs、segment-audio.cjs | 分段租约读取与有界保留、共享时钟音频排程；关闭等待实际读取释放 |
 | plugin/cache.cjs | 文件所有权、实际路径、预算、锁、完整提交、淘汰与清理；不操作 UI 或素材元数据 |
 | plugin/preferences.cjs | RAM档位/物理上限、画质与交互偏好、旧格式只读兼容和本地原子保存；不访问素材库或清理媒体缓存 |
 | plugin/process-identity.cjs | Windows进程出生/后代只读证明；独占句柄核对后接管空writer记录；未知时保留，不终止进程、不调用Eagle API |

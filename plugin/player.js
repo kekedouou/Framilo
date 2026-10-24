@@ -75,7 +75,7 @@
     return { now: () => performance.now(), raf: callback => requestAnimationFrame(callback), caf: id => cancelAnimationFrame(id),
       sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
       decodeImage: bytes => createImageBitmap(new Blob([bytes], { type: 'image/jpeg' })),
-      createAudioContext: () => new (globalThis.AudioContext || globalThis.webkitAudioContext)() };
+      createAudioContext: options => new (globalThis.AudioContext || globalThis.webkitAudioContext)(options) };
   }
   function freezeInfo(info) {
     const frames = info.frames.map(frame => Object.freeze(Object.assign({}, frame, { timeBase: Object.freeze(frame.timeBase.slice()) })));
@@ -86,6 +86,7 @@
     })) : null;
     return Object.freeze(Object.assign({}, info, { frames: Object.freeze(frames), source: Object.freeze(Object.assign({}, info.source)),
       audio: info.audio ? Object.freeze(Object.assign({}, info.audio)) : null,
+      ...(info.segments ? { segments: Object.freeze(info.segments.map(segment => Object.freeze({ ...segment }))) } : {}),
       ...(info.framePack ? { framePack: Object.freeze(Object.assign({}, info.framePack)) } : {}), expected }));
   }
   class Player {
@@ -96,6 +97,8 @@
       this.env = Object.assign(browserEnvironment(), options.env || {}); this.canvas = options.canvas;
       this.ctx = this.canvas.getContext('2d', { alpha: false, colorSpace: 'srgb' }); if (!this.ctx) throw new Error('无法取得2D画布。');
       this.readAsset = options.readAsset; this.readFrameBatch = options.readFrameBatch;
+      this.setMediaTarget = options.setMediaTarget; this.createSegmentAudio = options.createSegmentAudio; this.segmentAudio = null;
+      this.cancelMediaReads = options.cancelMediaReads;
       this.emit = options.emit || (() => {}); this.onChange = options.onChange || (() => {});
       this.budget = options.budget || new Budget(options.ramBytes === undefined ? RAM_LIMIT : options.ramBytes);
       if (['reserve', 'shrink', 'release', 'snapshot'].some(name => typeof this.budget[name] !== 'function')) throw new Error('注入的RAM账本无效。');
@@ -142,7 +145,7 @@
         frameCount: this.info ? this.info.frames.length : 0,
         targetTime: this.targetTime, targetFrameId: this.info && this.target ? this.info.frames[this.target.index].id : null,
         pendingTargets: this.target && this.target.resolve ? 1 : 0, activeImageTasks: this.tasks.size,
-        cacheBytes: ledger.used, cachePeakBytes: ledger.peak, budget: ledger, audioAvailable: !!this.audioBuffer,
+        cacheBytes: ledger.used, cachePeakBytes: ledger.peak, budget: ledger, audioAvailable: !!(this.audioBuffer || this.segmentAudio),
         decodeDelayMs: this.decodeDelayMs, verifyMarkers: this.verifyMarkers, epoch: this.epoch, drawCount: this.drawCount,
         rafOpportunity: this.rafCount, maxDrawGapMs: this.maxDrawGapMs, lastIssue: this.lastIssue, lastErrorCode: this.lastErrorCode,
         buffering: !!this.recovery, playbackGuardMs: this.playbackGuardMs, telemetryIssue: this.telemetryIssue || null,
@@ -303,6 +306,7 @@
       this.compressedStats = { warmedBytes: 0, warmedFrames: 0, hits: 0, misses: 0, warmMs: 0, admittedFrames: 0, evictions: 0 };
       this.lastSubmission = null; this.observedSerial = this.submissionSerial; this.observedFrame = null;
       const oldContext = this.audioContext; this.audioContext = null; this.audioBuffer = null;
+      const oldSegmentAudio = this.segmentAudio; this.segmentAudio = null;
       this.budget.release(this.audioBudget); this.audioBudget = null; this.info = null;
       ++this.forwardToken; this.preparePlan = null; this.forwardStatus = this.forwardPredecode ? 'waiting' : 'disabled';
       this.forwardIssue = null; this.warmPlan = null; this.warmCursor = 0; this.loadTimings = null;
@@ -313,12 +317,18 @@
       const operation = Promise.resolve().then(async () => {
         let context = null, reservation = null, transferred = false;
         try {
+          if (oldSegmentAudio) await oldSegmentAudio.close();
           if (oldContext) await this._closeContext(oldContext);
           // Uncancellable work keeps its reservation; do not overlap images from two materials.
           await Promise.allSettled(oldLoads.concat(oldTasks)); if (!this._valid(epoch)) return { status: 'superseded' };
           this.index.validateIndex(rawInfo); const info = freezeInfo(rawInfo);
           this.info = info; this.canvas.width = info.width; this.canvas.height = info.height;
-          if (info.audio) {
+          if (info.audio && info.streaming) {
+            if (!this.createSegmentAudio) throw new Error('缺少分段音频读取能力。');
+            context = this.env.createAudioContext({ sampleRate: 48000 }); this.contexts.add(context); this.audioContext = context;
+            this.segmentAudio = this.createSegmentAudio({ info, context, budget: this.budget, evict: () => this._evict(), onError: error => { if (this._valid(epoch)) this._fail(error); } });
+            transferred = true;
+          } else if (info.audio) {
             context = this.env.createAudioContext(); this.contexts.add(context); this.audioContext = context;
             const estimate = Math.ceil((info.audio.duration + 0.1) * context.sampleRate * info.audio.channels) * 4;
             reservation = this.budget.reserve(estimate + info.audio.bytes * 2, 'audio-loading', () => this._evict());
@@ -339,7 +349,7 @@
           }
           if (!this._valid(epoch)) return { status: 'superseded' };
           const warmStartedAt = this.env.now();
-          if (this.experimentMode === 'compressed-ram') {
+          if (this.experimentMode === 'compressed-ram' && !info.streaming) {
             if (this.forwardPredecode) this.warmPlan = this._planCompressed(info);
             else await this._warmCompressed(info, epoch);
           }
@@ -365,6 +375,7 @@
       const targetTime = Math.max(0, Math.min(this.info.duration, time));
       const ordinal = options.index === undefined ? this.index.frameAt(this.info.frames, targetTime) : options.index;
       const frame = this.info.frames[ordinal], epoch = this.epoch;
+      if (this.info.streaming && this.setMediaTarget && !['play', 'buffer', 'pause', 'ended'].includes(options.kind)) this.setMediaTarget(frame.time);
       const previous = this.target; this.targetTime = targetTime; this.ended = options.kind === 'ended';
       let target;
       const promise = new Promise(resolve => { target = { index: ordinal, frameId: frame.id, epoch, targetTime,
@@ -492,9 +503,12 @@
         for (const next of [ordinal, ...this._playAheadOrdinals(this.info.frames[ordinal].time, ordinal, 3)]) {
           await this._prime(next, epoch, token); if (!this._playValid(epoch, token)) return { status: 'superseded' };
         }
-        const media = this.info.frames[ordinal].time, when = context ? context.currentTime + 0.02 : null;
+        const media = this.info.frames[ordinal].time;
+        if (this.segmentAudio) { await this.segmentAudio.prime(media, loop); if (!this._playValid(epoch, token)) return { status: 'superseded' }; }
+        const when = context ? context.currentTime + 0.02 : null;
         this.playCycle = this.drawnPlayCycle = 0; this.lastPlayOrdinal = ordinal;
         this.anchor = { media, context: when, perf: this.env.now() + 20, rate: this.playbackRate, loop }; this.waitingSince = null;
+        if (this.segmentAudio) this.segmentAudio.start(media, when, this.playbackRate, loop);
         if (context && this.audioBuffer) {
           let buffer = this.audioBuffer, loopBudget = null, plan;
           try {
@@ -563,6 +577,7 @@
       return loop ? raw < loop.end ? raw : loop.start + (raw - loop.end) % (loop.end - loop.start) : Math.min(this.info.duration, raw);
     }
     _halt(capture) {
+      if (this.segmentAudio) this.segmentAudio.stop();
       const media = capture && this.state === 'playing' ? this._clockTime() : this.time;
       this.recovery = null; ++this.playToken; const graph = this.graph; this.graph = null;
       if (graph) {
@@ -798,7 +813,7 @@
           if (compressed) { this.compressed.delete(ordinal); this.compressed.set(ordinal, compressed); }
           const bytes = compressed ? compressed.bytes : await this.readAsset(info, frame.file);
           const readEndedAt = this.env.now();
-          if (!bytes || bytes.byteLength !== frame.bytes) throw new Error('JPEG资源长度与清单不符。');
+          if (!bytes || (info.streaming ? bytes.byteLength <= 0 || bytes.byteLength > frame.bytes : bytes.byteLength !== frame.bytes)) throw new Error('JPEG资源长度与清单不符。');
           if (!this._valid(epoch)) return null;
           if (this.experimentMode === 'compressed-ram') this.compressedStats[compressed ? 'hits' : 'misses']++;
           // A fast drag may supersede a completed disk read before decoding.
@@ -903,6 +918,23 @@
       if (this._valid(target.epoch) && this.target === target) this._change();
     }
     _startBackground() {
+      if (this.info && this.info.streaming) {
+        if (this.forwardPredecode && !this.tasks.size && ['paused', 'playing'].includes(this.state) && this.currentIndex !== null) {
+          const center = this.currentIndex, range = this.loopEnabled ? this._loopRange() : null;
+          const first = range ? range.first : 0, last = range ? range.last : this.info.frames.length - 1;
+          const direction = this.target && (this.target.stepDirection || Math.sign(this.target.dragDelta || 0)) || 1;
+          const candidates = [];
+          for (let offset = 1; offset <= Math.min(48, last - first); offset++) {
+            const ordinal = center + offset * direction;
+            const wrapped = range ? first + ((ordinal - first) % (last - first + 1) + last - first + 1) % (last - first + 1) : ordinal;
+            if (wrapped >= first && wrapped <= last) candidates.push(wrapped);
+          }
+          const next = candidates.find(n => !this.cache.has(n) && !this.prefetchFailed.has(n));
+          const needed = this.info.width * this.info.height * 4 + 2 * this.info.frames[center].bytes;
+          if (next !== undefined && this.budget.limit - this.budget.used > needed) this._decode(next, 'forward-fill', null);
+        }
+        return;
+      }
       if (!this.forwardPredecode || this.forwardIssue || !this.info || this.disposed || !['paused', 'playing'].includes(this.state) || this.tasks.size ||
           this.target && (this.target.resolve || !this.target.final && ['drag', 'rapid'].includes(this.target.kind) && this.env.now() - this.target.inputAt < 80)) return;
       const info = this.info;
@@ -1001,6 +1033,7 @@
         if (this.info && this.state === 'playing') {
           const epoch = this.epoch, media = this._clockTime(), range = this.loopEnabled ? this._loopRange() : null;
           const raw = this.index.frameAt(this.info.frames, media), ordinal = range ? Math.max(range.first, Math.min(range.last, raw)) : raw;
+          if (this.segmentAudio && !this.segmentAudio.update()) { this._recoverSupply(media, ordinal); this._schedule(); return; }
           const fast = this.playbackRate > 1;
           if (fast && range && ordinal < this.lastPlayOrdinal) ++this.playCycle;
           this.lastPlayOrdinal = ordinal;
@@ -1045,9 +1078,11 @@
     async dispose() {
       if (this.disposePromise) return this.disposePromise;
       this.disposed = true; ++this.epoch; this._halt(false); if (this.rafId !== null) this.env.caf(this.rafId);
+      if (this.cancelMediaReads) this.cancelMediaReads();
       this._clearTarget('disposed'); this._clearCache(); this._clearCompressed(); this.audioBuffer = null; this.budget.release(this.audioBudget); this.audioBudget = null;
       this._change('disposed');
       this.disposePromise = (async () => {
+        if (this.segmentAudio) { await this.segmentAudio.close(); this.segmentAudio = null; }
         await Promise.allSettled(Array.from(this.contexts).map(context => this._closeContext(context)));
         await Promise.allSettled(Array.from(this.loads).concat(Array.from(this.tasks.values()).map(task => task.promise)));
         this.audioContext = null; this.info = null; this._emit('cache', { phase: 'disposed', budgetBytes: this.budget.used });

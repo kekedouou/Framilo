@@ -33,6 +33,7 @@ const identity = { self: () => { const value = base.self(); if (!value) throw ne
   } };
 const cache = require('./cache.cjs').createCache({ pluginRoot: root, taskOwner, processIdentity: identity, packFrames: true });
 const handles = new Map(), controllers = new Map();
+const longOwners = new Map();
 let sourceExports = null;
 let tail = Promise.resolve(), stopping = false, shutdownTask = null;
 function send(value) { const text = JSON.stringify(value); if (Buffer.byteLength(text) > 8 * 1024 ** 2) throw new Error('Control response exceeds 8MiB.'); process.stdout.write(text + '\n'); }
@@ -42,7 +43,11 @@ function shutdown(id) {
   if (shutdownTask) return shutdownTask;
   stopping = true; for (const controller of controllers.values()) controller.abort();
   shutdownTask = enqueue(async () => {
-    for (const info of handles.values()) await cache.release(info);
+    for (const info of handles.values()) {
+      if (longOwners.has(info.leaseId)) longOwners.get(info.leaseId).releaseLong(info);
+      else await cache.release(info);
+    }
+    longOwners.clear();
     handles.clear(); if (id !== undefined) response(id, { status: 'closed' });
     process.stdout.write('', () => process.exit(0));
   });
@@ -55,11 +60,21 @@ async function execute(message, controller) {
     const media = require('./media.cjs').createMedia({ tools: message.tools, cache });
     const info = await media.prepare(message.snapshot, { signal: controller.signal, previewQuality: message.previewQuality,
       onProgress: value => send({ type: 'progress', id: message.id, value }) });
-    handles.set(info.leaseId, info); return info;
+    handles.set(info.leaseId, info);
+    if (info.streaming) longOwners.set(info.leaseId, media);
+    return info;
+  }
+  if (message.method === 'segment') {
+    const info = handles.get(message.leaseId), media = longOwners.get(message.leaseId);
+    if (!info || !media) throw new Error('长视频会话已失效。');
+    const segment = await media.prepareSegment(info, message.ordinal, { signal: controller.signal });
+    handles.set(segment.leaseId, segment); return segment;
   }
   if (message.method === 'release') {
     const info = handles.get(message.leaseId); if (!info) throw new Error('Unknown task lease.');
-    await cache.release(info); handles.delete(message.leaseId); return true;
+    if (longOwners.has(message.leaseId)) { longOwners.get(message.leaseId).releaseLong(info); longOwners.delete(message.leaseId); }
+    else await cache.release(info);
+    handles.delete(message.leaseId); return true;
   }
   if (message.method === 'clearOther') return cache.clearOther(message.settings);
   if (['export', 'publishExport', 'discardExport'].includes(message.method)) {

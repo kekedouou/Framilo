@@ -141,6 +141,10 @@ function createSession(options) {
       if (!current(request)) { await releaseOwner(owned); return { status: 'superseded' }; }
       const player = createPlayer({ experimentMode: 'compressed-ram',
         readAsset: (_copiedInfo, file) => cache.readAsset(info, file),
+        setMediaTarget: time => { if (cache.target) cache.target(info, time); },
+        cancelMediaReads: () => { if (cache.cancelReads) cache.cancelReads(info); },
+        createSegmentAudio: info.streaming && info.audio ? settings => require('./segment-audio.cjs').createSegmentAudio({ ...settings,
+          read: ordinal => cache.readAudioSegment(info, ordinal) }) : undefined,
         readFrameBatch: typeof cache.readFrameBatch === 'function' ? (_copiedInfo, files) => cache.readFrameBatch(info, files) : undefined,
         onChange: value => {
           if (!current(request) || owner !== owned) return;
