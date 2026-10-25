@@ -1,5 +1,7 @@
 # 技术架构与模块边界
 
+当前修复：代理索引遗漏了旧JPEG已有的末帧结束边界处理，现以明确packet时长修复冲突的流结束时间，并将同一结束值用于索引、分段和控制传输；无可靠时长仍拒绝猜帧。JPEG按最新批准恢复整片顺序生成后播放，取消30秒门槛；准备中设置可取消旧任务并切换模式，旧结果不接管新会话。原磁盘/单资产/元数据限额保留，长片不保证无限容量；真实Eagle体验待验。
+
 E36宿主兼容：上一轮修复后用户仍遇到灰屏，实际日志确认renderer原生崩溃（0x80000003），尚未确定具体原生触发函数。现改为Electron renderer直接选有界兼容读取队列，不再试建Node Worker，元数据复制移除v8序列化。普通Node保留线程；校验、2并发/64请求和租约关闭屏障保持。兼容分支同步元数据检查仍在renderer，旧线程性能不代表此分支；真实Eagle恢复与流畅度仍待验。
 
 ## E-36 跟手光标、临时预览与分层准备（本地完成，宿主待验）
@@ -477,3 +479,6 @@ E28原生删除确认成功后，drawing-session依据同源帧最新剩余文�
 ## E-30 界面职责补充
 
 settings-view.js只负责逐级展示和转交原控件事件，不新增偏好写入端；原bool即时/应用语义不变。context-wheel.js用独立240ms悬停计时器，类型和颜色共享外圈，跨一级项取消旧分支。app.js在创建和主动调用时依次show/focus，不设置永久置顶。缩略图取消逐张250ms等待，每次解码后让出浏览器绘制帧，失败延迟重试；播放时依旧不抢占解码。见[E-30报告](experiments/E30/report.md)。
+
+### E36末帧与JPEG恢复补充
+long-media.packetIndex现在查询packet duration；原声明结束不晚于最大展示PTS时，使用该packet明确正时长，绝不以平均FPS/前帧间隔补值。sourceEnd贯穿prepare与segment及media-wire。media.prepare仅proxy走long-media，JPEG单次整片FFmpeg生成、完成校验后交付，旧缓存recipe/文件格式不变。cache清单解除30秒数值门槛但要求有限正时长，原摘要/身份/原子提交规则不变；旧清单读入、写入、接入远端租约均经manifestAssets。prepare watchdog在输出进展时续期；Session设置可打断准备，沿epoch/串行释放；UI应用序号隔离旧完成回调。

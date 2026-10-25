@@ -1,5 +1,7 @@
 # 验证协议与验收映射：阶段 3C
 
+当前修复：代理索引遗漏了旧JPEG已有的末帧结束边界处理，现以明确packet时长修复冲突的流结束时间，并将同一结束值用于索引、分段和控制传输；无可靠时长仍拒绝猜帧。JPEG按最新批准恢复整片顺序生成后播放，取消30秒门槛；准备中设置可取消旧任务并切换模式，旧结果不接管新会话。原磁盘/单资产/元数据限额保留，长片不保证无限容量；真实Eagle体验待验。
+
 E36宿主兼容：上一轮修复后用户仍遇到灰屏，实际日志确认renderer原生崩溃（0x80000003），尚未确定具体原生触发函数。现改为Electron renderer直接选有界兼容读取队列，不再试建Node Worker，元数据复制移除v8序列化。普通Node保留线程；校验、2并发/64请求和租约关闭屏障保持。兼容分支同步元数据检查仍在renderer，旧线程性能不代表此分支；真实Eagle恢复与流畅度仍待验。
 
 ## E-36 跟手、临时预览与标注首批准备
@@ -459,3 +461,5 @@ Codex显式运行`node scripts/verify-cache-maintenance.cjs`：tests/host/t2/mai
 ## E-30 局部界面与预览复用
 
 `node tests/support/drawing-browser.cjs --e30`及附加`--e18-compact --e18-reduced`验证三级设置、轮盘延迟取消、缩略图复用及已有回归；无素材库写入。真实宿主层级/加载/GPU表现另验，见[E-30报告](experiments/E30/report.md)。
+
+本次末帧/JPEG检查：默认t1-media/t1-cache/t1-session/t1-ui增加长时长与准备中设置回归；显式node scripts/check-jpeg-restore.cjs按E36计划预算运行，只使用合成素材与独立缓存。该检查真实FFmpeg/文件缓存通过也不等于Eagle窗口、音画与长片流畅度通过。

@@ -11,7 +11,7 @@ const { OWNER, RECIPE } = require('./cache.cjs');
 const MIB = 1024 * 1024;
 const LIMITS = Object.freeze({ metadataBytes: 8 * MIB, jpegBytes: 8 * MIB,
   pipeBufferBytes: 32 * MIB, sourceReadBytes: MIB, wavPrefixBytes: 4096,
-  monitorBytes: MIB, duration: 30, timeoutMs: 180000 });
+  monitorBytes: MIB, duration: Infinity, frames: 120000, timeoutMs: 180000 });
 
 function fail(message, code) { const error = new Error(message); if (code) error.code = code; throw error; }
 function boundedAdd(used, bytes, maximum) {
@@ -188,7 +188,7 @@ function validateProbe(probe, maximumDuration = LIMITS.duration) {
   if (![video.width, video.height].every(value => Number.isSafeInteger(value) && value > 0) || video.disposition && video.disposition.attached_pic)
     fail('首视频流不是可播放画面。', 'MEDIA_VIDEO');
   const start = ratio(video.start_pts, end.timeBase), videoDuration = ratio(video.duration_ts, end.timeBase);
-  if (videoDuration.n <= 0n || maximumDuration !== Infinity && videoDuration.n > BigInt(maximumDuration) * videoDuration.d) fail('当前支持不超过30秒的视频。', 'MEDIA_DURATION');
+  if (videoDuration.n <= 0n || maximumDuration !== Infinity && videoDuration.n > BigInt(maximumDuration) * videoDuration.d) fail('视频时长无效或超过本次处理限制。', 'MEDIA_DURATION');
   let first = start, last = ratioAdd(start, videoDuration);
   const audio = probe.streams.find(value => value.codec_type === 'audio');
   if (audio) {
@@ -206,14 +206,14 @@ function validateProbe(probe, maximumDuration = LIMITS.duration) {
     if (ratioCompare(audioEnd, last) > 0) last = audioEnd;
   }
   const span = ratioSubtract(last, first);
-  if (span.n <= 0n || maximumDuration !== Infinity && span.n > BigInt(maximumDuration) * span.d) fail('音视频实际跨度超过30秒。', 'MEDIA_DURATION');
+  if (span.n <= 0n || maximumDuration !== Infinity && span.n > BigInt(maximumDuration) * span.d) fail('音视频实际跨度无效或超过本次处理限制。', 'MEDIA_DURATION');
   return { videoDuration: ratioSeconds(videoDuration), mediaSpan: ratioSeconds(span), hasAudioStream: !!audio };
 }
 function validateDecodedSpan(info) {
   const first = Math.min(0, info.audio ? info.audio.start : 0);
   const last = Math.max(info.duration, info.frames[info.frames.length - 1].end, info.audio ? info.audio.start + info.audio.duration : 0);
   const span = last - first;
-  if (!Number.isFinite(span) || !(span > 0 && span <= LIMITS.duration)) fail('实际解码音视频跨度超过30秒（含音频尾部）。', 'MEDIA_DURATION');
+  if (!Number.isFinite(span) || !(span > 0 && span <= LIMITS.duration)) fail('实际解码音视频跨度无效（含音频尾部）。', 'MEDIA_DURATION');
   return span;
 }
 const COLOR_VERSION = 'sdr-matrix-rgb-jpeg601-v1';
@@ -349,7 +349,7 @@ async function build(job, tools, tx, source, probe, frameIndex) {
   }
   const errors = guarded(job, (async () => {
     for await (const chunk of child.stderr) {
-      check(job); stderrBytes = boundedAdd(stderrBytes, chunk.length, LIMITS.metadataBytes);
+      check(job); if (job.touch) job.touch(); stderrBytes = boundedAdd(stderrBytes, chunk.length, LIMITS.metadataBytes);
       const text = chunk.toString('utf8'); tail = (tail + text).slice(-8000); pending += text;
       const rows = pending.split(/\r?\n/); pending = rows.pop(); for (const row of rows) line(row);
     }
@@ -358,9 +358,9 @@ async function build(job, tools, tx, source, probe, frameIndex) {
   let packedFrames = null;
   const video = guarded(job, (async () => {
     try { for await (const chunk of child.stdout) {
-      check(job);
+      check(job); if (job.touch) job.touch();
       for (const jpeg of parser.push(chunk)) {
-        const id = files.length; if (!Number.isSafeInteger(id)) fail('源帧编号超出整数精度。', 'MEDIA_PTS');
+        const id = files.length; if (id >= LIMITS.frames) fail('JPEG源帧数量超过120000帧资源上限。', 'MEDIA_BUFFER_LIMIT'); if (!Number.isSafeInteger(id)) fail('源帧编号超出整数精度。', 'MEDIA_PTS');
         const asset = await (tx.writeFrame || tx.writeAsset)(String(id).padStart(6, '0') + '.jpg', jpeg); check(job);
         files.push({ ...asset, id });
         if (id % 20 === 0) notify(job, { stage: 'decode', frames: files.length });
@@ -371,7 +371,7 @@ async function build(job, tools, tx, source, probe, frameIndex) {
     if (!hasAudio) return null;
     const writer = await tx.openAsset('audio.wav'); let total = 0, fmt = null, asset = null;
     try {
-      for await (const chunk of child.stdio[3]) { check(job); await writer.append(chunk); total += chunk.length; }
+      for await (const chunk of child.stdio[3]) { check(job); if (job.touch) job.touch(); await writer.append(chunk); total += chunk.length; }
       check(job); const header = await writer.readPrefix(Math.min(total, LIMITS.wavPrefixBytes)); check(job);
       if (header.length !== Math.min(total, LIMITS.wavPrefixBytes)) fail('PCM 音频头读取不完整。', 'MEDIA_WAV');
       fmt = patchWav(header, total); await writer.patch(0, header.subarray(0, fmt.dataOffset)); check(job);
@@ -417,7 +417,7 @@ function createMedia(options) {
   let active = false;
   let long;
   function longMedia() { return long || (long = require('./long-media.cjs').createLongMedia({ cache, tools, helpers: {
-    hashSource, sourceStamp, sameStamp, regular, snapshotCopy, captureProbe, validateProbe, videoEnd,
+    hashSource, sourceStamp, sameStamp, regular, snapshotCopy, captureProbe, validateProbe, videoEnd, resolveVideoEnd,
     childProcess, guarded, check, settleJob, stopChildren, boundedAdd, JpegParser, patchWav,
     ffmpegArgs, previewColor, COLOR_VERSION, streamRatio, ratioSeconds, ratio, ratioSubtract
   } })); }
@@ -429,7 +429,9 @@ function createMedia(options) {
     active = true;
     const started = process.hrtime.bigint(), job = { signal, onProgress, previewQuality, children: new Set(), operations: new Set(), failure: null, observerError: null };
     const abort = () => stopChildren(job); if (signal) signal.addEventListener('abort', abort, { once: true });
-    const deadline = setTimeout(() => { job.failure = job.failure || Object.assign(new Error('视频身份检查或准备超时，请重试。'), { code: 'MEDIA_TOOL_TIMEOUT' }); stopChildren(job); }, LIMITS.timeoutMs);
+    let deadline;
+    job.touch = () => { clearTimeout(deadline); deadline = setTimeout(() => { job.failure = job.failure || Object.assign(new Error('视频准备长时间无进展，请重试或切换模式。'), { code: 'MEDIA_TOOL_TIMEOUT' }); stopChildren(job); }, LIMITS.timeoutMs); };
+    job.touch();
     let tx = null, returned = null, primaryError = null;
     const phases = {}, elapsed = start => Number(process.hrtime.bigint() - start) / 1e6;
     try {
@@ -441,7 +443,7 @@ function createMedia(options) {
       notify(job, { stage: 'analyze' }); phaseStart = process.hrtime.bigint();
       const analyzed = await captureProbe(job, tools, snapshot.filePath); check(job); phases.probeMs = elapsed(phaseStart);
       const selectedMetadata = validateProbe(analyzed.probe, Infinity);
-      if (settings.playbackBackend === 'proxy' || selectedMetadata.mediaSpan > LIMITS.duration) {
+      if (settings.playbackBackend === 'proxy') {
         const info = await longMedia().prepare(snapshot, fingerprint, analyzed.probe, { ...settings, tx });
         await tx.abort(); return info;
       }

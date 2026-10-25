@@ -171,6 +171,17 @@ async function main() {
     assert.strictEqual(h.cache.release(info), true); assert.strictEqual(h.cache.release(info), false);
     await assert.rejects(() => h.cache.readAsset(info, '000000.jpg'), /原始有效句柄/);
   });
+  await test('whole JPEG over 30 seconds publishes, reopens and retains asset validation',async()=>{
+    const h=harness(),tx=h.cache.begin({sourceSha256:SOURCE_SHA});
+    const asset=await tx.writeAsset('000000.jpg',Buffer.from('frame-data')),value=manifest(asset);
+    value.duration=65;value.frames[value.frames.length-1].end=65;
+    const info=await tx.finish(value,snapshot());tx.close();h.cache.release(info);
+    const cache=h.reboot(),next=cache.begin({sourceSha256:SOURCE_SHA}),reused=await next.readComplete();
+    assert.equal(reused.duration,65);const reopened=await next.finish(reused,snapshot());next.close();
+    assert.equal((await cache.readAsset(reopened,'000000.jpg')).toString(),'frame-data');
+    h.nodes.get(win.join(reopened.cacheDir,'000000.jpg')).data=Buffer.from('bad');
+    await assert.rejects(cache.readAsset(reopened,'000000.jpg'));cache.release(reopened);
+  });
   await test('cloned and foreign handles cannot read or release registered cache', async () => {
     const h = harness(), info = await prepared(h), clone = { ...info };
     await assert.rejects(() => h.cache.readAsset(clone, '000000.jpg'), /原始有效句柄/); assert.strictEqual(h.cache.release(clone), false);

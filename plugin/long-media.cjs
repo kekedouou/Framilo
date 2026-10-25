@@ -30,19 +30,23 @@ function audioInputArgs(file, origin, audio, start) {
 }
 function packetIndex(text, video, helpers) {
   const end = helpers.videoEnd({ streams: [video] });
-  const pts = [];
+  const pts = [], durations = new Map();
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
     const fields = Object.fromEntries(line.split('|').map(part => { const at = part.indexOf('='); return [part.slice(0, at), part.slice(at + 1)]; }));
     if (String(fields.flags).includes('D')) continue;
     if (!/^-?\d+$/.test(fields.pts || '')) fail('视频缺少可靠的逐帧时间戳，不能猜测定位。');
-    pts.push(fields.pts);
+    pts.push(fields.pts); durations.set(fields.pts, fields.duration);
     if (pts.length > LIMITS.frames) fail('帧索引达到本版资源上限，请使用较短素材。', 'LONG_INDEX_LIMIT');
   }
   pts.sort((a, b) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0);
   if (!pts.length || pts.some((p, i) => i && p === pts[i - 1])) fail('当前长视频含重复或缺失时间戳，无法可靠按段定位。');
-  return frameIndex.buildIndex(pts.map((ptsTicks, id) => ({ id, ptsTicks, file: `frame-${id}.jpg`, bytes: 8 * 1024 ** 2 })),
-    { timeBase: end.timeBase, lastFrameEndTicks: end.lastFrameEndTicks });
+  const last = pts[pts.length - 1];
+  const resolved = helpers.resolveVideoEnd(end, { ptsTicks: last }, end.timeBase, durations.get(last));
+  resolved.method = resolved.method.replace('decoded final PTS + explicit decoded frame duration', 'final packet PTS + explicit packet duration');
+  const indexed = frameIndex.buildIndex(pts.map((ptsTicks, id) => ({ id, ptsTicks, file: `frame-${id}.jpg`, bytes: 8 * 1024 ** 2 })),
+    { timeBase: end.timeBase, lastFrameEndTicks: resolved.lastFrameEndTicks, endTimeBase: resolved.timeBase });
+  return { ...indexed, sourceEnd: resolved };
 }
 function groupFrames(frames, duration) {
   const groups = [];
@@ -170,7 +174,7 @@ function createLongMedia({ cache, tools, helpers: h }) {
   async function prepare(snapshot, fingerprint, probe, settings) {
     return jobRun(settings, async job => {
       const video = probe.streams.find(s => s.codec_type === 'video');
-      const packets = await capture(job, ['-v', 'error', '-select_streams', 'v:0', '-show_packets', '-show_entries', 'packet=pts,flags', '-of', 'compact=p=0:nk=0', snapshot.filePath]);
+      const packets = await capture(job, ['-v', 'error', '-select_streams', 'v:0', '-show_packets', '-show_entries', 'packet=pts,duration,flags', '-of', 'compact=p=0:nk=0', snapshot.filePath]);
       const indexed = packetIndex(packets, video, h), proxy = settings.playbackBackend === 'proxy', preview = profile.dimensions(video, settings.previewQuality || '720p');
       const origin = h.ratio(indexed.originPtsTicks, indexed.timeBase);
       let audioStream = probe.streams.find(s => s.codec_type === 'audio');
@@ -185,13 +189,13 @@ function createLongMedia({ cache, tools, helpers: h }) {
       const duration = Math.max(indexed.videoDuration, audio ? audio.start + audio.duration : 0);
       if (proxy) for (const frame of indexed.frames) frame.file = frame.file.replace(/\.jpg$/, '.avc');
       const groups = groupFrames(indexed.frames, duration);
-      const end = h.videoEnd(probe);
+      const end = indexed.sourceEnd;
       const info = { schema: 1, owner: OWNER, recipe: RECIPE, streaming: 'segments-v1', leaseId: crypto.randomBytes(12).toString('hex'),
         source: { ...snapshot, sha256: fingerprint.sha256, codec: video.codec_name, width: video.width, height: video.height, hasAudioStream: !!audio },
         ...(proxy ? { videoEncoding: { format: 'annexb-idr-v1', codec: 'avc1.42c033' } } : {}),
         lastFrameEndTicks: end.lastFrameEndTicks, endTimeBase: end.timeBase,
         preview, width: preview.width, height: preview.height, duration, frames: indexed.frames, audio,
-        segments: groups.map(group => ({ ...group })), metrics: { indexedPackets: indexed.frames.length, fullVideoRendered: false } };
+        segments: groups.map(group => ({ ...group })), metrics: { indexedPackets: indexed.frames.length, fullVideoRendered: false, lastFrameEnd: end.method } };
       if (Buffer.byteLength(JSON.stringify(info)) > LIMITS.indexBytes) fail('源帧索引超过通信资源上限。', 'LONG_INDEX_LIMIT');
       frameIndex.validateIndex(info);
       const session = { snapshot, fingerprint, probe, video, origin: h.ratioSeconds(origin), groups, info,

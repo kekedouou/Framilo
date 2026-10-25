@@ -30,6 +30,10 @@ function harness() {
   ui.bindSession(session); ui.update(state);
   return { ui, el: id => doc.getElementById(id), win, calls, state, doc };
 }
+test('settings remain enabled throughout initial or replacement media preparation',()=>{
+ const h=harness();h.ui.update({...h.state,state:'preparing',playback:null,memorySettings:{ramMiB:1024,optionsMiB:[512,1024,2048]}});
+ assert.equal(h.el('memoryApply').disabled,false);assert.equal(h.el('qualitySelect').disabled,false);h.ui.destroy();
+});
 test('Bracket shortcuts step globally, repeat safely, and protect text, composing and modifier input', () => {
   const h = harness();
   for (const [values, delta] of [[{ code: 'BracketLeft', key: '[' }, -1], [{ key: '】' }, 1], [{ key: '【', repeat: true }, -1], [{ code: 'BracketRight', key: ']' }, 1]]) {

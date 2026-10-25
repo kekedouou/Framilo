@@ -221,10 +221,10 @@ async function main() {
     assert.strictEqual(pure.videoEnd(info).lastFrameEndTicks, '90071992547412930');
     delete info.streams[0].duration_ts; info.streams[0].r_frame_rate = '60/1'; assert.throws(() => pure.videoEnd(info));
   });
-  await test('T1 product duration checks full audio/video span and exact 30s boundary', () => {
+  await test('JPEG accepts finite long duration while explicit caller limits remain enforceable', () => {
     const value = probe(); value.streams[0].duration_ts = '30000'; assert.strictEqual(pure.validateProbe(value).mediaSpan, 30);
-    value.streams[0].duration_ts = '30001'; assert.throws(() => pure.validateProbe(value), /30/);
-    const audio = probe(true); audio.streams[1].start_pts = '-1440000'; assert.throws(() => pure.validateProbe(audio), /30/);
+    value.streams[0].duration_ts = '30001'; assert.equal(pure.validateProbe(value).mediaSpan,30.001); assert.throws(() => pure.validateProbe(value,30), /限制/);
+    const audio = probe(true); audio.streams[1].start_pts = '-1440000'; assert(pure.validateProbe(audio).mediaSpan>30);
   });
   await test('decoded last-frame duration repairs a declared end before the final picture without losing frames', async () => {
     const p = probe(); p.streams[0].time_base = '1/90000'; p.streams[0].start_pts = '0'; p.streams[0].duration_ts = '872910';
@@ -244,7 +244,22 @@ async function main() {
     assert.strictEqual(info.metrics.lastFrameEnd, 'decoded final PTS + explicit decoded frame duration (stream boundary inconsistent)');
     const over = probe(); over.streams[0].start_pts = '0'; over.streams[0].duration_ts = '30000';
     const beyond = harness({ probe: over, stamps: ['0', '30000'], frameDuration: '17' });
-    await assert.rejects(beyond.media.prepare(beyond.snapshot), /30/); assert(!beyond.events.includes('finish')); assert(beyond.state.aborted);
+    const longInfo=await beyond.media.prepare(beyond.snapshot,{playbackBackend:'jpeg'}); assert.equal(longInfo.duration,30.017); assert(beyond.events.includes('finish')); assert(!longInfo.streaming);
+    assert.equal(beyond.processes.filter(p=>p.kind==='decode').length,1);
+    const reuse=harness({probe:over,reuse:longInfo}); const reopened=await reuse.media.prepare(reuse.snapshot,{playbackBackend:'jpeg'}); assert.equal(reopened.duration,30.017); assert.equal(reuse.processes.filter(p=>p.kind==='decode').length,0);
+  });
+  await test('proxy packet boundary handles reordered final PTS and round trips the repaired end',()=>{
+    const {packetIndex}=require('../plugin/long-media.cjs'),wire=require('../plugin/media-wire.cjs');
+    const video={...probe().streams[0],start_pts:'0',duration_ts:'2000'};
+    const indexed=packetIndex('pts=2000|duration=17|flags=__\npts=0|duration=1000|flags=K_\npts=1000|duration=1000|flags=__',video,pure);
+    assert.equal(indexed.frames.length,3);assert.equal(indexed.frames[2].end,2.017);
+    assert.equal(indexed.sourceEnd.lastFrameEndTicks,'2017');
+    const info={streaming:'segments-v1',leaseId:'test',source:{sha256:'a'.repeat(64)},width:16,height:16,duration:indexed.videoDuration,
+      frames:indexed.frames,lastFrameEndTicks:indexed.sourceEnd.lastFrameEndTicks,endTimeBase:indexed.sourceEnd.timeBase};
+    assert.equal(wire.unpackInfo(wire.packInfo(JSON.parse(JSON.stringify(info)))).frames[2].end,2.017);
+    assert.throws(()=>packetIndex('pts=2000|duration=0|flags=__',video,pure),/末帧/);
+    assert.throws(()=>packetIndex('pts=2000|flags=__',video,pure),/末帧/);
+    assert.throws(()=>packetIndex('pts=0|flags=K_\npts=0|flags=__',video,pure),/重复/);
   });
   await test('T1 audio fallback cannot guess an unknown nonzero time origin', () => {
     const value = probe(true); delete value.streams[1].duration_ts; value.streams[1].duration = 'N/A';

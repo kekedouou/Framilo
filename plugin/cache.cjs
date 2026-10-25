@@ -21,7 +21,7 @@ const OWNER = 'eagle-video-analysis-plugin-v1';
 const RECIPE = 'jpeg-q3-720p-pcm-f32-48000-v1';
 const MIB = 1024 ** 2;
 const LIMITS = Object.freeze({ cacheBytes: 5 * 1024 * MIB, metadataBytes: 8 * MIB,
-  assetBytes: 256 * MIB, duration: 30, prefixBytes: 4096 });
+  assetBytes: 256 * MIB, duration: Infinity, prefixBytes: 4096 });
 const MANIFEST_MEMO_LIMITS = Object.freeze({ entries: 4096, bytes: 32 * MIB });
 const manifestMemoDiagnostics = new WeakMap();
 const recipeId = crypto.createHash('sha256').update(RECIPE).digest('hex').slice(0, 12);
@@ -125,7 +125,7 @@ function contentSource(source, expectedSha) {
 }
 function manifestAssets(info, expectedSha) {
   if (!info || info.schema !== 1 || info.owner !== OWNER || info.recipe !== RECIPE ||
-    !(info.duration > 0 && info.duration <= LIMITS.duration) || !Array.isArray(info.frames))
+    !(Number.isFinite(info.duration) && info.duration > 0 && info.duration <= LIMITS.duration) || !Array.isArray(info.frames))
     fail('缓存清单格式或处理版本不符。');
   contentSource(info.source, expectedSha);
   if (info.preview) {
@@ -136,7 +136,7 @@ function manifestAssets(info, expectedSha) {
   const packed = framePack.validate(info, LIMITS.cacheBytes);
   if (packed) for (const item of info.frames) { safeName(item.file); if (item.bytes > LIMITS.assetBytes) fail('图片包单帧超过安全读取上限。'); }
   const start = Math.min(0, info.audio ? info.audio.start : 0);
-  if (info.duration - start > LIMITS.duration) fail('解码后媒体跨度超过30秒。');
+  if (info.duration - start > LIMITS.duration) fail('解码后媒体跨度超过处理限制。');
   const map = new Map();
   for (const item of assets(info)) {
     safeName(item.file);

@@ -277,8 +277,8 @@ function createSession(options) {
       rateStep === undefined ? previousInteraction.rateStep : rateStep,
       drawingFadeSeconds === undefined ? previousInteraction.drawingFadeSeconds : drawingFadeSeconds, previousInteraction.drawingToolbar);
     preferences.preview(ramMiB);
-    if (closed || state === 'preparing' || comments.draft || drawings.snapshot().draft) throw issue('MEMORY_SETTINGS_BUSY', '请等待准备完成，并先保存或取消标注。');
-    const token = epoch, retained = source;
+    if (closed || comments.draft || drawings.snapshot().draft) throw issue('MEMORY_SETTINGS_BUSY', '请先保存或取消标注。');
+    const token = epoch, retained = source, wasPreparing = state === 'preparing';
     const backendChanged = playbackBackend !== undefined && (typeof preferences.backend !== 'function' || preferences.backend() !== playbackBackend);
     const onlyControls = !backendChanged && (forwardPredecode !== undefined || wheelFrames !== undefined || showCacheStrip !== undefined || rateStep !== undefined || drawingFadeSeconds !== undefined) && preferences.snapshot().ramMiB === ramMiB &&
       (previewQuality === undefined || typeof preferences.quality === 'function' && previewQuality === preferences.quality());
@@ -300,7 +300,7 @@ function createSession(options) {
     memoryResume = retained ? { id: retained.id, filePath: retained.filePath, time, frameId, transportState } : null;
     notify();
     if (closed || token !== epoch) return { status: 'superseded' };
-    return retained ? startLoad({ trigger, restoreTime: time, restoreFrameId: frameId, transportState }, retained) : { status: 'applied' };
+    return retained || wasPreparing ? startLoad({ trigger, restoreTime: time, restoreFrameId: frameId, transportState }, retained) : { status: 'applied' };
   }
   function setMemoryMiB(ramMiB) { return setPlaybackSettings({ ramMiB }, 'memory-settings'); }
   function setDrawingToolbar(visible) {

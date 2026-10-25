@@ -96,3 +96,22 @@ cache-read-client只对该明确构造错误创建兼容消息适配，继续执
 文档影响：同步产品、架构模块表、开发计划、路线、验证、入口及进度；E36计划/报告追加失败与修复边界，CHANGELOG登记。历史E35及更早冻结实验无改动，因为本次没有重新验证其媒体/发行包。
 
 最终默认检查renderer-direct-default-unsandboxed.log退出0，114文档/784链接及全部默认检查通过；没有运行媒体关或真实Eagle窗口。check-handoff --base HEAD与git diff --check通过。三个原有暂存Git界面探针不属于本轮，不提交或删除；真实宿主恢复仍为待验。
+
+
+## 末帧边界与JPEG整片策略（2026-10-25）
+用户在9c878a5后已能显示应用内错误，报Explicit last-frame end must be later than the final source PTS；这不同于前次灰窗，仍不代表完整播放通过。代码对照确认：旧media.build已有resolveVideoEnd修复声明结束早于末帧，而long-media.packetIndex遗漏该分支。代理现查询packet duration，在声明冲突时只采用明确正的末packet时长；无时长仍报可理解的错误，不补FPS/epsilon、不删末帧。修复结束值随prepare→segment→media-wire传递，新增乱序PTS/同边界/无时长拒绝及往返模型。
+
+JPEG按用户新授权恢复所有时长单次整片JPEG/PCM准备后交付；media路由不再按30秒切换到long-media，cache及decoded span解除30秒门槛。recipe/文件格式、源SHA/整数PTS与旧缓存读写保持；5GiB磁盘、256MiB单资产、8MiB元数据、6MiB控制及120000帧限制仍存在，不能宣称任意长度。超大音轨/索引/图片包可能触发这些明确保护。生成期间有输出延续180秒无进展超时，取消仍等待子进程与写入收齐。
+
+Session允许preparing中应用设置，先取消并串行释放旧任务，保持原素材身份；即使原准备晚完成也只释放，不接管新画面。UI准备中启用设置/模式与应用，应用序号隔离旧结果，支持再次切换。画质、动效、缓存安全校验与数据存储未弱化。
+
+验证：
+- t1-media 33模型、t1-cache 38、t1-session 46及t1-ui在Node24和Eagle纯Node16通过；另proxy-preferences增加准备中重复切换/旧结果不改当前选择。首次全量默认检查发现旧测试仍要求准备中禁用模式，按最新用户决定更新并保留失败jpeg-final-default.log。
+- 新隔离实测6179f353a8b2b598（预算第1/2轮）在Eagle纯Node16，用真实FFmpeg生成45秒320×180/6fps有声合成源；正式media/cache单次准备270帧、duration45.013333333333335，准备约5661ms。仅低规格技术样本，不作真实复杂视频速度承诺。
+- 首/中/尾帧读取逐字节SHA校验，释放后整片复用成功；decode阶段取消→partial收回→再次整片完成→释放占用成功。使用真实本地cache读，未声称真实guard/renderer控制链验收；兼容队列另由12项模型验证。
+- 原始记录verification-runs/e36-jpeg-restore/run-6179f353a8b2b598.json含源码/脚本指纹、原始检查、时长和清理清单。已清理11个本轮文件，共23937684字节，scratch不存在，记录保留；未动实际素材、用户缓存或旧实验预算。
+- 实测后仅为末帧来源补充metrics描述、UI closing禁用及新增测试，无JPEG生成路径改变；实际Eagle窗口播放、复杂长片性能、音画与用户体验仍未验收。
+
+文档影响：产品决定、架构读取/末帧/整片行为、路线/开发/验证、项目入口及进度同步；E35及之前冻结记录不改验收事实。三个既有Git入口探针不属于本轮，保持暂存且不提交，不声称工作区全干净。
+
+收尾：jpeg-final-default-2.log默认全检查退出0（114文档/784链接），proxy-preferences新增9项在Node24/纯Node16通过。显式实测脚本随后只加强失败时保留scratch，不改已通过媒体逻辑；不为此重跑媒体。check-handoff --base HEAD及差异检查通过；提交后预期仅余三个原有探针，需据实际状态登记。

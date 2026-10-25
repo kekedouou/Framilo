@@ -159,10 +159,10 @@
     }
     on(win, 'focus', refreshCommentsOnReturn);
     if (typeof doc.addEventListener === 'function') on(doc, 'visibilitychange', refreshCommentsOnReturn);
-    let memoryBusy = false, toolbarBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null, shownPredecode = null, shownWheel = null, shownStrip = null, shownRateStep = null, shownFade = null, shownBackend = null;
+    let memoryApplySerial = 0, memoryBusy = false, toolbarBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null, shownPredecode = null, shownWheel = null, shownStrip = null, shownRateStep = null, shownFade = null, shownBackend = null;
     function updateMemorySettings() {
       const memory = state.memorySettings;
-      const disabled = !session || !memory || memoryBusy || cleaning || transportBusy || !!noteRequest || !!exportRequest || state.state === 'preparing' || state.state === 'closed' || !!state.comments?.draft || !!state.drawings?.draft || selection.snapshot().editing;
+      const disabled = !session || !memory || (memoryBusy && state.state !== 'preparing') || cleaning || transportBusy || !!noteRequest || !!exportRequest || ['closing', 'closed'].includes(state.state) || !!state.comments?.draft || !!state.drawings?.draft || selection.snapshot().editing;
       set(el.memoryApply, 'disabled', disabled); set(el.memoryMiB, 'disabled', disabled); set(el.qualitySelect, 'disabled', disabled);
       set(el.forwardPredecode, 'disabled', disabled);
       if (backendControl) {
@@ -212,17 +212,17 @@
     });
     on(el.memoryApply, 'click', async () => {
       if (el.memoryApply.disabled || !session || typeof session.setPlaybackSettings !== 'function' && typeof session.setMemoryMiB !== 'function') return;
-      const active = session, ramMiB = Number(el.memoryMiB.value);
+      const active = session, applySerial = ++memoryApplySerial, ramMiB = Number(el.memoryMiB.value);
       memoryBusy = true; set(el.memoryStatus, 'textContent', '正在应用，完成后保持暂停…'); updateMemorySettings();
       try { const result = typeof active.setPlaybackSettings === 'function'
           ? await active.setPlaybackSettings({ ramMiB, previewQuality: el.qualitySelect.value, forwardPredecode: el.forwardPredecode.checked,
             wheelFrames: Number(el.wheelFrames.value), showCacheStrip: !!el.showCacheStrip.checked, rateStep: Number(el.rateStep.value), drawingFadeSeconds: Number(el.drawingFadeSeconds.value),
             ...(backendControl ? { playbackBackend: el.playbackBackend.value } : {}) }) : await active.setMemoryMiB(ramMiB);
-        if (session !== active) return;
+        if (session !== active || applySerial !== memoryApplySerial) return;
         set(el.memoryStatus, 'textContent', result.status === 'error' ? '设置已保存，视频准备失败；可调整画质或内存后重试。' :
           result.status === 'superseded' ? '操作已被素材切换或关闭替代。' : '设置已保存。');
-      } catch (failure) { if (session === active) set(el.memoryStatus, 'textContent', String(failure.message || failure)); }
-      finally { memoryBusy = false; if (session === active) { shownMemory = null; shownQuality = null; shownPredecode = null; shownWheel = null; shownStrip = null; shownRateStep = null; shownFade = null; shownBackend = null; updateMemorySettings(); } }
+      } catch (failure) { if (session === active && applySerial === memoryApplySerial) set(el.memoryStatus, 'textContent', String(failure.message || failure)); }
+      finally { if (applySerial === memoryApplySerial) memoryBusy = false; if (session === active && applySerial === memoryApplySerial) { shownMemory = null; shownQuality = null; shownPredecode = null; shownWheel = null; shownStrip = null; shownRateStep = null; shownFade = null; shownBackend = null; updateMemorySettings(); } }
     });
     on(el.cacheClearOther, 'click', async () => {
       if (el.cacheClearOther.disabled || !session || typeof session.clearOtherCaches !== 'function') return;

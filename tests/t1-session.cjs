@@ -327,6 +327,17 @@ async function main() {
     assert.equal((await h.session.setPlaybackSettings({ramMiB:1024,previewQuality:'1080p'})).status,'ready');
     assert.equal(h.session.snapshot().playback.frameId,1);assert.equal(h.session.snapshot().playback.time,0);await h.session.close();
   });
+  await test('preparation mode switching aborts old work and ignores its late result',async()=>{
+    let backend='jpeg';const gate=deferred();
+    const prefs={backend:()=>backend,quality:()=> '720p',snapshot:()=>({ramMiB:1024}),preview(){},save(_m,_q,_p,_i,b){backend=b;}};
+    const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>{if(o.playbackBackend==='jpeg')await gate.promise;return {...m.makeInfo(v),preview:{quality:o.previewQuality}};}});
+    const first=h.session.loadSelected();await flush();assert.equal(h.session.snapshot().state,'preparing');
+    const next=h.session.setPlaybackSettings({ramMiB:1024,previewQuality:'720p',playbackBackend:'proxy'});await flush();
+    assert(h.prepared[0].options.signal.aborted);assert.equal(h.prepared.length,1,'new task must wait for old cleanup');
+    gate.resolve();assert.equal((await first).status,'superseded');assert.equal((await next).status,'ready');
+    assert.equal(h.prepared[1].options.playbackBackend,'proxy');assert.equal(h.players.length,1);assert.equal(h.calls,1);
+    assert.equal(h.session.snapshot().state,'paused');await h.session.close();
+  });
   await test('E03 can recover initial preparation failure by applying settings without inventing a prior frame',async()=>{
     let q='720p';const prefs={quality:()=>q,snapshot:()=>({ramMiB:1024}),preview(){},save(_v,n){q=n;}};
     const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>{if(m.prepared.length===1)throw Error('initial failure');return {...m.makeInfo(v),preview:{quality:o.previewQuality}};}});

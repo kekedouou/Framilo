@@ -84,7 +84,18 @@ async function main() {
     h.el('playbackBackend').value = 'proxy'; await h.el('playbackBackend').fire('change'); h.ui.update({ ...state, playback: { time: 3 } });
     assert.equal(h.el('playbackBackend').value, 'proxy'); assert.equal(applied.length, 0);
     await h.el('memoryApply').fire('click'); assert.equal(applied.length, 1); assert.equal(applied[0].playbackBackend, 'proxy');
-    h.ui.update({ ...state, state: 'preparing' }); assert.equal(h.el('playbackBackend').disabled, true); h.ui.destroy();
+    h.ui.update({ ...state, state: 'preparing' }); assert.equal(h.el('playbackBackend').disabled, false); h.ui.destroy();
+  });
+  await test('mode can change again during preparation and stale apply cannot overwrite latest UI',async()=>{
+    const h=uiModel(true),gates=[];
+    const state={epoch:1,state:'preparing',memorySettings:{ramMiB:1024,ramBytes:1024**3},previewQuality:'720p',playbackBackend:'jpeg'};
+    h.ui.bindSession({setPlaybackSettings(){return new Promise(resolve=>gates.push(resolve));}});h.ui.update(state);
+    h.el('playbackBackend').value='proxy';const first=h.el('memoryApply').fire('click');
+    assert.equal(h.el('memoryApply').disabled,false);
+    h.el('playbackBackend').value='jpeg';const second=h.el('memoryApply').fire('click');assert.equal(gates.length,2);
+    gates[1]({status:'applied'});await second;const message=h.el('memoryStatus').textContent;
+    h.el('playbackBackend').value='proxy';gates[0]({status:'error'});await first;
+    assert.equal(h.el('memoryStatus').textContent,message);assert.equal(h.el('playbackBackend').value,'proxy');h.ui.destroy();
   });
   await test('older DOM without backend control still applies its existing settings', async () => {
     const h = uiModel(false); let applied;
