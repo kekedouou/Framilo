@@ -1,10 +1,18 @@
 # 项目说明
 
-见[E-35计划](experiments/E35/plan.md)。
+见[E-36计划](experiments/E36/plan.md)及[报告](experiments/E36/report.md)。
 
-当前：E-35缓存长会话自动关已通过：Node24/Node16各18项真实Job中断恢复，30秒/5分钟/30分钟有声对照及10分钟连续播放。正式plugin保持原入口、JPEG可切换；必要的真实Eagle集中体验及最终交付未验，详见[E35报告](experiments/E35/report.md)。E34两次30分钟后台失败保留为历史。
+当前：E-36已完成意图光标、独立低清临时预览、准确标注缩略图、当前位置/标注优先和有界RAM分层缓存。合成媒体基础关、播放中缩略图定点复验及最终默认模型检查通过；真实Eagle集中体验仍待进行。原失败和E35历史结果保留，冻结Beta未替换。
 
-## E-35 当前实现与验证边界
+## E-36 当前模块与资源边界
+
+cache-read-client.cjs/cache-read-worker.cjs以Node内置线程执行接入、身份/租约核验及读取，最多2并发/64请求，ArrayBuffer只走线程通道；quick-preview.js使用原视频原生解码，临时显示最高480×270、小图240×135，最多64项且≤min(8MiB, RAM/64)。record-previews.js独立于主播放槽，最多96项且≤min(16MiB, RAM/32)，读取与解码先向同一全局Budget预留；long-media的准确单帧JPEG不含PCM，沿普通缓存格式、原PTS/原SHA验证与同一batch事务，永久标注不改。
+
+Player压缩热点池≤RAM/8、最多8192项；预留固定及在途资源后，方向近邻使用可用解码容量的75%、最多4096帧，只预读已核验就绪段。后台最新位置/方向→记录→剩余顺序；记录优先级每条位图≤20KiB、静帧最多32租约。原5GiB/128MiB后台余量、完整源SHA和整数PTS索引核验保持；原生video内部/GPU及浏览器/进程开销不被RAM账本穷尽。
+
+本轮四次主关已封存：前两次发现VFR临时图时序问题，第三次基础关通过，第四次新增真实记录并行发现队列延迟。定点f1c854d93642682d在实际guard/只读线程及独立Chrome通过：三已准备记录583.4ms可用、播放5.2秒零缓冲，准确SSD定位P95为21.1ms、RAM58.53Hz。基础关240次输入/1.5秒图像延迟的光标P95为10.5ms，CFR/VFR临时图120.9/88.2ms且像素条码正确。完整条件、原始数组、失败及逐文件清理回执见E36报告；Eagle真实操作和最终验收另列。
+
+## E-35 实现基础与历史验证边界
 
 E35复用根writer与分段子事务，cache.cjs提供openBatch/beginSegment/snapshot/close及双槽目标记录；long-media持有同源能力，media转发proxyBudget/closeProxyBatch，worker仍单队列。cache冻结aa8ad2ea、long-media冻结b58d71a2；音轨起点省略seek以保留AAC初态，含音轨段key升级audio-preroll-v2，无音轨key、原SHA与永久数据格式不变。
 
@@ -45,10 +53,10 @@ E-33先接入有界JPEG/PCM分段、源帧索引和共享时钟；用户后续�
 | 长期权限和工程规则 | 根AGENTS.md；不堆进度 |
 | 产品、架构 | docs/product.md的R/P及批准补充；docs/architecture.md的C/A-01～A-08 |
 | 愿景与未来候选 | docs/roadmap.md；EV决定、近期/中期/远期及调整理由，不是已实现功能 |
-| 任务、清理规则 | docs/development-plan.md；E-35自动关与宿主待验交接、历史T/E任务及F-01～F-07 |
+| 任务、清理规则 | docs/development-plan.md；E-36实施/复验、E-35自动关与宿主待验交接、历史T/E任务及F-01～F-07 |
 | 验证协议 | docs/verification.md；协议、真实运行和人工反馈分开 |
 | 当前状态 | docs/progress.md；先读顶部当前交接，后段为历史 |
-| 专项结果 | docs/experiments/E35当前长会话/中断恢复/有声规模与边界；E34及此前阶段保留原数据、失败和测量局限 |
+| 专项结果 | docs/experiments/E36当前跟手/临时预览/记录/只读线程及失败复验；E35长会话自动关与E34等历史原数据/限制保留 |
 | 发布交接 | docs/releases/v0.1.0-beta.2.md；当前已发布版本清单/风险/授权入口，开发版另见进度 |
 | 旧发行与过程 | docs/releases/旧版本、docs/progress/、demos/standalone-preview/；历史说明不冒充下载或新授权 |
 | 私人原始证据/配置 | verification-runs/和原型evidence/等Git忽略路径；不公开、不覆盖 |

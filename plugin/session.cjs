@@ -51,7 +51,7 @@ function createSession(options) {
       error: error ? { ...error } : null, progress: progress ? { ...progress } : null,
       loadMetrics: loadMetrics ? { ...loadMetrics } : null,
       comments: observedComments(), drawings: drawings.snapshot(), exportState, exportFolders,
-      preview: owner && owner.ready && owner.epoch === epoch && owner.info.preview ? owner.info.preview : null,
+      preview: owner && owner.epoch === epoch && owner.info?.preview ? { ...owner.info.preview, ...owner.previews?.quick?.snapshot() } : null,
       playbackBackend: options.memoryPreferences && typeof options.memoryPreferences.backend === 'function' ? options.memoryPreferences.backend() : 'jpeg',
       proxyPreparation: owner && owner.info && cache.backgroundStatus ? cache.backgroundStatus(owner.info) : null,
       previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : '720p',
@@ -78,7 +78,15 @@ function createSession(options) {
     if (!owned || !owned.player || owned.dispose) return;
     // Player.dispose invalidates its own draw/audio tokens synchronously, then
     // waits for real decoders. A cache handle stays leased throughout that wait.
-    try { owned.dispose = Promise.resolve(owned.player.dispose()); }
+    try { owned.dispose = (async () => {
+      const pending = [];
+      try { pending.push(Promise.resolve(owned.player.dispose())); } catch (failure) { pending.push(Promise.reject(failure)); }
+      for (const service of Object.values(owned.previews || {})) if (service?.close) {
+        try { pending.push(Promise.resolve(service.close())); } catch (failure) { pending.push(Promise.reject(failure)); }
+      }
+      const results = await Promise.allSettled(pending);
+      const failed = results.find(result => result.status === 'rejected'); if (failed) throw failed.reason;
+    })(); }
     catch (failure) { owned.dispose = Promise.reject(failure); }
     owned.dispose.catch(() => {});
   }
@@ -146,12 +154,14 @@ function createSession(options) {
         setMediaTarget: time => { if (cache.target) cache.target(info, time); },
         prefetchMedia: (time, loop) => { if (cache.prefetch) cache.prefetch(info, time, loop); },
         cancelMediaReads: () => { if (cache.cancelReads) cache.cancelReads(info); },
+        canPrefetchFrame: ordinal => !!cache.isFrameReady?.(info, ordinal),
         createSegmentAudio: info.streaming && info.audio ? settings => require('./segment-audio.cjs').createSegmentAudio({ ...settings,
           read: ordinal => cache.readAudioSegment(info, ordinal) }) : undefined,
         readFrameBatch: typeof cache.readFrameBatch === 'function' ? (_copiedInfo, files) => cache.readFrameBatch(info, files) : undefined,
         onChange: value => {
           if (!current(request) || owner !== owned) return;
           playback = { ...value };
+          if (!value.pendingTargets && ['paused', 'playing'].includes(value.state) && owned.previews?.quick?.snapshot().active) owned.previews.quick.clear();
           if (owned.ready) {
             state = value.state;
             if (state === 'error') error = { code: value.lastErrorCode || 'PLAYBACK_FAILED', message: value.lastIssue || '视频播放或定位失败，请重试。' };
@@ -162,8 +172,20 @@ function createSession(options) {
       if (!player || ['load', 'snapshot', 'dispose', 'play', 'pause', 'seek', 'step'].some(name => typeof player[name] !== 'function'))
         throw issue('PLAYER_INTERFACE_INVALID', '播放器接口不完整。');
       owned.player = player;
+      if (typeof options.createPreviewServices === 'function') {
+        owned.previews = {};
+        Object.assign(owned.previews, options.createPreviewServices({ info, player,
+          register: (name, service) => { if (['quick', 'records'].includes(name)) owned.previews[name] = service; },
+          isCurrent: () => current(request) && owner === owned,
+          onChange: () => { if (current(request) && owner === owned) notify(); },
+          read: (ordinal, settings) => info.streaming && cache.readRecordFrame ? cache.readRecordFrame(info, ordinal, settings)
+            : cache.readAsset(info, info.frames[ordinal].file).then(bytes => ({ bytes, width: info.width, height: info.height, ordinal })),
+          busy: () => { const value = owned.player.snapshot(); return value.state === 'seeking' && !!value.pendingTargets; } }));
+      }
       if (!current(request)) { await releaseOwner(owned); return { status: 'superseded' }; }
-      const playerStartedAt = now(); await player.load(info); const playerLoadedAt = now();
+      const playerStartedAt = now();
+      const loading = player.load(info); owned.previews?.quick?.request(0, { initial: true });
+      await loading; const playerLoadedAt = now();
       if (!current(request)) { await releaseOwner(owned); return { status: 'superseded' }; }
       let ready = player.snapshot();
       if (ready.state !== 'paused' || ready.frameId !== info.frames[0].id || ready.frameOrdinal !== 0)
@@ -298,7 +320,13 @@ function createSession(options) {
     if (comments.draft) return Promise.reject(issue('COMMENT_FRAME_FIXED', '标注时间已固定，请先保存或取消标注。'));
     if (closed || !owned || !owned.ready || owned.epoch !== token || !allowed.includes(state))
       return Promise.reject(issue('SESSION_NOT_READY', '视频尚未就绪或正在定位，请等待当前操作完成。'));
+    if (method !== 'seek') owned.previews?.quick?.cancel();
     let result; try { result = owned.player[method](...args); } catch (failure) { result = Promise.reject(failure); }
+    if (method === 'seek' && owned.previews?.quick) {
+      const settings = args[1] || {}, ordinal = drawingModel.frameIndex(owned.info.frames, args[0], owned.info.duration);
+      if (!settings.final && ['rapid', 'drag'].includes(settings.kind) && !cache.isFrameReady?.(owned.info, ordinal)) owned.previews.quick.request(args[0]);
+      else owned.previews.quick.cancel();
+    }
     return Promise.resolve(result).then(value => token === epoch && !closed ? value : { status: 'superseded' }, failure => {
       if (token !== epoch || closed) return { status: 'superseded' };
       state = 'error'; error = describe(failure, 'PLAYBACK_FAILED'); notify(); throw failure;
@@ -763,7 +791,18 @@ function createSession(options) {
     setDrawingNote: drawings.noteText,
     timelineFrames: () => owner?.ready ? owner.info.frames : null,
     annotationFrame: time => owner?.ready ? drawingModel.frameIndex(owner.info.frames,time,owner.info.duration) : null,
-    renderThumbnail: (time, canvas) => owner?.ready && owner.player.paintThumbnail ? owner.player.paintThumbnail(time,canvas) : Promise.resolve(null),
+    renderThumbnail: (time, canvas) => {
+      if (!owner?.ready) return Promise.resolve(null);
+      const ordinal = drawingModel.frameIndex(owner.info.frames, time, owner.info.duration);
+      return owner.previews?.records ? owner.previews.records.paint(ordinal, canvas) : owner.player.paintThumbnail ? owner.player.paintThumbnail(time, canvas) : Promise.resolve(null);
+    },
+    prioritizeRecords: value => {
+      if (!owner?.ready || !value) return;
+      const ordinals = rows => [...new Set((rows || []).filter(time => Number.isFinite(time) && time >= 0 && time <= owner.info.duration)
+        .map(time => drawingModel.frameIndex(owner.info.frames, time, owner.info.duration)))];
+      const order = { all: ordinals(value.all), visible: ordinals(value.visible) };
+      owner.previews?.records?.prioritize(order); cache.prioritizeRecords?.(owner.info, order);
+    },
     saveDrawing, cancelDrawing: drawings.discard, setDrawingsVisible: drawings.setVisible, setDrawingStyles: drawings.setStyles,
     hasDrawingDraft: () => !!drawings.snapshot().draft,
     play: () => control('play', [], ['paused']), pause: () => control('pause', [], ['paused', 'playing', 'seeking']),

@@ -9,6 +9,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const RAM_LIMIT = 1024 * 1024 * 1024;
+  const PROXY_COMPRESSED_FRAMES = 8192;
   const RATE_STEPS = Object.freeze([.1, .2, .25, .5]);
   const RATE_PRESETS = Object.freeze([.1, .25, .5, 1, 1.5, 2, 3, 4]);
   const validRate = rate => Number.isFinite(rate) && rate >= .1 && rate <= 4;
@@ -24,6 +25,32 @@
       else order.push(right++);
     }
     return { center, capacity: count, start: left + 1, end: right - 1, order };
+  }
+  function directionalWindow(frames, center, capacity, direction = 1, first = 0, last = frames.length - 1, looping = false) {
+    const total = last - first + 1, count = Math.max(1, Math.min(total, capacity)), order = [center], seen = new Set(order);
+    const span = frames[last].end - frames[first].time;
+    let ahead = 1, behind = 1;
+    const candidate = (step, sign) => {
+      if (step >= total) return null;
+      const raw = center + sign * step;
+      if (!looping && (raw < first || raw > last)) return null;
+      return first + ((raw - first) % total + total) % total;
+    };
+    const distance = (ordinal, sign) => {
+      let delta = (frames[ordinal].time - frames[center].time) * sign;
+      if (looping && delta < 0) delta += span;
+      return delta;
+    };
+    while (order.length < count) {
+      let a = candidate(ahead, direction), b = candidate(behind, -direction);
+      while (a !== null && seen.has(a)) a = candidate(++ahead, direction);
+      while (b !== null && seen.has(b)) b = candidate(++behind, -direction);
+      if (a === null && b === null) break;
+      // Source-time distance matters for VFR; favour the current direction 3:1.
+      const next = b === null || a !== null && distance(a, direction) / 3 <= distance(b, -direction) ? (ahead++, a) : (behind++, b);
+      seen.add(next); order.push(next);
+    }
+    return { center, capacity: order.length, direction, start: Math.min(...order), end: Math.max(...order), order };
   }
   function decodedRanges(frames, ordinals, duration = 0) {
     const ranges = [];
@@ -98,6 +125,7 @@
       this.ctx = this.canvas.getContext('2d', { alpha: false, colorSpace: 'srgb' }); if (!this.ctx) throw new Error('无法取得2D画布。');
       this.readAsset = options.readAsset; this.readFrameBatch = options.readFrameBatch;
       this.setMediaTarget = options.setMediaTarget; this.createSegmentAudio = options.createSegmentAudio; this.segmentAudio = null;
+      this.canPrefetchFrame = typeof options.canPrefetchFrame === 'function' ? options.canPrefetchFrame : null;
       this.createFrameDecoder = options.createFrameDecoder; this.frameDecoder = null;
       this.cancelMediaReads = options.cancelMediaReads; this.prefetchMedia = options.prefetchMedia;
       this.emit = options.emit || (() => {}); this.onChange = options.onChange || (() => {});
@@ -118,6 +146,7 @@
       this.observeCanvas = !!options.observeCanvas;
       this.compressed = new Map(); this.compressedBytes = 0; this.compressedCapacity = 0;
       this.compressedStats = { warmedBytes: 0, warmedFrames: 0, hits: 0, misses: 0, warmMs: 0, admittedFrames: 0, evictions: 0 };
+      this.proxyFrameBound = 0; this.proxySegments = new Set(); this.proxyWindowKey = null; this.proxyCompressedPlan = null; this.proxyWarmSkip = new Set(); this.proxyDirection = 1;
       this.inRaf = false; this.lastSubmissionRaf = -1; this.submissionSerial = 0; this.lastSubmission = null;
       this.observedSerial = 0; this.observedFrame = null;
       this.info = null; this.state = 'empty'; this.epoch = 0; this.playToken = 0; this.requestId = 0;
@@ -153,11 +182,15 @@
         experimentMode: this.experimentMode, compressed: { ...this.compressedStats, residentFrames: this.compressed.size,
           residentBytes: ledger.kinds && ledger.kinds['compressed-jpeg'] || 0, limitBytes: this.experimentMode === 'compressed-ram' ? this.compressedLimit : 0 },
         forwardPredecode: this.forwardPredecode, forwardStatus: this.forwardStatus, forwardIssue: this.forwardIssue,
+        ...(this._tieredProxy() ? { tieredCache: { nearFrames: this.preparePlan ? this.preparePlan.capacity : 0,
+          compressedCapacity: this.compressedCapacity, compressedFrameLimit: PROXY_COMPRESSED_FRAMES,
+          knownReadySegments: this.proxySegments.size, readyOnlyBackground: true } } : {}),
         loadTimings: this.loadTimings ? { ...this.loadTimings } : null,
         frameDecoder: this.frameDecoder ? this.frameDecoder.snapshot() : null,
         transport: this.transportSnapshot(),
         memoryScope: 'managed decoded RGBA, audio, compressed/copy buffers and in-flight reservations; browser/GPU/internal decoder copies excluded' };
     }
+    auxiliaryBudget() { return Object.freeze({ budget: this.budget, evict: () => this._evict() }); }
     async paintThumbnail(time, canvas) {
       const epoch=this.epoch,info=this.info;
       if(!info||!canvas?.getContext||this.disposed)return null;
@@ -182,6 +215,7 @@
     setForwardPredecode(enabled) {
       if (typeof enabled !== 'boolean') throw new Error('提前解压设置必须为开或关。');
       this.forwardPredecode = enabled; ++this.forwardToken; this.preparePlan = null;
+      this.proxyWindowKey = null; this.proxyCompressedPlan = null; this.proxyWarmSkip.clear();
       this.forwardStatus = enabled ? 'idle' : 'disabled'; this.forwardIssue = null; this._change();
     }
     _loopRange() {
@@ -312,6 +346,7 @@
       const oldSegmentAudio = this.segmentAudio; this.segmentAudio = null;
       this.budget.release(this.audioBudget); this.audioBudget = null; this.info = null;
       ++this.forwardToken; this.preparePlan = null; this.forwardStatus = this.forwardPredecode ? 'waiting' : 'disabled';
+      this.proxyFrameBound = 0; this.proxySegments.clear(); this.proxyWindowKey = null; this.proxyCompressedPlan = null; this.proxyWarmSkip.clear(); this.proxyDirection = 1;
       this.forwardIssue = null; this.warmPlan = null; this.warmCursor = 0; this.loadTimings = null;
       this.currentIndex = null; this.time = 0; this.targetTime = 0; this.lastIssue = null; this.lastErrorCode = null; this.prefetchFailed.clear(); this.ended = false;
       this.playbackRate = 1; this.loopStart = this.loopEnd = null; this.loopEnabled = false;
@@ -327,6 +362,11 @@
           await Promise.allSettled(oldLoads.concat(oldTasks)); if (!this._valid(epoch)) return { status: 'superseded' };
           this.index.validateIndex(rawInfo); const info = freezeInfo(rawInfo);
           this.info = info;
+          if (this._tieredProxy()) {
+            this.proxyFrameBound = info.frames.reduce((n, frame) => Math.max(n, frame.bytes), 0);
+            const rgba = info.width * info.height * 4;
+            this.compressedCapacity = Math.max(0, Math.min(this.compressedLimit, this.budget.limit - rgba - 2 * (rgba + this.proxyFrameBound * 2)));
+          }
           if (info.videoEncoding) {
             if (!this.createFrameDecoder) throw new Error('当前宿主没有帧内代理解码能力，请在设置中切换JPEG序列。');
             this.frameDecoder = this.createFrameDecoder({ width: info.width, height: info.height });
@@ -386,6 +426,7 @@
       const frame = this.info.frames[ordinal], epoch = this.epoch;
       if (this.info.streaming && this.setMediaTarget && !['play', 'buffer', 'pause', 'ended'].includes(options.kind)) this.setMediaTarget(frame.time);
       const previous = this.target; this.targetTime = targetTime; this.ended = options.kind === 'ended';
+      if (this._tieredProxy() && previous && ordinal !== previous.index) this.proxyDirection = options.kind === 'play' ? 1 : Math.sign(ordinal - previous.index);
       let target;
       const promise = new Promise(resolve => { target = { index: ordinal, frameId: frame.id, epoch, targetTime,
         requestId: ++this.requestId, inputAt: options.inputAt, kind: options.kind, final: !!options.final, resolve, effectiveEmitted: false, readyEmitted: false }; });
@@ -616,7 +657,8 @@
         if (entry.index === this.currentIndex || (this.target && entry.index === this.target.index)) continue;
         if (this.state === 'seeking' && this.loopEnabled && entry.index === this.loopStart) continue;
         const distance = this.forwardPredecode && this.info && center !== null ? Math.abs(this.info.frames[entry.index].time - this.info.frames[center].time) : 0;
-        if (!victim || distance > farthest || distance === farthest && entry.usedAt < victim.usedAt) { victim = entry; farthest = distance; }
+        if (!victim || this._tieredProxy() && !!victim.visited && !entry.visited ||
+          (!this._tieredProxy() || !!entry.visited === !!victim.visited) && (distance > farthest || distance === farthest && entry.usedAt < victim.usedAt)) { victim = entry; farthest = distance; }
       }
       if (!victim) {
         const compressed = this.compressed.entries().next(); if (compressed.done) return false;
@@ -649,18 +691,22 @@
     _clearCompressed() {
       for (const entry of this.compressed.values()) this.budget.release(entry.budget);
       this.compressed.clear(); this.compressedBytes = 0; this.compressedCapacity = 0;
+      this.proxyWarmSkip.clear();
     }
-    _rememberCompressed(ordinal, bytes) {
-      if (this.experimentMode !== 'compressed-ram' || this.compressed.has(ordinal) || bytes.byteLength > this.compressedCapacity) return;
-      while (this.compressedBytes + bytes.byteLength > this.compressedCapacity) {
-        const oldest = this.compressed.keys().next(); if (oldest.done) return;
+    _rememberCompressed(ordinal, bytes, allowEviction = true) {
+      if (this.experimentMode !== 'compressed-ram' || this.compressed.has(ordinal) || bytes.byteLength > this.compressedCapacity) return false;
+      if (this._tieredProxy() && !allowEviction && (this.compressed.size >= PROXY_COMPRESSED_FRAMES || this.compressedBytes + bytes.byteLength > this.compressedCapacity)) return false;
+      while (this.compressedBytes + bytes.byteLength > this.compressedCapacity || this._tieredProxy() && this.compressed.size >= PROXY_COMPRESSED_FRAMES) {
+        const oldest = this.compressed.keys().next(); if (oldest.done) return false;
         this._dropCompressed(oldest.value);
       }
+      if (this._tieredProxy() && this.budget.used + bytes.byteLength > this.budget.limit) return false;
       // The completed read's reservation was released, or the finished
       // decoder's reservation shrank. Retain one JPEG in that same ledger.
       const token = this.budget.reserve(bytes.byteLength, 'compressed-jpeg');
       this.compressed.set(ordinal, { bytes, budget: token }); this.compressedBytes += bytes.byteLength;
       this.compressedStats.admittedFrames++;
+      return true;
     }
     _planCompressed(info) {
       const rgba = info.width * info.height * 4;
@@ -754,7 +800,7 @@
     _readCompressed(info, epoch, ordinal) {
       const key = epoch + ':compressed:' + ordinal, frame = info.frames[ordinal];
       if (this.tasks.size >= 2) throw new Error('压缩读取超过两个在途槽。');
-      const holder = { epoch, index: ordinal, role: 'compressed-warm', promise: null }; this.tasks.set(key, holder);
+      const holder = { epoch, index: ordinal, role: 'compressed-warm', forwardToken: this.forwardToken, promise: null }; this.tasks.set(key, holder);
       holder.promise = Promise.resolve().then(async () => {
         let reservation = null, transferred = false;
         try {
@@ -762,11 +808,18 @@
           reservation = this.budget.reserve(frame.bytes * 2, 'compressed-loading');
           const bytes = await this.readAsset(info, frame.file);
           if (!this._valid(epoch)) return;
-          if (!bytes || bytes.byteLength !== frame.bytes) throw new Error('压缩预读长度与清单不符。');
-          if (this.compressed.has(ordinal) || this.compressedBytes + frame.bytes > this.compressedCapacity) return;
-          this.budget.shrink(reservation, frame.bytes, 'compressed-jpeg');
+          if (!bytes || (this._tieredProxy() ? bytes.byteLength <= 0 || bytes.byteLength > frame.bytes : bytes.byteLength !== frame.bytes)) throw new Error('压缩预读长度与清单不符。');
+          if (this._tieredProxy()) {
+            this._markProxySegment(ordinal);
+            if (!this.forwardPredecode || holder.forwardToken !== this.forwardToken) return;
+          }
+          if (this.compressed.has(ordinal) || this.compressedBytes + bytes.byteLength > this.compressedCapacity || this._tieredProxy() && this.compressed.size >= PROXY_COMPRESSED_FRAMES) {
+            if (this._tieredProxy()) this.proxyWarmSkip.add(ordinal);
+            return;
+          }
+          this.budget.shrink(reservation, bytes.byteLength, 'compressed-jpeg');
           this.compressed.set(ordinal, { bytes, budget: reservation }); this.compressedBytes += bytes.byteLength; transferred = true;
-          this.compressedStats.warmedBytes += frame.bytes; this.compressedStats.warmedFrames++;
+          this.compressedStats.warmedBytes += bytes.byteLength; this.compressedStats.warmedFrames++;
         } finally {
           if (!transferred) this.budget.release(reservation);
           if (this.tasks.get(key) === holder) this.tasks.delete(key);
@@ -823,6 +876,7 @@
           const bytes = compressed ? compressed.bytes : await this.readAsset(info, frame.file);
           const readEndedAt = this.env.now();
           if (!bytes || (info.streaming ? bytes.byteLength <= 0 || bytes.byteLength > frame.bytes : bytes.byteLength !== frame.bytes)) throw new Error('JPEG资源长度与清单不符。');
+          if (this._tieredProxy()) this._markProxySegment(ordinal);
           if (!this._valid(epoch)) return null;
           if (this.experimentMode === 'compressed-ram') this.compressedStats[compressed ? 'hits' : 'misses']++;
           // A fast drag may supersede a completed disk read before decoding.
@@ -849,7 +903,7 @@
           if (role === 'forward-fill' && (!this.forwardPredecode || holder.forwardToken !== this.forwardToken) && (!this.target || this.target.index !== ordinal)) return null;
           if (!bitmap || bitmap.width !== info.width || bitmap.height !== info.height) throw new Error('JPEG解码尺寸与索引不符。');
           this.budget.shrink(reservation, rgba, 'decoded-frame');
-          if (!compressed) this._rememberCompressed(ordinal, bytes);
+          if (!compressed) this._rememberCompressed(ordinal, bytes, !this._tieredProxy() || !['forward-fill', 'thumbnail'].includes(role));
           const entry = { index: ordinal, id: frame.id, bitmap, budget: reservation, readyAt: this.env.now(), usedAt: this.env.now() };
           this.cache.set(ordinal, entry); ++this.coverageVersion; transferred = true;
           this._emit('ready', { epoch, phase: 'read-and-image-decode-complete', requestId: request ? request.requestId : null,
@@ -892,6 +946,10 @@
       }
       // No await or user callback between the final guard and the native draw.
       if (!this._valid(target.epoch) || this.target !== target || !target.resolve || target.index !== entry.index || this.cache.get(entry.index) !== entry) return;
+      entry.visited = true;
+      if (this._tieredProxy() && this.compressed.has(target.index)) {
+        const bytes = this.compressed.get(target.index); this.compressed.delete(target.index); this.compressed.set(target.index, bytes);
+      }
       if (this.currentIndex === target.index) {
         // A new input can legitimately request the already displayed source frame.
         // Settle it explicitly without a canvas submission or fabricated draw sample.
@@ -929,7 +987,85 @@
       this._settle(target, 'drawn', { time: frame.time, drawAt }); this._emit('draw', event);
       if (this._valid(target.epoch) && this.target === target) this._change();
     }
+    _tieredProxy() { return !!(this.info && this.info.streaming && this.info.videoEncoding && this.experimentMode === 'compressed-ram'); }
+    _proxySegment(ordinal) {
+      const ranges = this.info.segments, time = this.info.frames[ordinal].time;
+      let low = 0, high = ranges.length;
+      while (low < high) { const mid = (low + high) >>> 1; if (ranges[mid].start <= time) low = mid + 1; else high = mid; }
+      return Math.max(0, low - 1);
+    }
+    _markProxySegment(ordinal) { this.proxySegments.add(this._proxySegment(ordinal)); }
+    _proxyReady(ordinal) {
+      if (this.canPrefetchFrame) {
+        try { return this.canPrefetchFrame(ordinal) === true; }
+        catch (error) { this.forwardIssue = error.message; return false; }
+      }
+      return this.proxySegments.has(this._proxySegment(ordinal));
+    }
+    _proxyWindow() {
+      const info = this.info, rgba = info.width * info.height * 4, ledger = this.budget.snapshot();
+      const fixed = Math.max(0, ledger.used - this.cache.size * rgba - this.compressedBytes);
+      const spare = 2 * (rgba + this.proxyFrameBound * 2);
+      const decoded = Math.max(1, Math.floor((ledger.limit - fixed - this.compressedCapacity - spare) / rgba));
+      // Keep a quarter for visited islands/hot frames instead of filling every
+      // free byte with speculation. A finite ordinal cap also bounds JS work.
+      const capacity = Math.max(1, Math.min(4096, Math.floor(decoded * .75)));
+      const center = this.currentIndex, range = this.loopEnabled ? this._loopRange() : null;
+      const first = range ? range.first : 0, last = range ? range.last : info.frames.length - 1;
+      const direction = this.state === 'playing' ? 1 : this.target && this.target.stepDirection || this.proxyDirection;
+      const key = [center, capacity, first, last, direction, !!range].join(':');
+      if (key !== this.proxyWindowKey) {
+        this.proxyWindowKey = key; this.preparePlan = directionalWindow(info.frames, center, capacity, direction, first, last, !!range);
+        this.preparePlan.members = new Set(this.preparePlan.order);
+        this.proxyCompressedPlan = directionalWindow(info.frames, center, Math.min(8192, this.preparePlan.capacity * 4), direction, first, last, !!range);
+        this.proxyCompressedPlan.cursor = 0; this.proxyWarmSkip.clear();
+      }
+      return this.preparePlan;
+    }
+    _evictProxyOutside(window) {
+      let victim = null, distance = -1;
+      for (const entry of this.cache.values()) {
+        if (window.members.has(entry.index) || entry.index === this.currentIndex || this.target && entry.index === this.target.index) continue;
+        const delta = Math.abs(this.info.frames[entry.index].time - this.info.frames[window.center].time);
+        if (!victim || victim.visited && !entry.visited || !!victim.visited === !!entry.visited && (delta > distance || delta === distance && entry.usedAt < victim.usedAt)) {
+          victim = entry; distance = delta;
+        }
+      }
+      return victim ? this._dropDecoded(victim) : false;
+    }
+    _startProxyBackground() {
+      if (!this.forwardPredecode || this.disposed || this.tasks.size || !['paused', 'playing'].includes(this.state) || this.currentIndex === null ||
+        this.target && (this.target.resolve || !this.target.final && ['drag', 'rapid'].includes(this.target.kind) && this.env.now() - this.target.inputAt < 80)) return;
+      const window = this._proxyWindow(), info = this.info, rgba = info.width * info.height * 4;
+      const spare = rgba + this.proxyFrameBound * 2;
+      const ordinal = window.order.find(n => !this.cache.has(n) && !this.prefetchFailed.has(n) && this._proxyReady(n));
+      if (ordinal !== undefined) {
+        const needed = rgba + info.frames[ordinal].bytes * 2 + spare;
+        while (this.budget.limit - this.budget.used < needed && this._evictProxyOutside(window)) { /* finite old frame set */ }
+        if (this.budget.limit - this.budget.used >= needed) {
+          this.forwardStatus = 'preparing'; this._decode(ordinal, 'forward-fill', null); return;
+        }
+      }
+      this.forwardStatus = window.order.every(n => this.cache.has(n)) ? 'ready' : 'waiting';
+      if (this.compressedCapacity <= this.compressedBytes || this.compressed.size >= PROXY_COMPRESSED_FRAMES) { this.forwardStatus = 'budget'; return; }
+      // Optional compressed warm reads never evict useful RGBA or ask the
+      // worker to generate a cold segment. Inspect only a bounded batch/tick.
+      const plan = this.proxyCompressedPlan;
+      for (let n = 0; n < Math.min(128, plan.order.length); n++) {
+        const candidate = plan.order[plan.cursor++ % plan.order.length], frame = info.frames[candidate];
+        if (this.cache.has(candidate) || this.compressed.has(candidate) || this.proxyWarmSkip.has(candidate) || !this._proxyReady(candidate)) continue;
+        if (this.budget.limit - this.budget.used < frame.bytes * 2 + spare) return;
+        const epoch = this.epoch;
+        this._readCompressed(info, epoch, candidate).catch(error => {
+          if (!this._valid(epoch) || error.code === 'MEDIA_CANCELLED') return;
+          this.proxyWarmSkip.add(candidate); this.forwardIssue = error.message;
+          this._emit('error', { epoch, phase: 'background-proxy-read', frameId: frame.id, error: error.message, code: error.code });
+        });
+        return;
+      }
+    }
     _startBackground() {
+      if (this._tieredProxy()) { this._startProxyBackground(); return; }
       if (this.info && this.info.streaming) {
         if (this.forwardPredecode && !this.tasks.size && ['paused', 'playing'].includes(this.state) && this.currentIndex !== null) {
           const center = this.currentIndex, range = this.loopEnabled ? this._loopRange() : null;
@@ -1093,6 +1229,7 @@
       this.disposed = true; ++this.epoch; this._halt(false); if (this.rafId !== null) this.env.caf(this.rafId);
       if (this.cancelMediaReads) this.cancelMediaReads();
       this._clearTarget('disposed'); this._clearCache(); this._clearCompressed(); this.audioBuffer = null; this.budget.release(this.audioBudget); this.audioBudget = null;
+      this.proxySegments.clear(); this.proxyCompressedPlan = null; this.proxyWindowKey = null;
       this._change('disposed');
       this.disposePromise = (async () => {
         if (this.frameDecoder) { await this.frameDecoder.close(); this.frameDecoder = null; }

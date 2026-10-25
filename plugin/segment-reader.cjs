@@ -80,6 +80,7 @@ function createSegmentReader({ info, acquire, release, readAsset }) {
     const results = await Promise.allSettled(retained.map(async entry => { const value = await entry.promise.catch(() => null); if (value) await release(value); }));
     const failed = results.find(result => result.status === 'rejected'); if (failed) throw failed.reason; if (cleanupFailure) throw cleanupFailure;
   }
-  return { frame, audio, prefetch, cancelExcept, cancelAll, close };
+  function isFrameReady(ordinal) { return !closed&&!stopping&&Number.isSafeInteger(ordinal)&&!!info.frames[ordinal]&&!!entries.get(groupAt(info.frames[ordinal].time))?.value; }
+  return { frame, audio, prefetch, cancelExcept, cancelAll, close, isFrameReady };
 }
 module.exports = { createSegmentReader };

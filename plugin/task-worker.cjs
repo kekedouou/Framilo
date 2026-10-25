@@ -32,14 +32,35 @@ const identity = { self: () => { const value = base.self(); if (!value) throw ne
     return ordinary;
   } };
 const cache = require('./cache.cjs').createCache({ pluginRoot: root, taskOwner, processIdentity: identity, packFrames: true });
-const handles = new Map(), controllers = new Map();
+const handles = new Map(), controllers = new Map(),requestMethods=new Map();
 const longOwners = new Map(), backgrounds = new Map();
+const recordBorrows = new Map(),recordPriorities=new Map();
 function backgroundEvent(leaseId,value){send({type:"proxy-progress",leaseId,value});}
 let sourceExports = null;
 let tail = Promise.resolve(), stopping = false, shutdownTask = null;
 function send(value) { const text = JSON.stringify(value); if (Buffer.byteLength(text) > 8 * 1024 ** 2) throw new Error('Control response exceeds 8MiB.'); process.stdout.write(text + '\n'); }
 function response(id, result, error) { send({ type: 'response', id, ...(error ? { error: { code: error.code || 'TASK_FAILED', message: String(error.message).slice(0, 2048) } } : { result }) }); }
 function enqueue(fn) { const work = tail.then(fn); tail = work.catch(() => {}); return work; }
+function registerRecordBorrow(info,ordinal,value,bg){
+  const prior=recordBorrows.get(value.leaseId);
+  if(prior){if(prior.parent!==info.leaseId||prior.bg!==bg||prior.ordinal!==ordinal)throw Error('标注静帧归属冲突。');prior.users++;}
+  else recordBorrows.set(value.leaseId,{parent:info.leaseId,ordinal,value,users:1,bg});
+  return value;
+}
+function borrowReadyRecord(info,ordinal,bg){
+  if(!info||!bg||!Number.isSafeInteger(ordinal)||!info.frames[ordinal])return null;
+  const value=bg.borrowRecord(ordinal);if(!value)return null;
+  try{return registerRecordBorrow(info,ordinal,value,bg);}catch(error){bg.returnRecord(value);throw error;}
+}
+function recordReturn(message){
+  const entry=recordBorrows.get(message.recordLeaseId);
+  if(!entry||entry.parent!==message.leaseId||entry.users<1)throw Error('未知标注静帧占用。');
+  return entry;
+}
+function returnReadyRecord(message){
+  const entry=recordReturn(message);if(!entry.bg)return false;
+  entry.bg.returnRecord(entry.value);if(!--entry.users)recordBorrows.delete(message.recordLeaseId);return true;
+}
 async function closeProxyBatches(except) {
   for (const [leaseId, media] of longOwners) if (leaseId !== except) await media.closeProxyBatch(handles.get(leaseId));
 }
@@ -47,6 +68,7 @@ function shutdown(id) {
   if (shutdownTask) return shutdownTask;
   stopping = true; for(const bg of backgrounds.values())bg.foreground(); for (const controller of controllers.values()) controller.abort();
   shutdownTask = enqueue(async () => {
+    if(recordBorrows.size)throw Error('标注静帧尚未交还，未确认关闭。');
     for(const bg of backgrounds.values())await bg.close(); backgrounds.clear();
     for (const info of handles.values()) {
       if (longOwners.has(info.leaseId)) await longOwners.get(info.leaseId).releaseLong(info);
@@ -60,7 +82,7 @@ function shutdown(id) {
   return shutdownTask;
 }
 async function execute(message, controller) {
-  if (stopping) throw Object.assign(new Error('视频任务正在关闭。'), { code: 'MEDIA_CANCELLED' });
+  if (stopping||controller.signal.aborted) throw Object.assign(new Error('视频任务正在关闭或已取消。'), { code: 'MEDIA_CANCELLED' });
   if (message.method === 'prepare') {
     await closeProxyBatches();
     const media = require('./media.cjs').createMedia({ tools: message.tools, cache });
@@ -71,6 +93,7 @@ async function execute(message, controller) {
     if(info.videoEncoding){
       const bg=require('./proxy-background.cjs').createProxyBackground({info,
         prepare:(ordinal,signal)=>media.prepareSegment(info,ordinal,{signal}),release:value=>cache.release(value),
+        prepareRecord:typeof media.prepareStill==='function'?(ordinal,signal)=>media.prepareStill(info,ordinal,{signal}):undefined,
         enqueue,idle:()=>!stopping&&!controllers.size,
         budget:async signal=>{await closeProxyBatches(info.leaseId);return media.proxyBudget(info,{signal});},
         closeBatch:()=>media.closeProxyBatch(info),emit:value=>backgroundEvent(info.leaseId,value),
@@ -88,12 +111,26 @@ async function execute(message, controller) {
     if(bg) return await bg.retain(message.ordinal,segment);
     handles.set(segment.leaseId, segment);return segment;
   }
+  if(message.method==='recordStill'){
+    const info=handles.get(message.leaseId),media=longOwners.get(message.leaseId),bg=backgrounds.get(message.leaseId);
+    if(!info||!media||!Number.isSafeInteger(message.ordinal)||!info.frames[message.ordinal])throw Error('标注静帧会话已失效。');
+    let value=borrowReadyRecord(info,message.ordinal,bg);if(value)return value;
+    if(!value){await closeProxyBatches(info.videoEncoding?info.leaseId:undefined);value=await media.prepareStill(info,message.ordinal,{signal:controller.signal});
+      if(bg){await bg.retainRecord(message.ordinal,value);const ready=borrowReadyRecord(info,message.ordinal,bg);if(!ready)throw Error('标注静帧正在关闭或交还。');return ready;}}
+    return registerRecordBorrow(info,message.ordinal,value,bg);
+  }
+  if(message.method==='releaseRecord'){
+    if(returnReadyRecord(message))return true;
+    const entry=recordReturn(message);await cache.release(entry.value);
+    if(!--entry.users)recordBorrows.delete(message.recordLeaseId);return true;
+  }
   if (message.method === 'release') {
     const info = handles.get(message.leaseId); if (!info) throw new Error('Unknown task lease.');
+    if([...recordBorrows.values()].some(entry=>entry.parent===message.leaseId))throw Error('标注静帧尚未交还。');
     if(backgrounds.has(message.leaseId)){await backgrounds.get(message.leaseId).close();backgrounds.delete(message.leaseId);}
     if (longOwners.has(message.leaseId)) { await longOwners.get(message.leaseId).releaseLong(info); longOwners.delete(message.leaseId); }
     else await cache.release(info);
-    handles.delete(message.leaseId); return true;
+    handles.delete(message.leaseId);recordPriorities.delete(message.leaseId);return true;
   }
   if (message.method === 'clearOther') { await closeProxyBatches(); return cache.clearOther(message.settings); }
   if (['export', 'publishExport', 'discardExport'].includes(message.method)) {
@@ -115,12 +152,38 @@ input.on('line', line => {
   if (Buffer.byteLength(line) > 32768) { shutdown(); return; }
   let message; try { message = JSON.parse(line); } catch (_) { shutdown(); return; }
   if (message.method === 'cancel') { const controller = controllers.get(message.id); if (controller) controller.abort(); return; }
+  if(['target','prioritizeRecords'].includes(message.method)){
+    // These are latest intentions, not jobs. Never append every pointer move to
+    // the writer queue or abort an in-flight preparation for the same segment.
+    if(stopping)return;const info=handles.get(message.leaseId),bg=backgrounds.get(message.leaseId);if(!info||!bg)return;
+    if(message.method==='target'){if(Number.isFinite(message.time))bg.target(message.time);return;}
+    if(!['all','visible'].includes(message.kind)||typeof message.bits!=='string'||info.frames.length>120000)return;
+    const size=Math.ceil(info.frames.length/8);if(message.bits.length!==Math.ceil(size/3)*4||!/^[A-Za-z0-9+/]*={0,2}$/.test(message.bits))return;
+    const bits=Buffer.from(message.bits,'base64');if(bits.length!==size||bits.toString('base64')!==message.bits)return;
+    const values=[];for(let n=0;n<bits.length*8;n++)if(bits[n>>>3]&(1<<(n&7))){if(n>=info.frames.length)return;values.push(n);}
+    const prior=recordPriorities.get(info.leaseId)||{all:[],visible:[]};prior[message.kind]=values;recordPriorities.set(info.leaseId,prior);bg.prioritizeRecords(prior);return;
+  }
   if (!Number.isSafeInteger(message.id) || message.id < 1 || controllers.has(message.id)) { shutdown(); return; }
   if (message.method === 'close') { shutdown(message.id); return; }
-  for(const bg of backgrounds.values())bg.foreground();
-  const controller = new AbortController(); controllers.set(message.id, controller);
+  if(message.method==='recordStill'&&!stopping){
+    try{const info=handles.get(message.leaseId),bg=backgrounds.get(message.leaseId),value=borrowReadyRecord(info,message.ordinal,bg);
+      if(value){response(message.id,value);return;}
+    }catch(error){response(message.id,null,error);return;}
+  }
+  if(message.method==='releaseRecord'){
+    try{if(returnReadyRecord(message)){response(message.id,true);return;}}
+    catch(error){response(message.id,null,error);return;}
+  }
+  if(message.method==='segment'&&!backgrounds.get(message.leaseId)?.get(message.ordinal))
+    for(const [id,method] of requestMethods)if(method==='recordStill')controllers.get(id)?.abort();
+  if(!['releaseRecord','ping'].includes(message.method)&&!(message.method==='recordStill'&&message.priority==='idle'))for(const [leaseId,bg] of backgrounds){
+    if(message.method==='segment'&&leaseId===message.leaseId){if(!bg.get(message.ordinal))bg.foreground(message.ordinal);}
+    else if(message.method==='recordStill'&&leaseId===message.leaseId){if(!bg.getRecord(message.ordinal))bg.foreground(message.ordinal,'record');}
+    else bg.foreground();
+  }
+  const controller = new AbortController(); controllers.set(message.id, controller);requestMethods.set(message.id,message.method);
   enqueue(() => execute(message, controller)).then(result => response(message.id, result), error => response(message.id, null, error))
-    .finally(() => {controllers.delete(message.id);for(const bg of backgrounds.values())bg.kick();});
+    .finally(() => {controllers.delete(message.id);requestMethods.delete(message.id);for(const bg of backgrounds.values())bg.kick();});
 });
 input.on('close', () => shutdown());
 send({ type: 'ready', pid: process.pid, taskOwner, node: process.versions.node });

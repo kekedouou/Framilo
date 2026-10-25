@@ -490,7 +490,7 @@ function createMedia(options) {
       }
     }
   }
-  return Object.freeze({ prepare, prepareSegment: (...args) => longMedia().segment(...args), releaseLong: info => long ? long.release(info) : false,
+  return Object.freeze({ prepare, prepareSegment: (...args) => longMedia().segment(...args), prepareStill: (...args) => longMedia().still(...args), releaseLong: info => long ? long.release(info) : false,
     proxyBudget: (...args) => longMedia().proxyBudget(...args), closeProxyBatch: info => long ? long.closeProxyBatch(info) : Promise.resolve(false) });
 }
 module.exports = { createMedia, LIMITS, previewRgbFilter,

@@ -164,7 +164,7 @@ test('Release hint follows actual final frame, stays readable, and clears on a n
   assert.strictEqual(h.el('timeHint').textContent, '0:03.000'); assert(!h.el('timeHint').hidden);
   h.ui.update({ ...h.state, playback: { time: 9.966666, frameId: 599 } });
   assert.strictEqual(h.el('timeHint').textContent, '0:09.966'); assert.strictEqual(h.el('currentTime').textContent, '0:09.966');
-  assert.strictEqual(h.el('thumb').style.left, '99.66666%'); assert.strictEqual(h.el('timeHint').style.left, '160px');
+  assert.strictEqual(h.el('thumb').style.left, '100%', 'Unsettled release retains intent while time/readout describe the actual frame'); assert.strictEqual(h.el('timeHint').style.left, '160px');
   h.el('next').fire('click'); assert(h.el('timeHint').hidden);
   h.el('timeline').fire('pointerdown'); h.win.fire('pointerup', { buttons: 0 });
   h.ui.update({ ...h.state, epoch: 2 }); assert(h.el('timeHint').hidden);

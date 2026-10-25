@@ -72,6 +72,7 @@
     el.playbackBackend = doc.getElementById('playbackBackend');
     const backendControl = !!el.playbackBackend && String(el.playbackBackend.tagName).toUpperCase() === 'SELECT';
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
+    let seekIntent = null;
     let viewRange = { start: 0, end: 0, focused: false }, timelineWidth = null, rulerKey = null;
     let rateRequest = null, noteRequest = null, exportRequest = null;
     let drawingUI = null, screenUI = null, contextUI = null, shellUI = null;
@@ -137,6 +138,16 @@
     }
     const listeners = [];
     const on = (target, type, handler, settings) => { target.addEventListener(type, handler, settings); listeners.push([target, type, handler, settings]); };
+    const previewDisabled = new Map();
+    function blockPreviewSave(event) {
+      if (!previewActive()) return;
+      const target = event.target?.closest?.('button') || event.target;
+      const saveClick = event.type === 'click' && ['drawingSave', 'drawingExitSave', 'commentSave'].some(id => target === doc.getElementById(id));
+      const saveKey = event.type === 'keydown' && !event.isComposing && event.keyCode !== 229 &&
+        (letterKey(event, 'D') || letterKey(event, 'N') || ['Enter', 'NumpadEnter'].includes(event.code || event.key) && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey);
+      if (saveClick || saveKey) { event.preventDefault(); event.stopImmediatePropagation?.(); event.stopPropagation?.(); }
+    }
+    on(win, 'click', blockPreviewSave, true); on(win, 'keydown', blockPreviewSave, true);
     function commentsVisibility() {
       const visible = !doc.hidden && doc.visibilityState !== 'hidden' && state.state !== 'closed' && state.state !== 'closing';
       if (session && typeof session.setCommentsVisible === 'function') session.setCommentsVisible(visible);
@@ -168,7 +179,7 @@
         set(el.memoryAllowance, 'textContent', '缓存上限 ' + (memory.ramBytes / 1048576).toFixed(0) + ' MB（不含程序额外占用）' +
           (memory.legacyConverted ? '；旧百分比已换算，应用后保存。' : ''));
       }
-      const preview = state.preview;
+      const preview = state.preview?.width > 0 && state.preview?.height > 0 ? state.preview : null;
       const choices = previewChoices(preview), desiredQuality = state.previewQuality || '720p';
       const effectiveQuality = choices.some(n => n.value === desiredQuality) ? desiredQuality : choices[choices.length - 1].value;
       const qualityKey = desiredQuality + ':' + choices.map(n => n.value).join(',');
@@ -237,6 +248,26 @@
     const invoke = fn => {
       try { Promise.resolve(fn()).catch(() => {}); } catch (_) { /* session publishes operation errors */ }
     };
+    const previewActive = () => state.preview?.active === true;
+    const cursorTime = () => seekIntent && seekIntent.epoch === state.epoch ? seekIntent.time : state.playback?.time || 0;
+    function settleIntent() {
+      if (seekIntent?.completed && !gesture && !screenUI?.active() && !previewActive() &&
+          state.state !== 'seeking' && !(state.playback?.pendingTargets > 0)) seekIntent = null;
+    }
+    function requestSeek(time, settings) {
+      if (!session || !Number.isFinite(time)) return;
+      const job = seekIntent = { time, epoch: state.epoch, session, completed: false };
+      // The cursor is a UI intent, never a replacement for the submitted frame.
+      // Do not await image preparation in a pointer handler or serialize moves.
+      thumb(time);
+      try {
+        Promise.resolve(job.session.seek(time, settings)).then(result => {
+          if (seekIntent !== job || session !== job.session || state.epoch !== job.epoch ||
+              ['superseded', 'failed', 'error', 'ignored'].includes(result?.status)) return;
+          job.completed = true; settleIntent(); thumb(cursorTime()); updateTransport();
+        }, () => {});
+      } catch (_) { /* Session publishes failures; retain the latest intent. */ }
+    }
     const selection = selectionAPI.createSelection({ getSession: () => session, getState: () => state,
       setTimeout: (fn, ms) => (win.setTimeout || setTimeout).call(win, fn, ms), clearTimeout: id => (win.clearTimeout || clearTimeout).call(win, id),
       changed() { updateTransport(); updateMemorySettings(); updateComments(); updateExports(); } });
@@ -259,7 +290,7 @@
         attribute('data-view', viewRange.focused ? 'loop' : 'full');
         attribute('aria-label', viewRange.focused ? '循环片段进度（L关闭恢复整段，长按R临时整段调整）' : '视频进度');
         positionMarkers();
-        if (!gesture) thumb(state.playback?.time || 0);
+        if (!gesture) thumb(cursorTime());
         if (hintEpoch !== null) hint(state.playback?.time || 0);
         refreshCoverage();
       }
@@ -281,7 +312,7 @@
       el.timeRuler.replaceChildren(...nodes);
     }
     function shortcutReady() {
-      return interactive() && ['paused', 'playing'].includes(state.state) && !gesture && !memoryBusy && !cleaning &&
+      return interactive() && !previewActive() && !seekIntent && ['paused', 'playing'].includes(state.state) && !gesture && !memoryBusy && !cleaning &&
         !selection.snapshot().editing && !selection.snapshot().busy;
     }
     async function requestRate(value, direction, feedback = false) {
@@ -312,7 +343,7 @@
       set(el.loopCancel, 'hidden', !editing.editing);
       set(el.loopSelect, 'textContent', editing.editing ? '确认片段（R）' : loop && (loop.startOrdinal != null || loop.endOrdinal != null) ? '清除片段（R）' : '选择片段（R）');
       set(el.play, 'disabled', !interactive() || editing.editing || editing.busy || !(['paused', 'playing'].includes(state.state) || state.playback?.buffering));
-      set(el.commentAdd, 'disabled', !interactive() || editing.editing || editing.busy || !!gesture || state.comments?.status !== 'ready');
+      set(el.commentAdd, 'disabled', !interactive() || previewActive() || !!seekIntent || editing.editing || editing.busy || !!gesture || state.comments?.status !== 'ready');
       if (!transportBusy) {
         set(el.loopEnabled, 'checked', !!(loop && loop.enabled));
       }
@@ -372,7 +403,7 @@
       if (time === null) return;
       lastRequestedTime = time; thumb(time);
       if (gesture && gesture.point) selection.move(gesture.point, time, final, inputAt);
-      else invoke(() => session.seek(time, { kind: final ? 'release' : 'rapid', final: !!final, inputAt }));
+      else requestSeek(time, { kind: final ? 'release' : 'rapid', final: !!final, inputAt });
     }
     function end(event) {
       const inputAt = now();
@@ -409,7 +440,7 @@
       if (hintEpoch !== null) { measureHint(gesture && gesture.rect); hint(state.playback ? state.playback.time : 0); }
     });
     on(el.play, 'click', () => { if (session && !gesture && !selection.snapshot().editing && !selection.snapshot().busy) { clearHint(); invoke(() => session.toggle()); } });
-    function step(delta) { if (interactive() && !gesture && !selection.snapshot().busy) { clearHint(); if (!selection.snapshot().editing || !selection.step(delta)) invoke(() => session.step(delta)); } }
+    function step(delta) { if (interactive() && !gesture && !selection.snapshot().busy) { seekIntent = null; clearHint(); if (!selection.snapshot().editing || !selection.step(delta)) invoke(() => session.step(delta)); } }
     function wheel(event) {
       if (event.defaultPrevented || event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.isComposing ||
           !Number.isFinite(event.deltaY) || !event.deltaY || Math.abs(event.deltaX || 0) > Math.abs(event.deltaY) ||
@@ -472,6 +503,7 @@
     function seekComment(event) {
       const button = event.target && event.target.closest && event.target.closest('button[data-comment-id]');
       if (button && !button.disabled && interactive() && !selection.snapshot().editing) {
+        seekIntent = null;
         clearHint();
         showCommentActions(button.dataset.commentId);
         const action = button.dataset.commentAction;
@@ -509,7 +541,7 @@
     on(el.commentShade, 'wheel', event => event.preventDefault(), {passive:false});
     function saveNote() {
       const draft = state.comments?.draft;
-      if (!session || !draft || commentComposing || now() - commentCompositionEnd < 50 || draft.kind === 'delete') return;
+      if (!session || previewActive() || seekIntent || !draft || commentComposing || now() - commentCompositionEnd < 50 || draft.kind === 'delete') return;
       if (draft.status === 'unknown') return invoke(() => session.checkComment());
       if (['editing', 'failed'].includes(draft.status)) return invoke(() => { session.setCommentText(el.commentText.value); return session.saveComment(); });
     }
@@ -524,7 +556,7 @@
       if (typeof event.stopPropagation === 'function') event.stopPropagation();
       saveNote();
     });
-    on(el.commentSave, 'click', () => { if (session) invoke(() => state.comments?.draft?.status === 'unknown' ? session.checkComment() : session.saveComment()); });
+    on(el.commentSave, 'click', () => { if (session && !previewActive() && !seekIntent) invoke(() => state.comments?.draft?.status === 'unknown' ? session.checkComment() : session.saveComment()); });
     on(el.commentCancel, 'click', () => { if (session) invoke(() => session.cancelComment()); });
     on(el.exportDestination, 'change', () => {
       updateExports();
@@ -659,6 +691,9 @@
     function update(snapshot) {
       if (state.epoch !== snapshot.epoch) showCommentActions(null);
       state = snapshot;
+      if (!previewActive() && previewDisabled.size) { for (const [node, disabled] of previewDisabled) node.disabled = disabled; previewDisabled.clear(); }
+      if (seekIntent && (seekIntent.epoch !== state.epoch || ['empty', 'preparing', 'closing', 'closed', 'error'].includes(state.state))) seekIntent = null;
+      settleIntent();
       if ([rateRequest, noteRequest, exportRequest].some(job => job && (job.epoch !== state.epoch || ['closed', 'closing'].includes(state.state)))) {
         rateRequest = noteRequest = exportRequest = null; transportBusy = false;
       }
@@ -688,7 +723,7 @@
       set(el.retry, 'hidden', !session || state.state !== 'error');
       set(el.notice, 'hidden', ready || !!(state.playback && Number.isSafeInteger(state.playback.frameId)));
       set(el.notice, 'textContent', emptyMessage || handover || (state.state === 'closing' ? '正在关闭…' : state.state === 'preparing' ? '正在准备视频…' : state.state === 'error' ? '视频未就绪' : '在 Eagle 中单选 MP4 后打开插件'));
-      if (!gesture) thumb(time);
+      thumb(cursorTime());
       if (hintEpoch !== null) hint(time); // Includes final release settlement; only actual submitted frame time.
       updateComments();
       updateExports();
@@ -696,6 +731,12 @@
       updateCoverageStatus();
       updateTransport();
       if (drawingUI) drawingUI.update(state);
+      if (previewActive()) {
+        const layer = doc.getElementById('drawingLayer');
+        if (layer) { layer.hidden = true; layer.setAttribute('hidden', ''); }
+        for (const id of ['drawingSave', 'drawingExitSave', 'commentSave']) { const node = doc.getElementById(id); if (node) { if (!previewDisabled.has(node)) previewDisabled.set(node, node.disabled); node.disabled = true; } }
+        for (const id of ['drawingText', 'drawingTextDelete', 'commentDraftPreview']) { const node = doc.getElementById(id); if (node) node.hidden = true; }
+      }
       if (screenUI) screenUI.update();
       if (contextUI) contextUI.update();
       if (shellUI) shellUI.update(state);
@@ -715,15 +756,15 @@
         step: state.interactionSettings?.rateStep || .1 }),
       start: () => { const s = selection.snapshot(); screenSelectionPoint = s.editing ? (s.controlled ? s.active : selection.nextPoint() || s.active || (Math.abs((state.playback?.time || 0) - s.start.time) <= Math.abs((state.playback?.time || 0) - s.end.time) ? 'start' : 'end')) : null; },
       release: () => { screenSelectionPoint = null; },
-      seek: (time, final) => { clearHint(); if (screenSelectionPoint && selection.snapshot().editing) selection.move(screenSelectionPoint, time, final, now()); else invoke(() => session.seek(time, { final, kind: final ? 'release' : 'rapid', inputAt: now() })); },
+      seek: (time, final) => { clearHint(); if (screenSelectionPoint && selection.snapshot().editing) selection.move(screenSelectionPoint, time, final, now()); else requestSeek(time, { final, kind: final ? 'release' : 'rapid', inputAt: now() }); },
       rate: value => requestRate(value),
       toggle: () => { if ((shortcutReady() || interactive() && state.playback?.buffering) && !transportBusy) invoke(() => state.state === 'playing' || state.playback?.buffering ? session.pause() : session.play()); } });
     contextUI = contextAPI.createContextWheel({ document: doc, window: win, screen: el.screen, now,
       getContext: () => {
         const deletion = state.drawings?.draft?.kind === 'delete' ? state.drawings.draft : state.comments?.draft?.kind === 'delete' ? state.comments.draft : null;
         if (deletion) return { epoch: state.epoch, mode: 'note', enabled: ['editing','failed','pausing','obsolete'].includes(deletion.status), tap: 'cancel-delete', items: [] };
-        if (state.drawings?.draft) return { epoch: state.epoch, mode: 'drawing', ...drawingUI.menuState() };
-        if (state.comments?.draft) return { epoch: state.epoch, mode: 'note', enabled: !commentComposing && now() - commentCompositionEnd >= 50 && state.comments.draft.kind !== 'delete' && ['editing', 'failed', 'unknown'].includes(state.comments.draft.status), tap: 'save-note', items: [] };
+        if (state.drawings?.draft) return { epoch: state.epoch, mode: 'drawing', ...drawingUI.menuState(), ...(previewActive() ? { enabled: false } : {}) };
+        if (state.comments?.draft) return { epoch: state.epoch, mode: 'note', enabled: !previewActive() && !commentComposing && now() - commentCompositionEnd >= 50 && state.comments.draft.kind !== 'delete' && ['editing', 'failed', 'unknown'].includes(state.comments.draft.status), tap: 'save-note', items: [] };
         if (selection.snapshot().editing) return { epoch: state.epoch, mode: 'selection', enabled: interactive() && !gesture && !selection.snapshot().busy,
           tap: 'finish-selection', items: [{ id: 'unused-up', label: '', disabled: true }, { id: 'endpoint-end', label: '控制尾', symbol: '→' },
             { id: 'unused-down', label: '', disabled: true }, { id: 'endpoint-start', label: '控制头', symbol: '←' }] };
@@ -736,6 +777,7 @@
       },
       opening: () => { screenUI.reset(); },
       command: (id, value) => {
+        if (previewActive() && (id === 'save-note' || state.drawings?.draft && id === 'save')) return;
         if (id === 'cancel-delete') { if(state.drawings?.draft?.kind==='delete')session.cancelDrawing();else session.cancelComment(); return; }
         if (id === 'save-note') { saveNote(); return; }
         if (id === 'finish-selection') { invoke(() => selection.finish()); return; }
@@ -754,6 +796,7 @@
     commentResize?.observe(el.screen);
     return { canvas: el.picture, confirmDrawingExit: () => drawingUI.confirmExit(), bindSession(value) {
       if (session !== value) {
+        seekIntent = null;
         showCommentActions(null);
         drawingUI.reset(); screenUI.reset(); contextUI.reset();
         rateRequest = noteRequest = exportRequest = null; transportBusy = false;
@@ -766,6 +809,8 @@
       if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
     }, update,
       destroy() {
+        seekIntent = null;
+        for (const [node, disabled] of previewDisabled) node.disabled = disabled; previewDisabled.clear();
         shellUI?.destroy();
         commentResize?.disconnect();
         drawingUI.destroy(); screenUI.destroy(); contextUI.destroy();

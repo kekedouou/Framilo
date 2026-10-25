@@ -15,6 +15,11 @@ function segmentKey(info, group, colorVersion) {
     ...(info.videoEncoding ? [info.videoEncoding] : []), info.source.sha256, info.preview, group, colorVersion,
     ...(info.audio ? [AUDIO_PREROLL_VERSION] : [])])).digest('hex');
 }
+function stillKey(info, ordinal, colorVersion) {
+  const frame = info.frames[ordinal];
+  return crypto.createHash('sha256').update(JSON.stringify(['record-still-jpeg-v1', info.source.sha256,
+    info.preview, frame.id, frame.ptsTicks, frame.timeBase, frame.end, colorVersion])).digest('hex');
+}
 function audioInputArgs(file, origin, audio, start) {
   if (![origin, audio && audio.start, start].every(Number.isFinite)) fail('音频预热起点无效。', 'MEDIA_AUDIO_TIME');
   const trackStart = origin + audio.start, seek = Math.max(trackStart, origin + start - 2);
@@ -204,15 +209,22 @@ function createLongMedia({ cache, tools, helpers: h }) {
     for (const signal of signals) { if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true }); }
     const work = jobRun({ ...settings, signal: controller.signal }, async job => {
       unchanged(session);
-      const group = session.groups[ordinal], frames = info.frames.slice(group.first, group.last + 1);
-      const key = segmentKey(info, group, h.COLOR_VERSION);
+      const still = settings.stillOrdinal;
+      if (still !== undefined && (!Number.isSafeInteger(still) || !info.frames[still])) fail('标注静帧编号无效。');
+      const group = still === undefined ? session.groups[ordinal] : { first: still, last: still, start: info.frames[still].time, end: info.frames[still].end, still: true };
+      const frames = info.frames.slice(group.first, group.last + 1);
+      const key = still === undefined ? segmentKey(info, group, h.COLOR_VERSION) : stillKey(info, still, h.COLOR_VERSION);
       const parent = info.videoEncoding ? await proxyBatch(session, job.signal) : cache;
       const request = { sourceSha256: key, previewQuality: info.preview.quality, signal: job.signal };
       const tx = await (info.videoEncoding ? parent.beginSegment(request) : parent.begin(request)); job.tx = tx;
       let returned = null, primaryError = null;
       try {
         let manifest = await tx.readComplete({ colorVersion: h.COLOR_VERSION });
-        if (!manifest) manifest = await decode(job, tx, session, group, frames, key);
+        if (!manifest && settings.existingOnly) { await tx.abort(); return null; }
+        if (!manifest) manifest = await decode(job, tx, still === undefined ? session : { ...session, info: { ...info, videoEncoding: undefined, audio: null } }, group, frames, key);
+        if (still !== undefined && (manifest.frames.length !== 1 || manifest.frames[0].ptsTicks !== frames[0].ptsTicks ||
+            manifest.frames[0].timeBase.join(':') !== frames[0].timeBase.join(':') || manifest.audio || manifest.videoEncoding ||
+            manifest.metrics?.sourceSha256 !== info.source.sha256)) fail('标注静帧身份与原视频不一致。', 'MEDIA_PTS');
         h.check(job); unchanged(session);
         returned = await tx.finish(manifest, { ...manifest.source, filePath: session.snapshot.filePath });
         h.check(job); return returned;
@@ -255,6 +267,7 @@ function createLongMedia({ cache, tools, helpers: h }) {
     }
     const vf = args.indexOf('-vf') + 1;
     args[vf] = `trim=start=${videoStart.toFixed(9)},trim=end_frame=${expected.length},` + args[vf];
+    if (group.still) args.splice(args.indexOf('-f'), 0, '-frames:v', '1');
     if (hasAudio) {
       // Separate input seeks avoid forcing audio-only tail requests to decode
       // video between the final picture and the requested audio position.
@@ -341,7 +354,13 @@ function createLongMedia({ cache, tools, helpers: h }) {
     session.released = true; session.controller.abort();
     await closeProxyBatch(info); return sessions.delete(info);
   }
-  return { prepare, segment, release, proxyBudget, closeProxyBatch };
+  function still(info, ordinal, settings = {}) {
+    if (!Number.isSafeInteger(ordinal) || !info?.frames?.[ordinal]) return Promise.reject(new Error('标注静帧编号无效。'));
+    const at = info.segments.findIndex(group => ordinal >= group.first && ordinal <= group.last);
+    if (at < 0) return Promise.reject(new Error('标注静帧不属于当前源索引。'));
+    return segment(info, at, { ...settings, stillOrdinal: ordinal });
+  }
+  return { prepare, segment, still, release, proxyBudget, closeProxyBatch };
 }
 module.exports = { createLongMedia, LIMITS, packetIndex, groupFrames,
-  _test: Object.freeze({ AUDIO_PREROLL_VERSION, segmentKey, audioInputArgs }) };
+  _test: Object.freeze({ AUDIO_PREROLL_VERSION, segmentKey, stillKey, audioInputArgs }) };

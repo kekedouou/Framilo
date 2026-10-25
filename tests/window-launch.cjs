@@ -191,7 +191,9 @@ function launchModel(settings = {}) {
   if (settings.formal) {
     const ui = { canvas: {}, bindSession() {}, update() {}, destroy() {} };
     win.EVAUI = { createUI: () => ui };
+    win.EVARecordPreviews = { createRecordPreviews: () => ({ close: async () => {}, prioritize() {}, paint: async () => null }) };
     win.EVAPlayer = { Player: function () { return { async load() {},
+      auxiliaryBudget: () => ({ budget: { snapshot: () => ({ used: 0, limit: 1024 ** 3 }) }, evict: () => false }),
       snapshot: () => ({ state: 'paused', frameId: 0, frameOrdinal: 0, time: 0, budget: { used: 0, limit: 1024 ** 3 } }),
       async dispose() {}, async play() {}, async pause() {}, async seek() {}, async step() {} }; } };
     const modules = {

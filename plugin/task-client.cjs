@@ -1,7 +1,7 @@
 'use strict';
-// Control messages only. The existing Player reads JPEG/PCM bytes locally.
+// Guard pipe carries control metadata only. Cache I/O runs in a read thread.
 const fs = require('fs'), path = require('path'), crypto = require('crypto'), { spawn } = require('child_process');
-const { createCache } = require('./cache.cjs');
+const { createReadClient } = require('./cache-read-client.cjs');
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 function issue(code, message) { return Object.assign(new Error(message), { code }); }
 function verifyGuard(root) {
@@ -18,16 +18,18 @@ function verifyGuard(root) {
   return executable;
 }
 function createTaskClient(options) {
-  const root = fs.realpathSync(options.pluginRoot), local = createCache({ pluginRoot: root });
+  const root = fs.realpathSync(options.pluginRoot), local = createReadClient({ pluginRoot: root, onFailure: error => failed(error) });
   const key = sha(Buffer.from(root.toLowerCase())), runtime = options.runtime || process.execPath;
   const backgroundProgress=new Map(),retainedSegments=new Map(),closingSources=new Set(),retainedValues=new WeakSet();
+  const recordReads = new Set(), recordEntries = new Map(), pendingRecordReturns=new Set(),priorityBits=new WeakMap();
   function retainLocal(parent,ordinal,value){
     if(!/^[0-9a-f]{24}$/.test(parent)||!Number.isSafeInteger(ordinal)||ordinal<0||ordinal>=120000||!value?.videoEncoding)throw Error('代理段登记无效。');
     let group=retainedSegments.get(parent);if(!group){group=new Map();retainedSegments.set(parent,group);}
-    const prior=group.get(ordinal);if(prior){if(prior.leaseId!==value.leaseId)throw Error('代理段租约冲突。');return prior;}
-    local.adoptReadLease(value,taskOwner);retainedValues.add(value);group.set(ordinal,value);return value;
+    const prior=group.get(ordinal);if(prior){if(prior.value.leaseId!==value.leaseId)throw Error('代理段租约冲突。');return prior.promise;}
+    const entry={value,ready:false,promise:null};group.set(ordinal,entry);retainedValues.add(value);
+    entry.promise=local.adopt(value,taskOwner).then(()=>{entry.ready=true;return value;});entry.promise.catch(()=>{});return entry.promise;
   }
-  function detachRetained(parent){const group=retainedSegments.get(parent);if(group)for(const value of group.values())local.detachReadLease(value);retainedSegments.delete(parent);}
+  async function detachRetained(parent){const group=retainedSegments.get(parent);if(group)for(const [ordinal,entry] of group){await entry.promise.catch(()=>{});await local.detach(entry.value);group.delete(ordinal);}retainedSegments.delete(parent);}
   let host = null, ready = null, serial = 0, closing = null, ended = false, failure = null, guardFinished = false;
   let readyResolve, readyReject, exitResolve;
   let taskOwner = null;
@@ -68,7 +70,7 @@ function createTaskClient(options) {
             }
             else if (value.type === 'guard' && value.event === 'finished') guardFinished = value.exitCode === 0;
             else if (value.type === 'progress') { const request = pending.get(value.id); if (request && request.onProgress) request.onProgress(value.value); }
-            else if (value.type === 'proxy-segment') {if(!closingSources.has(value.parentLeaseId))retainLocal(value.parentLeaseId,value.ordinal,value.value);}
+            else if (value.type === 'proxy-segment') {if(!closingSources.has(value.parentLeaseId))retainLocal(value.parentLeaseId,value.ordinal,value.value).catch(failed);}
             else if (value.type === 'proxy-progress') {if(closingSources.has(value.leaseId))continue;backgroundProgress.set(value.leaseId,value.value);if(options.onBackground)options.onBackground(value.value);}
             else if (value.type === 'response') {
               const request = pending.get(value.id); if (!request) throw new Error('任务响应编号无效。'); pending.delete(value.id);
@@ -96,17 +98,61 @@ function createTaskClient(options) {
     if (settings.signal) { settings.signal.addEventListener('abort', cancel, { once: true }); if (settings.signal.aborted) cancel(); }
     try { return await work; } finally { if (settings.signal) settings.signal.removeEventListener('abort', cancel); }
   }
+  function control(method, info, fields) {
+    if (!leases.has(info) || closingSources.has(info.leaseId) || failure || !taskOwner || ended) return;
+    write({method,leaseId:info.leaseId,...fields});
+  }
+  function segmentAt(info,time){let low=0,high=info.segments.length;while(low<high){const mid=(low+high)>>>1;if(info.segments[mid].start<=time)low=mid+1;else high=mid;}return Math.max(0,low-1);}
+  async function returnRecord(token){
+    const {entry,value,parent}=token;
+    if(entry&&!entry.users){await entry.promise.catch(()=>{});await local.detach(entry.info);if(recordEntries.get(value.leaseId)===entry)recordEntries.delete(value.leaseId);}
+    await ask('releaseRecord',{leaseId:parent,recordLeaseId:value.leaseId});pendingRecordReturns.delete(token);
+  }
+  function readRecordFrame(info,ordinal,settings={}){
+    if(!leases.has(info)||closingSources.has(info.leaseId)||!Number.isSafeInteger(ordinal)||!info.frames[ordinal])return Promise.reject(Error('标注帧会话已失效。'));
+    if(recordReads.size>=2)return Promise.reject(Object.assign(Error('标注帧读取已满。'),{code:'CACHE_READER_BUSY'}));
+    const controller=new AbortController(),abort=()=>controller.abort();if(settings.signal){settings.signal.addEventListener('abort',abort,{once:true});if(settings.signal.aborted)abort();}
+    const task={parent:info.leaseId,controller,promise:null};
+    task.promise=(async()=>{
+      let value=null,entry=null;
+      try{
+        if(controller.signal.aborted)throw issue('MEDIA_CANCELLED','标注帧读取已取消。');
+        if(!info.streaming){const bytes=await local.readAsset(info,info.frames[ordinal].file);if(controller.signal.aborted)throw issue('MEDIA_CANCELLED','标注帧读取已取消。');return {bytes,width:info.width,height:info.height,ordinal};}
+        value=await ask('recordStill',{leaseId:info.leaseId,ordinal,...(settings.priority==='idle'?{priority:'idle'}:{})},{signal:controller.signal});
+        entry=recordEntries.get(value.leaseId);
+        if(!entry){entry={info:value,users:0,promise:local.adopt(value,taskOwner)};recordEntries.set(value.leaseId,entry);entry.promise.catch(()=>{});}
+        entry.users++;await entry.promise;
+        if(controller.signal.aborted)throw issue('MEDIA_CANCELLED','标注帧读取已取消。');
+        const bytes=await local.readAsset(entry.info,entry.info.frames[0].file);
+        if(controller.signal.aborted)throw issue('MEDIA_CANCELLED','标注帧读取已取消。');
+        return {bytes,width:entry.info.width,height:entry.info.height,ordinal};
+      }finally{
+        if(settings.signal)settings.signal.removeEventListener('abort',abort);
+        if(entry)entry.users--;
+        if(value){const token={entry,value,parent:info.leaseId};pendingRecordReturns.add(token);await returnRecord(token);}
+      }
+    })();recordReads.add(task);task.promise.then(()=>recordReads.delete(task),()=>recordReads.delete(task));return task.promise;
+  }
+  async function drainRecords(parent){const tasks=[...recordReads].filter(task=>!parent||task.parent===parent);tasks.forEach(task=>task.controller.abort());await Promise.allSettled(tasks.map(task=>task.promise));
+    // A detach/release failure keeps the handle and must prevent false close.
+    const returns=await Promise.allSettled([...pendingRecordReturns].filter(token=>!parent||token.parent===parent).map(returnRecord));
+    const bad=returns.find(result=>result.status==='rejected');if(bad)throw bad.reason;
+    if([...pendingRecordReturns].some(token=>!parent||token.parent===parent))throw Error('标注静帧读取占用尚未交还。');}
   const cache = {
     readAsset: (info, file) => failure ? Promise.reject(failure) : readers.has(info) ? readers.get(info).frame(file) : local.readAsset(info, file),
     readAudioSegment: (info, ordinal) => readers.get(info).audio(ordinal),
-    target: (info, time) => { if (readers.has(info)) readers.get(info).cancelExcept(time); },
+    target: (info, time) => { if (readers.has(info)) readers.get(info).cancelExcept(time);if(Number.isFinite(time))control('target',info,{time}); },
+    prioritizeRecords:(info,value)=>{const valid=items=>Array.isArray(items)&&items.length<=120000&&items.every(n=>Number.isSafeInteger(n)&&n>=0&&n<info.frames.length);if(!value||!valid(value.all)||!valid(value.visible)||info.frames.length>120000)throw Error('标注优先帧无效。');const prior=priorityBits.get(info)||{};for(const kind of ['all','visible']){const bits=Buffer.alloc(Math.ceil(info.frames.length/8));for(const n of value[kind])bits[n>>>3]|=1<<(n&7);const encoded=bits.toString('base64');if(prior[kind]!==encoded){control('prioritizeRecords',info,{kind,bits:encoded});prior[kind]=encoded;}}priorityBits.set(info,prior);},
+    isFrameReady:(info,ordinal)=>{if(!leases.has(info)||closingSources.has(info.leaseId)||!Number.isSafeInteger(ordinal)||!info.frames[ordinal])return false;if(!info.streaming)return true;const segment=segmentAt(info,info.frames[ordinal].time);return retainedSegments.get(info.leaseId)?.get(segment)?.ready===true||readers.get(info)?.isFrameReady(ordinal)===true;},
+    readRecordFrame,
     prefetch: (info, time, loop) => { if (readers.has(info)) readers.get(info).prefetch(time, loop); },
     cancelReads: info => { if (readers.has(info)) readers.get(info).cancelAll(); },
     readFrameBatch: (...args) => failure ? Promise.reject(failure) : local.readFrameBatch(...args),
     async release(info) { if (!leases.has(info)) return false; closingSources.add(info.leaseId);
+      await drainRecords(info.leaseId);
       if (readers.has(info)) { await readers.get(info).close(); readers.delete(info); }
-      else local.detachReadLease(info);
-      detachRetained(info.leaseId);
+      else await local.detach(info);
+      await detachRetained(info.leaseId);
       await ask('release', { leaseId: info.leaseId }); leases.delete(info); backgroundProgress.delete(info.leaseId); closingSources.delete(info.leaseId); return true; },
     clearOther: settings => ask('clearOther', { settings }),
     backgroundStatus: info=>backgroundProgress.get(info.leaseId)||null,
@@ -115,34 +161,35 @@ function createTaskClient(options) {
   const media = { async prepare(snapshot, settings = {}) {
     const tools = await options.discoverTools(settings.signal);
     const info = require('./media-wire.cjs').unpackInfo(await ask('prepare', { snapshot, tools, previewQuality: settings.previewQuality, playbackBackend: settings.playbackBackend }, settings));
-    if (settings.signal && settings.signal.aborted) { closingSources.add(info.leaseId);detachRetained(info.leaseId);await ask('release', { leaseId: info.leaseId });backgroundProgress.delete(info.leaseId);closingSources.delete(info.leaseId);throw issue('MEDIA_CANCELLED', '视频准备已取消。'); }
+    if (settings.signal && settings.signal.aborted) { closingSources.add(info.leaseId);await detachRetained(info.leaseId);await ask('release', { leaseId: info.leaseId });backgroundProgress.delete(info.leaseId);closingSources.delete(info.leaseId);throw issue('MEDIA_CANCELLED', '视频准备已取消。'); }
     if (info.streaming) {
       const reader = require('./segment-reader.cjs').createSegmentReader({ info,
         acquire: async (ordinal, signal) => {
-          const retained=retainedSegments.get(info.leaseId)?.get(ordinal);if(retained)return retained;
+          const retained=retainedSegments.get(info.leaseId)?.get(ordinal);if(retained)return retained.promise;
           const value = await ask('segment', { leaseId: info.leaseId, ordinal }, { signal });
-          try { if(info.videoEncoding){const retained=retainLocal(info.leaseId,ordinal,value);if(signal.aborted)throw issue('MEDIA_CANCELLED','分段准备已取消。');return retained;} if (signal.aborted) throw issue('MEDIA_CANCELLED', '分段准备已取消。'); local.adoptReadLease(value, taskOwner); }
+          try { if(info.videoEncoding){const retained=await retainLocal(info.leaseId,ordinal,value);if(signal.aborted)throw issue('MEDIA_CANCELLED','分段准备已取消。');return retained;} if (signal.aborted) throw issue('MEDIA_CANCELLED', '分段准备已取消。'); await local.adopt(value, taskOwner); }
           catch (error) { if(!info.videoEncoding)await ask('release', { leaseId: value.leaseId }); throw error; }
           return value;
-        }, release: async value => { if(retainedValues.has(value))return; local.detachReadLease(value); await ask('release', { leaseId: value.leaseId }); },
+        }, release: async value => { if(retainedValues.has(value))return; await local.detach(value); await ask('release', { leaseId: value.leaseId }); },
         readAsset: (value, file) => local.readAsset(value, file) });
       readers.set(info, reader);
-    } else try { local.adoptReadLease(info, taskOwner); } catch (error) { await ask('release', { leaseId: info.leaseId }); throw error; }
+    } else try { await local.adopt(info, taskOwner); } catch (error) { await ask('release', { leaseId: info.leaseId }); throw error; }
     leases.add(info); return info;
   } };
   function close() {
     if (closing) return closing;
     closing = (async () => {
-      if (!host && !ready) return { status: 'closed' };
+      if (!host && !ready) {await local.close();return { status: 'closed' };}
       beginClose();for(const info of leases)closingSources.add(info.leaseId);
+      await drainRecords();
       for (const reader of readers.values()) await reader.close(); readers.clear();
-      for (const info of leases) if (!info.streaming) local.detachReadLease(info);
-      for(const parent of retainedSegments.keys())detachRetained(parent);
+      for (const info of leases) if (!info.streaming) await local.detach(info);
+      for(const parent of retainedSegments.keys())await detachRetained(parent);
       leases.clear(); backgroundProgress.clear();
       try { if (!failure && !ended) await ask('close'); }
       catch (error) { if (!guardCancelled) throw error; }
       finally { if (host && !ended) host.stdin.end(); await exited; }
-      if (failure) throw failure; return { status: 'closed' };
+      await local.close();if (failure) throw failure; return { status: 'closed' };
     })(); closing.catch(() => {}); return closing;
   }
   function beginClose() { if (host && !ended && host.stdin.writable) write({ type: 'guard', event: 'closing' }); }

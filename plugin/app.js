@@ -84,6 +84,9 @@
       const cache = { readAsset: (...args) => backend.cache.readAsset(...args),
         readAudioSegment: (...args) => backend.cache.readAudioSegment(...args),
         target: (...args) => backend.cache.target(...args),
+        isFrameReady: (...args) => !!backend?.cache?.isFrameReady?.(...args),
+        prioritizeRecords: (...args) => backend?.cache?.prioritizeRecords?.(...args),
+        readRecordFrame: (...args) => backend.cache.readRecordFrame(...args),
         backgroundStatus: (...args) => backend?.cache?.backgroundStatus?.(...args) || null,
         prefetch: (...args) => backend.cache.prefetch(...args),
         cancelReads: (...args) => backend.cache.cancelReads(...args),
@@ -113,6 +116,15 @@
       const exports = { create: (...args) => backend.exports.create(...args), publish: (...args) => backend.exports.publish(...args),
         discard: (...args) => backend.exports.discard(...args) };
       session = createSession({ eagleAdapter: sessionAdapter, media, cache, now, memoryPreferences: preferences, annotationStore, exports,
+        createPreviewServices: ({ info, player, isCurrent, onChange, read, busy, register }) => {
+          const { budget, evict } = player.auxiliaryBudget();
+          const quick = info.videoEncoding ? window.EVAQuickPreview.createQuickPreview({ canvas: ui.canvas, info, budget, evict, onChange,
+              sourceUrl: require('url').pathToFileURL(info.source.filePath).href,
+              isCurrent: () => isCurrent() && (player.snapshot().pendingTargets > 0 || player.snapshot().state === 'loading') }) : null;
+          register('quick', quick);
+          const records = window.EVARecordPreviews.createRecordPreviews({ info, budget, evict, read, isCurrent, busy });
+          register('records', records); return { quick, records };
+        },
         createPlayer: options => {
           const value = session.snapshot(), identity = value.sourceIdentity;
           const binding = Object.freeze({ sessionEpoch: value.epoch, libraryEpoch: value.libraryEpoch,
