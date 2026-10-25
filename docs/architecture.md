@@ -2,6 +2,8 @@
 
 ## E-33 首版正式分段架构
 
+2026-10-25当前分段JPEG尚未满足用户跟手目标；常驻后端、帧内代理与GPU数据通路进入[可行性评审](experiments/E33/decoder-review.md)。现行实现见下文，候选不冒充已采用架构；本轮没有变更媒体或持久数据接口。
+
 ### 正式模块与数据生命周期
 
 app的延迟后台cache适配须完整转发readAudioSegment、target、cancelReads以及旧接口；后台在media.prepare时创建，不能提前捕获空backend。Session向Player绑定原始info身份，不能以复制后的帧清单替代租约持有者。

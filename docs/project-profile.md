@@ -1,8 +1,10 @@
 # 项目说明
 
-当前：E-33长视频首版未通过用户体验验收；已修复预取过晚、跨段重复准备和释放阻塞显示，720p/60fps独立Chrome连续播放及快速跳转复验通过。真实Eagle修复后体验待确认。
+当前：E-33长视频仍未达到用户要求的跟手体验；正在评审常驻解码、磁盘代理与有界RAM组合，保留JPEG路径。新后端未实现或验证，详见本阶段方向与验收草案。
 
 ## E-33 新增开发文件
+
+长片新后端仍在[方向与验收评审](experiments/E33/decoder-review.md)，常驻解码和帧内代理未实现；JPEG继续保留。
 
 plugin/long-media.cjs负责轻量帧索引、分段解码和实际音频尾部检测；segment-reader.cjs负责分段租约/取消/释放；segment-audio.cjs负责有界PCM与Web Audio排程。正式plugin不引用prototypes/long-video中的比较或候选模型。完整源文件哈希与轻量帧表仍在首帧前读取，整片JPEG/PCM不再是长视频就绪前提。scripts/check-long-media.cjs显式执行合成集成检查，tests/long-playback.cjs为默认模型检查。
 
