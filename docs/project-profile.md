@@ -1,6 +1,6 @@
 # 项目说明
 
-当前E-36取消故障修复：已复现旧分段/PCM取消污染新播放请求，以及缓存AbortError跨进程变为普通失败；改为等待旧任务收尾后有界接管，关闭和真实错误不重试，首帧保留原错误码。12项取消回归与正式守护/独立Chrome合成媒体检查通过；用户截图未有宿主调用栈，不能唯一归因或声称全部问题解决。JPEG整片准备、加载中可切换模式及末帧修复保留，真实Eagle体验仍待验。
+当前E-36拖动断连修复：用户确认“任务负责人异常退出：0”发生于拖动；隔离真实Windows管道复现密集位置消息使32项队列超时断开。位置/两类记录优先级改为各通道一条在途＋一条最新替代，worker接收后回执，不等待媒体完成；准确帧和取消请求保持原路径。5000次突发及Eagle纯Node16协议检查通过，真实Eagle窗口拖动仍待确认。此前取消/末帧与JPEG整片策略修复保留。
 
 
 E36宿主兼容：上一轮修复后用户仍遇到灰屏，实际日志确认renderer原生崩溃（0x80000003），尚未确定具体原生触发函数。现改为Electron renderer直接选有界兼容读取队列，不再试建Node Worker，元数据复制移除v8序列化。普通Node保留线程；校验、2并发/64请求和租约关闭屏障保持。兼容分支同步元数据检查仍在renderer，旧线程性能不代表此分支；真实Eagle恢复与流畅度仍待验。
@@ -135,7 +135,7 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 | plugin/cache.cjs | 文件所有权、路径、预算、锁、完整提交、淘汰与清理；openBatch/beginSegment/snapshot/close、双槽目标记录、失败退款与原计划恢复；完整manifest备忘仍每次SHA核对字节，不备忘可变归属记录，不操作UI或素材元数据 |
 | plugin/preferences.cjs | RAM档位/物理上限、画质、JPEG/代理方式与交互偏好、旧格式只读兼容和本地原子保存；不访问素材库或清理媒体缓存 |
 | plugin/process-identity.cjs | Windows进程出生/后代只读证明；独占句柄核对后接管空writer记录；未知时保留，不终止进程、不调用Eagle API |
-| plugin/task-client.cjs、task-worker.cjs、native/task-host.cs | 窗口与后台请求、Windows互斥与任务组；worker单队列处理同源抢占及维护/换源/关闭时batch收尾，客户端原租约借读；控制消息不传图片，历史基础见A-07 |
+| plugin/task-client.cjs、task-worker.cjs、native/task-host.cs | 窗口与后台请求、按回执合并最新位置/记录意图、Windows互斥与任务组；worker单队列处理同源抢占及维护/换源/关闭时batch收尾，客户端原租约借读；控制消息不传图片，历史基础见A-07 |
 | plugin/frame-pack.cjs | 校验集中JPEG/AVC帧包的纯布局及videoEncoding；物理文件读写仍归cache |
 | plugin/frame-index.cjs | 纯时间/源帧映射；整数 PTS、呈现编号与源时间关系 |
 | plugin/player.js | Canvas、Web Audio、JPEG/代理解码注入与调度；通过缓存读取/预算句柄取得资源，不调用标注API |

@@ -58,3 +58,6 @@ Player负责有界RAM和准确提交；快速临时预览为独立可取消服�
 新增独立有界检查：`scripts/check-startup-lifecycle.cjs`，输出`verification-runs/e36-startup-lifecycle/`，最多4轮，每轮180秒、256MiB scratch，证据合计4MiB。仅生成45秒320×180/6fps有声合成源，使用现有FFmpeg、正式task-client/guard/worker及renderer兼容读队列；不接素材库、不修改原视频/标注/用户缓存。成功确认任务退出后按文件身份/hash清理自有scratch，失败保留证据；不复用封存E36主关预算。独立浏览器/纯Node不能冒充Eagle窗口验收。
 
 第3/4轮增加`--browser`：隔离Chrome调用正式Player/VideoDecoder/Web Audio，测冷首帧、五次准确跳转、1.3秒播放、五次播放被定位打断、再次播放/暂停及关闭预算归零。FFmpeg仍只有上述合成源，浏览器临时配置计入同轮预算；该短链路不承担性能阈值或物理音画验收。最终4/4预算封存；结果与失败单列，不再自动重跑。
+
+## 拖动导致任务退出的通信复查（2026-10-25）
+用户确认“视频任务负责人异常退出：0”在拖动时发生。检查guard的32项输入队列/1秒满队列断开、客户端最新位置消息及worker关闭协议。先用真实Windows管道和隔离模拟worker复现，不把模拟worker当作Eagle验收。新增verification-runs/e36-guard-flow预算：最多4轮，每轮120秒、scratch≤2MiB、证据合计2MiB；只复制守护构建/生成协议夹具，不生成媒体、不访问素材库/用户缓存。记录旧失败与新结果，退出确认后按身份/hash清理本轮文件。修复应保持取消、关闭期限和资源校验，最新位置可合并，可靠请求不得静默丢失。

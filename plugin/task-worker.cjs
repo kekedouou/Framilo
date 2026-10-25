@@ -153,6 +153,10 @@ input.on('line', line => {
   let message; try { message = JSON.parse(line); } catch (_) { shutdown(); return; }
   if (message.method === 'cancel') { const controller = controllers.get(message.id); if (controller) controller.abort(); return; }
   if(['target','prioritizeRecords'].includes(message.method)){
+    // Receipt acknowledges pipe consumption, not completed media preparation.
+    // Always acknowledge even a retired source so no intention lane is stuck.
+    if (Number.isSafeInteger(message.controlId) && message.controlId > 0)
+      send({type:'control-ack',id:message.controlId});
     // These are latest intentions, not jobs. Never append every pointer move to
     // the writer queue or abort an in-flight preparation for the same segment.
     if(stopping)return;const info=handles.get(message.leaseId),bg=backgrounds.get(message.leaseId);if(!info||!bg)return;

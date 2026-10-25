@@ -37,8 +37,23 @@ function createTaskClient(options) {
   const exited = new Promise(resolve => { exitResolve = resolve; });
   const pending = new Map(), leases = new Set();
   const readers = new Map();
+  // Each intention lane has at most one message in the OS pipe and one latest
+  // replacement. A slow worker must not accumulate every pointer movement.
+  const intentions = new Map(), controlAcks = new Map(); let controlSerial = 0, closeSent = false;
+  function flushIntention(key, lane) {
+    if (lane.sent || !lane.next || closing || failure || ended || closingSources.has(lane.leaseId)) return;
+    const value = lane.next; lane.next = null; lane.sent = ++controlSerial;
+    controlAcks.set(lane.sent, key);
+    try { write({ ...value, controlId: lane.sent }); } catch (error) { failed(error); }
+  }
+  function retireIntentions(parent) {
+    for (const [key, lane] of intentions) if (!parent || lane.leaseId === parent) {
+      lane.next = null; if (!lane.sent) intentions.delete(key);
+    }
+  }
   function failed(error) {
     if (failure) return; failure = error;
+    intentions.clear(); controlAcks.clear();
     if (readyReject) readyReject(error);
     for (const value of pending.values()) value.reject(error); pending.clear();
     if (!closing && options.onFailure) options.onFailure(error);
@@ -69,6 +84,13 @@ function createTaskClient(options) {
               guardCancelled = true; guardFinished = true; readyReject(issue('MEDIA_CANCELLED', '视频准备已取消。'));
             }
             else if (value.type === 'guard' && value.event === 'finished') guardFinished = value.exitCode === 0;
+            else if (value.type === 'control-ack') {
+              const key = controlAcks.get(value.id), lane = intentions.get(key);
+              if (!lane || lane.sent !== value.id) throw new Error('位置消息回执编号无效。');
+              controlAcks.delete(value.id); lane.sent = 0;
+              if (closing || closingSources.has(lane.leaseId) || !lane.next) intentions.delete(key);
+              else flushIntention(key, lane);
+            }
             else if (value.type === 'progress') { const request = pending.get(value.id); if (request && request.onProgress) request.onProgress(value.value); }
             else if (value.type === 'proxy-segment') {if(!closingSources.has(value.parentLeaseId))retainLocal(value.parentLeaseId,value.ordinal,value.value).catch(failed);}
             else if (value.type === 'proxy-progress') {if(closingSources.has(value.leaseId))continue;backgroundProgress.set(value.leaseId,value.value);if(options.onBackground)options.onBackground(value.value);}
@@ -82,7 +104,9 @@ function createTaskClient(options) {
       host.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-8192); });
       host.stdin.on('error', error => failed(error)); host.once('error', error => { failed(error); ended = true; exitResolve(); });
       host.once('close', code => { ended = true;
-        if (!guardFinished || code !== 0 || pending.size) failed(issue('TASK_OWNER_EXITED', '视频任务负责人异常退出：' + (stderr || String(code))));
+        if (!guardFinished || code !== 0 || pending.size || !closeSent && !guardCancelled) failed(issue('TASK_OWNER_EXITED',
+          '视频任务负责人异常退出：' + (stderr || String(code)) + '（完成回执：' + guardFinished + '；未完成请求：' +
+          [...pending.values()].slice(0,4).map(v=>v.method).join(',') + '；位置回执：' + controlAcks.size + '）'));
         exitResolve(); });
     } catch (error) { failed(error); ended = true; exitResolve(); }
     return ready;
@@ -91,7 +115,8 @@ function createTaskClient(options) {
     await start(); if (failure) throw failure;
     const id = ++serial;
     const work = new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject, onProgress: settings.onProgress });
+      pending.set(id, { resolve, reject, method, onProgress: settings.onProgress });
+      if (method === 'close') closeSent = true;
       try { write({ id, method, ...fields }); } catch (error) { pending.delete(id); reject(error); }
     });
     const cancel = () => { try { write({ id, method: 'cancel' }); } catch (_) {} };
@@ -100,7 +125,10 @@ function createTaskClient(options) {
   }
   function control(method, info, fields) {
     if (!leases.has(info) || closingSources.has(info.leaseId) || failure || !taskOwner || ended) return;
-    write({method,leaseId:info.leaseId,...fields});
+    const key = info.leaseId + ':' + method + ':' + (fields.kind || '');
+    let lane = intentions.get(key);
+    if (!lane) { lane = { leaseId: info.leaseId, sent: 0, next: null }; intentions.set(key, lane); }
+    lane.next = {method,leaseId:info.leaseId,...fields}; flushIntention(key, lane);
   }
   function segmentAt(info,time){let low=0,high=info.segments.length;while(low<high){const mid=(low+high)>>>1;if(info.segments[mid].start<=time)low=mid+1;else high=mid;}return Math.max(0,low-1);}
   async function returnRecord(token){
@@ -149,6 +177,7 @@ function createTaskClient(options) {
     cancelReads: info => { if (readers.has(info)) readers.get(info).cancelAll(); },
     readFrameBatch: (...args) => failure ? Promise.reject(failure) : local.readFrameBatch(...args),
     async release(info) { if (!leases.has(info)) return false; closingSources.add(info.leaseId);
+      retireIntentions(info.leaseId);
       await drainRecords(info.leaseId);
       if (readers.has(info)) { await readers.get(info).close(); readers.delete(info); }
       else await local.detach(info);
@@ -180,7 +209,7 @@ function createTaskClient(options) {
     if (closing) return closing;
     closing = (async () => {
       if (!host && !ready) {await local.close();return { status: 'closed' };}
-      beginClose();for(const info of leases)closingSources.add(info.leaseId);
+      beginClose();for(const info of leases)closingSources.add(info.leaseId);retireIntentions();
       await drainRecords();
       for (const reader of readers.values()) await reader.close(); readers.clear();
       for (const info of leases) if (!info.streaming) await local.detach(info);

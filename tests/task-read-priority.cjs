@@ -14,7 +14,7 @@ function client(options={}){
   const emit=value=>host.stdout.emit('data',JSON.stringify(value)+'\n');let failReturn=!!options.failReturn;
   const read={async adopt(value,taskOwner){events.push(['adopt',value.leaseId,taskOwner]);if(options.adopt)await options.adopt(value);},async readAsset(value,file){events.push(['read',value.leaseId,file]);if(options.read)await options.read(value);return Buffer.from('jpeg-or-avc');},async detach(value){events.push(['detach',value.leaseId]);return true;},async readFrameBatch(){return [];},async inventory(){return {readOnly:true};},async close(){events.push(['thread-close']);}};
   host.stdin=new EventEmitter();host.stdin.writable=true;host.stdin.end=()=>{};host.stdin.write=text=>{
-    assert(Buffer.byteLength(text)<=32768);const value=JSON.parse(text);messages.push(value);if(value.type==='guard'||['target','prioritizeRecords','cancel'].includes(value.method))return;
+    assert(Buffer.byteLength(text)<=32768);const value=JSON.parse(text);messages.push(value);if(value.controlId){if(!options.holdAcks)queueMicrotask(()=>emit({type:'control-ack',id:value.controlId}));return;}if(value.type==='guard'||value.method==='cancel')return;
     queueMicrotask(()=>{let result=true,error;
       if(value.method==='prepare')result=options.count>1000?{modelPacked:true}:info;
       if(value.method==='segment'){let segment=segments.get(value.ordinal);if(!segment){const range=info.segments[value.ordinal];segment={leaseId:String(value.ordinal+1).repeat(24),videoEncoding:info.videoEncoding,frames:info.frames.slice(range.first,range.last+1).map((f,n)=>({...f,file:n+'.avc'}))};segments.set(value.ordinal,segment);}result=segment;}
@@ -30,7 +30,7 @@ function client(options={}){
       if(name==='child_process')return {spawn(){queueMicrotask(()=>emit({type:'ready',taskOwner:owner}));return host;}};
       if(name==='./cache-read-client.cjs')return {createReadClient:()=>read};if(name==='./media-wire.cjs')return {unpackInfo:value=>value.modelPacked?info:value};return require(name.startsWith('.')?path.resolve(root,name):name);}
   },{filename:'plugin/task-client.cjs'});
-  const api=module.exports.createTaskClient({pluginRoot:root,discoverTools:async()=>({})});return {api,info,messages,events,emit,prepare:()=>api.media.prepare({}),read};
+  const api=module.exports.createTaskClient({pluginRoot:root,discoverTools:async()=>({})});return {api,info,messages,events,emit,host,prepare:()=>api.media.prepare({}),read};
 }
 function worker(options={}){
   const input=new EventEmitter(),timers=new Map(),responses=new Map(),messages=[],calls=[],info=manifest(),records=new Map();let next=0,timer=0;
@@ -51,7 +51,36 @@ async function main(){let count=0;const test=async(name,fn)=>{await fn();count++
   });
   await test('120000 annotation ordinals use bounded bitmaps and target intentions need no response IDs',async()=>{
     const h=client({count:120000}),info=await h.prepare(),all=Array.from({length:120000},(_,n)=>n);h.api.cache.prioritizeRecords(info,{all,visible:[0,119999]});h.api.cache.prioritizeRecords(info,{all,visible:[0,119999]});for(let n=0;n<240;n++)h.api.cache.target(info,n);
-    const values=h.messages.filter(v=>v.method==='prioritizeRecords');assert.equal(values.length,2);assert(values.every(value=>Buffer.byteLength(JSON.stringify(value))<32768&&!value.id));assert.equal(Buffer.from(values[0].bits,'base64').length,15000);assert.equal(h.messages.filter(v=>v.method==='target').length,240);await h.api.cache.release(info);await h.api.close();
+    const values=h.messages.filter(v=>v.method==='prioritizeRecords');assert.equal(values.length,2);assert(values.every(value=>Buffer.byteLength(JSON.stringify(value))<32768&&!value.id));assert.equal(Buffer.from(values[0].bits,'base64').length,15000);assert.equal(h.messages.filter(v=>v.method==='target').length,1);await flush();assert.equal(h.messages.filter(v=>v.method==='target').length,2);assert.equal(h.messages.filter(v=>v.method==='target').at(-1).time,239);await h.api.cache.release(info);await h.api.close();
+  });
+  await test('blocked transport retains only latest target and independent all/visible record intentions',async()=>{
+    const h=client({holdAcks:true}),info=await h.prepare();
+    for(let n=0;n<5000;n++){h.api.cache.target(info,n);h.api.cache.prioritizeRecords(info,{all:[n%4],visible:[(n+1)%4]});}
+    const first=h.messages.filter(v=>v.controlId);assert.equal(first.length,3);assert.equal((await h.api.ping()),true);
+    for(const value of first)h.emit({type:'control-ack',id:value.controlId});
+    const last=h.messages.filter(v=>v.controlId).slice(3);assert.equal(last.length,3);assert.equal(last.find(v=>v.method==='target').time,4999);
+    assert.equal(Buffer.from(last.find(v=>v.kind==='all').bits,'base64')[0],8);
+    assert.equal(Buffer.from(last.find(v=>v.kind==='visible').bits,'base64')[0],1);
+    for(const value of last)h.emit({type:'control-ack',id:value.controlId});await h.api.cache.release(info);await h.api.close();
+  });
+  await test('release drops deferred old targets; late receipt cannot send them into a retired source',async()=>{
+    const h=client({holdAcks:true}),info=await h.prepare();h.api.cache.target(info,0);h.api.cache.target(info,3);
+    const first=h.messages.find(v=>v.controlId);await h.api.cache.release(info);h.emit({type:'control-ack',id:first.controlId});
+    assert.equal(h.messages.filter(v=>v.controlId).length,1);await h.api.close();
+  });
+  await test('closing drops latest intention while awaiting a prior receipt',async()=>{
+    const h=client({holdAcks:true}),info=await h.prepare();h.api.cache.target(info,0);h.api.cache.target(info,3);
+    const first=h.messages.find(v=>v.controlId),closed=h.api.close();h.emit({type:'control-ack',id:first.controlId});await closed;
+    assert.equal(h.messages.filter(v=>v.controlId).length,1);
+  });
+  await test('unsolicited exit zero is still failure even with no request pending',async()=>{
+    const h=client();await h.api.ping();h.emit({type:'guard',event:'finished',exitCode:0});h.host.emit('close',0);
+    await assert.rejects(h.api.ping(),e=>e.code==='TASK_OWNER_EXITED');await assert.rejects(h.api.close(),e=>e.code==='TASK_OWNER_EXITED');
+  });
+  await test('worker receipts cover active and retired sources without queuing work',async()=>{
+    const h=worker();await h.start('prepare');h.control({method:'target',leaseId:h.info.leaseId,time:3,controlId:1});
+    h.control({method:'prioritizeRecords',leaseId:'retired',kind:'all',bits:'AA==',controlId:2});
+    assert.deepEqual(h.messages.filter(v=>v.type==='control-ack').map(v=>v.id),[1,2]);await h.start('release',{leaseId:h.info.leaseId});await h.start('close');
   });
   await test('source release waits for cancelled record byte reads, detach and record return before release',async()=>{
     const gate=deferred(),h=client({read:()=>gate.promise}),info=await h.prepare();const read=h.api.cache.readRecordFrame(info,1).catch(error=>error);await flush();let done=false;const closing=h.api.cache.release(info).then(()=>done=true);await flush();assert(!done);gate.resolve();const result=await read;assert.equal(result.code,'MEDIA_CANCELLED');await closing;
