@@ -9,6 +9,20 @@ const { OWNER, RECIPE } = require('./cache.cjs');
 const LIMITS = Object.freeze({ frames: 120000, indexBytes: 64 * 1024 ** 2,
   segmentFrames: 120, segmentSeconds: 2, segmentBytes: 64 * 1024 ** 2, timeoutMs: 30000 });
 const fail = (message, code = 'LONG_MEDIA_INVALID') => { throw Object.assign(new Error(message), { code }); };
+const AUDIO_PREROLL_VERSION = 'audio-preroll-v2';
+function segmentKey(info, group, colorVersion) {
+  return crypto.createHash('sha256').update(JSON.stringify([info.videoEncoding ? 'avc-idr-v1' : 'segments-v1',
+    ...(info.videoEncoding ? [info.videoEncoding] : []), info.source.sha256, info.preview, group, colorVersion,
+    ...(info.audio ? [AUDIO_PREROLL_VERSION] : [])])).digest('hex');
+}
+function audioInputArgs(file, origin, audio, start) {
+  if (![origin, audio && audio.start, start].every(Number.isFinite)) fail('音频预热起点无效。', 'MEDIA_AUDIO_TIME');
+  const trackStart = origin + audio.start, seek = Math.max(trackStart, origin + start - 2);
+  // Even input -ss at the exact track start can discard AAC decoder priming.
+  // Sequentially decode that initial padding; the existing atrim keeps the
+  // requested source-clock interval. Later positions retain the 2s overlap.
+  return [...(seek > trackStart ? ['-noaccurate_seek', '-seek_timestamp', '1', '-ss', seek.toFixed(9)] : []), '-i', file];
+}
 function packetIndex(text, video, helpers) {
   const end = helpers.videoEnd({ streams: [video] });
   const pts = [];
@@ -43,7 +57,69 @@ function groupFrames(frames, duration) {
   return groups;
 }
 function createLongMedia({ cache, tools, helpers: h }) {
-  const sessions = new WeakMap();
+  const sessions = new WeakMap(), batchSessions = new Set();
+  function cancelled() { return Object.assign(new Error('长视频会话已关闭。'), { code: 'MEDIA_CANCELLED' }); }
+  function sessionFor(info) {
+    const session = sessions.get(info);
+    if (!session || session.released) throw cancelled();
+    if (session.cleanupFailure) throw session.cleanupFailure;
+    return session;
+  }
+  async function proxyBatch(session, signal) {
+    if (session.batchClosing) await session.batchClosing;
+    if (session.released) throw cancelled();
+    if (session.cleanupFailure) throw session.cleanupFailure;
+    h.check({ signal });
+    if (!session.batch && !session.batchOpening) {
+      if (typeof cache.openBatch !== 'function') fail('缓存缺少代理长会话能力。', 'MEDIA_DEPENDENCY');
+      batchSessions.add(session);
+      const opening = Promise.resolve().then(() => cache.openBatch({ sourceSha256: session.info.source.sha256,
+        previewQuality: session.info.preview.quality, sessionSignal: session.controller.signal }));
+      session.batchOpening = opening;
+      opening.then(value => { session.batch = value; }, error => {
+        if (error.code === 'MEDIA_CLEANUP_FAILED') session.cleanupFailure = session.cleanupFailure || error;
+      }).finally(() => {
+        if (session.batchOpening === opening) session.batchOpening = null;
+        if (!session.batch && !session.cleanupFailure) batchSessions.delete(session);
+      });
+    }
+    const batch = session.batch || await session.batchOpening;
+    h.check({ signal });
+    if (session.released) throw cancelled();
+    return batch;
+  }
+  // Call directly from the worker's existing queue. Enqueueing another close
+  // here would wait on the operation that is currently waiting for this close.
+  function closeProxyBatch(info) {
+    if (info === undefined) return (async () => { for (const session of [...batchSessions]) await closeProxyBatch(session.info); })();
+    const session = sessions.get(info);
+    if (!session) return Promise.resolve(false);
+    if (session.batchClosing) return session.batchClosing;
+    const operations = [...session.operations];
+    const closing = (async () => {
+      await Promise.allSettled(operations);
+      if (session.batchOpening) {
+        try { await session.batchOpening; }
+        catch (error) { if (!session.controller.signal.aborted || error.name !== 'AbortError') throw error; }
+      }
+      let closed = false;
+      if (session.batch) { await session.batch.close(); session.batch = null; closed = true; }
+      // A failed segment cleanup may own an unreturned lease/output. Closing
+      // the known writer must not erase that uncertainty or its source handle.
+      if (session.cleanupFailure) throw session.cleanupFailure;
+      batchSessions.delete(session);
+      return closed;
+    })();
+    session.batchClosing = closing;
+    closing.then(() => { if (session.batchClosing === closing) session.batchClosing = null; },
+      () => { if (session.batchClosing === closing) session.batchClosing = null; });
+    return closing;
+  }
+  async function proxyBudget(info, settings = {}) {
+    const session = sessionFor(info);
+    if (!info.videoEncoding) fail('JPEG分段不使用代理长会话。', 'MEDIA_DEPENDENCY');
+    return (await proxyBatch(session, settings.signal)).snapshot();
+  }
   async function jobRun(settings, action) {
     const job = { signal: settings.signal, tx: settings.tx, children: new Set(), operations: new Set(), failure: null };
     const abort = () => h.stopChildren(job);
@@ -113,28 +189,53 @@ function createLongMedia({ cache, tools, helpers: h }) {
         segments: groups.map(group => ({ ...group })), metrics: { indexedPackets: indexed.frames.length, fullVideoRendered: false } };
       if (Buffer.byteLength(JSON.stringify(info)) > LIMITS.indexBytes) fail('源帧索引超过通信资源上限。', 'LONG_INDEX_LIMIT');
       frameIndex.validateIndex(info);
-      const session = { snapshot, fingerprint, probe, video, origin: h.ratioSeconds(origin), groups, info };
+      const session = { snapshot, fingerprint, probe, video, origin: h.ratioSeconds(origin), groups, info,
+        controller: new AbortController(), operations: new Set(), released: false, batch: null, batchOpening: null, batchClosing: null, cleanupFailure: null };
       unchanged(session); sessions.set(info, session); return info;
     });
   }
-  async function segment(info, ordinal, settings = {}) {
-    const session = sessions.get(info);
-    if (!session || !Number.isSafeInteger(ordinal) || ordinal < 0 || ordinal >= session.groups.length) fail('长视频分段会话已失效。');
-    return jobRun(settings, async job => {
+  function segment(info, ordinal, settings = {}) {
+    let session;
+    try { session = sessionFor(info); } catch (error) { return Promise.reject(error); }
+    if (!Number.isSafeInteger(ordinal) || ordinal < 0 || ordinal >= session.groups.length)
+      return Promise.reject(Object.assign(new Error('长视频分段会话已失效。'), { code: 'LONG_MEDIA_INVALID' }));
+    const controller = new AbortController(), signals = [settings.signal, session.controller.signal].filter(Boolean);
+    const abort = () => controller.abort();
+    for (const signal of signals) { if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true }); }
+    const work = jobRun({ ...settings, signal: controller.signal }, async job => {
       unchanged(session);
       const group = session.groups[ordinal], frames = info.frames.slice(group.first, group.last + 1);
-      const key = crypto.createHash('sha256').update(JSON.stringify([info.videoEncoding ? 'avc-idr-v1' : 'segments-v1', ...(info.videoEncoding ? [info.videoEncoding] : []), info.source.sha256, info.preview, group, h.COLOR_VERSION])).digest('hex');
-      const tx = await cache.begin({ sourceSha256: key, previewQuality: info.preview.quality, signal: job.signal }); job.tx = tx;
-      let returned = null;
+      const key = segmentKey(info, group, h.COLOR_VERSION);
+      const parent = info.videoEncoding ? await proxyBatch(session, job.signal) : cache;
+      const request = { sourceSha256: key, previewQuality: info.preview.quality, signal: job.signal };
+      const tx = await (info.videoEncoding ? parent.beginSegment(request) : parent.begin(request)); job.tx = tx;
+      let returned = null, primaryError = null;
       try {
         let manifest = await tx.readComplete({ colorVersion: h.COLOR_VERSION });
         if (!manifest) manifest = await decode(job, tx, session, group, frames, key);
         h.check(job); unchanged(session);
         returned = await tx.finish(manifest, { ...manifest.source, filePath: session.snapshot.filePath });
         h.check(job); return returned;
-      } catch (error) { await h.settleJob(job); if (returned) await cache.release(returned); await tx.abort(); throw error; }
-      finally { try { await tx.close(); } catch (error) { if (returned) await cache.release(returned); throw error; } }
+      } catch (error) {
+        primaryError = error; await h.settleJob(job);
+        if (returned) { try { await cache.release(returned); returned = null; } catch (releaseError) { error.releaseError = releaseError.message; } }
+        try { await tx.abort(); } catch (cleanupError) { error.cleanupError = cleanupError.message; }
+        throw error;
+      } finally {
+        try { await tx.close(); } catch (closeError) {
+          if (!primaryError) primaryError = closeError;
+          primaryError.lockReleaseError = closeError.message;
+          if (returned) { try { await cache.release(returned); returned = null; } catch (releaseError) { primaryError.releaseError = releaseError.message; } }
+        }
+        if (primaryError && (primaryError.cleanupError || primaryError.lockReleaseError || primaryError.releaseError))
+          throw Object.assign(new Error('分段任务已停止，但资源清理失败：' +
+            [primaryError.cleanupError, primaryError.lockReleaseError, primaryError.releaseError].filter(Boolean).join('；')),
+          { code: 'MEDIA_CLEANUP_FAILED', causeCode: primaryError.code || primaryError.name });
+      }
     });
+    session.operations.add(work);
+    const done = () => { session.operations.delete(work); for (const signal of signals) signal.removeEventListener('abort', abort); };
+    work.then(done, error => { if (error.code === 'MEDIA_CLEANUP_FAILED') session.cleanupFailure = session.cleanupFailure || error; done(); }); return work;
   }
   async function decode(job, tx, session, group, expected, key) {
     const { info, origin, snapshot, video } = session;
@@ -159,8 +260,7 @@ function createLongMedia({ cache, tools, helpers: h }) {
       // video between the final picture and the requested audio position.
       const at = args.indexOf('-map');
       // Warm codec overlap/resampler state before trimming the exact interval.
-      const audioSeek = Math.max(origin + info.audio.start, origin + audioStart - 2);
-      args.splice(at, 0, '-noaccurate_seek', '-seek_timestamp', '1', '-ss', audioSeek.toFixed(9), '-i', snapshot.filePath);
+      args.splice(at, 0, ...audioInputArgs(snapshot.filePath, origin, info.audio, audioStart));
       args.push('-map', '1:a:0', '-vn', '-sn', '-dn', '-af',
         `aresample=48000,atrim=start=${(origin + audioStart).toFixed(9)}:end=${(origin + audioEnd).toFixed(9)},ashowinfo@a`,
         '-c:a', 'pcm_f32le', '-f', 'wav', 'pipe:3');
@@ -236,7 +336,12 @@ function createLongMedia({ cache, tools, helpers: h }) {
       ...(results[0].value ? { framePack: results[0].value } : {}), metrics: { segmentStart: group.start, sourceSha256: info.source.sha256 } };
     frameIndex.validateIndex(manifest); return manifest;
   }
-  function release(info) { return sessions.delete(info); }
-  return { prepare, segment, release };
+  async function release(info) {
+    const session = sessions.get(info); if (!session) return false;
+    session.released = true; session.controller.abort();
+    await closeProxyBatch(info); return sessions.delete(info);
+  }
+  return { prepare, segment, release, proxyBudget, closeProxyBatch };
 }
-module.exports = { createLongMedia, LIMITS, packetIndex, groupFrames };
+module.exports = { createLongMedia, LIMITS, packetIndex, groupFrames,
+  _test: Object.freeze({ AUDIO_PREROLL_VERSION, segmentKey, audioInputArgs }) };

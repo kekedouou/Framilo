@@ -168,7 +168,7 @@ function createCache(options = {}) {
   const plugin = path.resolve(pluginRoot), root = path.join(plugin, 'cache');
   if (/^c:/i.test(plugin)) fail('缓存不能位于C盘。');
   directory(plugin);
-  const live = new WeakMap();
+  const live = new WeakMap(); let activeBatch = null;
   const manifestMemo = new Map(); let manifestMemoBytes = 0;
   const manifestMemoStats = { reads: 0, hits: 0, validations: 0, evictions: 0 };
   function memoKey(dir, expectedSha) { return (process.platform === 'win32' ? dir.toLowerCase() : dir) + ':' + expectedSha; }
@@ -251,6 +251,10 @@ function createCache(options = {}) {
   }
   function assertWriter(job, ignoreCancel = false) {
     if (!ignoreCancel) cancelled(job.signal);
+    if (job.parent) {
+      if (!ignoreCancel) cancelled(job.parent.signal);
+      if (job.parent.batch.active !== job) fail('批量子事务已经归还。');
+    }
     if (job.closed || !activeRoots.has(root)) fail('缓存写事务已经关闭。');
     verifyRoot();
     const file = path.join(root, 'writer.lock'), stat = regular(file);
@@ -259,6 +263,7 @@ function createCache(options = {}) {
     if (value.owner !== OWNER || value.recipe !== RECIPE || value.root !== root || value.kind !== 'writer' || value.token !== job.token || value.pid !== process.pid)
       fail('缓存写锁所有权已改变。');
     if (job.lockSha && sha(jsonBytes(value)) !== job.lockSha) fail('缓存写锁所有权或任务登记已改变。');
+    if (job.parent) assertBatchCurrent(job.parent, job.segmentToken);
   }
   function charge(job, bytes) {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || !Number.isSafeInteger(job.disk + bytes)) fail('缓存容量不足；未执行超额写入。');
@@ -273,7 +278,7 @@ function createCache(options = {}) {
     job.disk += bytes;
   }
   function inspectDirectory(dir, kind, expectedSha, allowDamaged = false, ownedRecencyFile = null) {
-    verifyOwner(dir, kind);
+    const owner = verifyOwner(dir, kind);
     const checked = kind === 'cache' ? completeManifest(dir, expectedSha) : null;
     const info = checked ? checked.info : readJSON(path.join(dir, 'manifest.json'));
     const map = checked ? checked.map : manifestAssets(info, expectedSha), expected = new Set(['owner.json', 'manifest.json', ...map.keys()]);
@@ -290,7 +295,7 @@ function createCache(options = {}) {
         fail('缓存现有容量超过预算。');
       totalBytes += stat.size;
     }
-    return { info, map, names: actual, totalBytes, lengthsMatch };
+    return { info, map, owner, names: actual, totalBytes, lengthsMatch };
   }
   function usage(job) {
     verifyRoot(); let bytes = 0;
@@ -331,6 +336,7 @@ function createCache(options = {}) {
         const match = /^media-([0-9a-f]{64})-([0-9a-f]{12})$/.exec(name);
         if (!match || !knownIds.has(match[2])) fail('检测到未知或未完成缓存，已停止写入并保留文件。');
         const inspected = inspectDirectory(file, 'cache', match[1], true);
+        if (job) job.maxSequence = Math.max(job.maxSequence || 0, inspected.owner.useSequence || 0);
         // No await separates inspection from accounting: reuse its verified
         // leaf sizes, including owner and manifest, rather than scan twice.
         add(inspected.totalBytes);
@@ -354,6 +360,10 @@ function createCache(options = {}) {
               if (!job || !job.initializing) fail('清理事务未完成，保留清单并停止准备。');
             } else if (verifyCleanupRecord(resultName).planSha256 !== leafSnapshot(file).sha256) fail('清理回执与清单指纹不符。');
           }
+        }
+        else if (/^writer-current-[0-9a-f]{24}(?:\.next)?\.json$/.test(name)) {
+          if (!job || !job.batch || !batchCurrentNames(job.token).includes(name)) fail('未知批量目标记录阻止写入。');
+          readBatchCurrent(job.writer, job.lockSha, name.endsWith('.next.json'));
         }
         else if (/^reap-[0-9a-f]{24}(?:\.result)?\.json$/.test(name)) requireReapCompleted(name);
         else fail('缓存根包含未知文件；未修改它。');
@@ -593,8 +603,8 @@ function createCache(options = {}) {
   }
   function touch(job, dir) {
     assertWriter(job); const old = verifyOwner(dir, 'cache'), markerPath = path.join(dir, 'owner.json');
-    const before = leafSnapshot(markerPath); let sequence = 0;
-    for (const name of fs.readdirSync(root)) if (cachePattern.test(name)) {
+    const before = leafSnapshot(markerPath); let sequence = job.parent ? job.parent.maxSequence : 0;
+    if (!job.parent) for (const name of fs.readdirSync(root)) if (cachePattern.test(name)) {
       const value = verifyOwner(path.join(root, name), 'cache');
       if (value.useSequence !== undefined && (!Number.isSafeInteger(value.useSequence) || value.useSequence < 1)) fail('最近使用记录损坏。');
       sequence = Math.max(sequence, value.useSequence || 0);
@@ -603,20 +613,30 @@ function createCache(options = {}) {
     const data = jsonBytes({ ...old, lastUsedAt: Date.now(), useSequence: sequence + 1 });
     // Atomic metadata replacement preserves the complete cache if the process
     // Bind the temporary marker to this writer before any bytes are written.
-    const next = path.join(dir, 'owner.next-' + job.token + '.json'); charge(job, data.length);
-    const fd = fs.openSync(next, 'wx'), identity = fs.fstatSync(fd); let written = 0, fdClosed = false;
+    const next = path.join(dir, 'owner.next-' + job.token + '.json');
+    let fd, identity, written = 0, fdClosed = false, charged = false;
     try {
+      charge(job, data.length); charged = true;
+      fd = fs.openSync(next, 'wx'); identity = fs.fstatSync(fd);
       writeAll(fd, data, 0, n => { written += n; }); fs.fsyncSync(fd); fs.closeSync(fd); fdClosed = true;
       if (leafSnapshot(next).sha256 !== sha(data) || JSON.stringify(leafSnapshot(markerPath)) !== JSON.stringify(before))
         fail('最近使用更新前标记已变化。');
       assertWriter(job); fs.renameSync(next, markerPath); job.disk -= before.bytes;
+      if (job.parent) job.parent.maxSequence = sequence + 1;
     } catch (error) {
+      // Reservation is not disk occupancy: open can fail before creating a
+      // file, and a failed write can leave only a prefix. Account that prefix
+      // until its original identity has been verified and removed.
+      if (charged) job.disk -= data.length - written;
       try {
-        if (!fdClosed) { fs.closeSync(fd); fdClosed = true; }
-        assertWriter(job, true); const current = regular(next);
-        if (!sameFile(identity, current) || current.size !== written || !fs.readFileSync(next).equals(data.subarray(0, written)))
-          fail('最近使用临时标记身份不明；保留原件。');
-        fs.unlinkSync(next); job.disk -= data.length;
+        if (fd !== undefined && !fdClosed) { fs.closeSync(fd); fdClosed = true; }
+        if (fd !== undefined) {
+          if (!identity) fail('最近使用临时标记缺少打开文件身份；保留原件。');
+          assertWriter(job, true); const current = regular(next);
+          if (!sameFile(identity, current) || current.size !== written || !fs.readFileSync(next).equals(data.subarray(0, written)))
+            fail('最近使用临时标记身份不明；保留原件。');
+          fs.unlinkSync(next); job.disk -= written;
+        }
       } catch (cleanupError) { error.cleanupError = cleanupError.message; }
       throw error;
     }
@@ -630,16 +650,24 @@ function createCache(options = {}) {
     if (match[2]) {
       if (value.status !== 'completed' || !Number.isSafeInteger(value.freedBytes) || value.freedBytes < 0 || !/^[0-9a-f]{64}$/.test(value.planSha256)) fail('恢复回执不完整。');
     } else if (!Array.isArray(value.records) || !value.records.length || value.records.some(record =>
-      !record.file || !/^(?:writer\.lock|lease-[0-9a-f]{24}\.json)$/.test(record.file.file) ||
+      !record.file || !/^(?:writer\.lock|lease-[0-9a-f]{24}\.json|writer-current-[0-9a-f]{24}(?:\.next)?\.json)$/.test(record.file.file) ||
       !/^[0-9a-f]{64}$/.test(record.file.sha256) || !Array.isArray(record.file.identity) || record.file.identity.length !== 4 ||
       !Number.isSafeInteger(record.file.bytes) || record.file.bytes < 0 || !record.ownerRecord || record.ownerRecord.root !== root))
       fail('恢复计划含未授权的路径或身份。');
+    if (!match[2]) for (const item of value.records.filter(record => /^writer-current-/.test(record.file.file))) {
+      const parent = value.records.find(record => record.file.file === 'writer.lock' && record.ownerRecord.token === item.ownerRecord.token);
+      if (!parent || parent.ownerRecord.mode !== 'batch-v1' || item.ownerRecord.kind !== 'batch-slot' ||
+        item.ownerRecord.writerSha256 !== parent.file.sha256 || !batchCurrentNames(parent.ownerRecord.token).includes(item.file.file) ||
+        item.file.bytes > 4096 || ['schema', 'key', 'epoch', 'guardPid'].some(key => item.ownerRecord.taskOwner?.[key] !== parent.ownerRecord.taskOwner?.[key]))
+        fail('批量目标恢复记录缺少原写锁绑定。');
+    }
     if (!match[2] && value.recency !== undefined) {
       if (!Array.isArray(value.recency) || value.recency.length > 1 || value.recency.some(item => {
         const parent = value.records.find(record => record.ownerRecord.kind === 'writer' && record.ownerRecord.token === item.writerToken);
         return !parent || parent.file.file !== 'writer.lock' || parent.ownerRecord.schema !== 1 || parent.ownerRecord.owner !== OWNER ||
           parent.ownerRecord.recipe !== RECIPE || !/^[0-9a-f]{24}$/.test(item.writerToken || '') || !/^[0-9a-f]{64}$/.test(parent.ownerRecord.sourceSha256 || '') ||
-          item.directory !== path.join(root, cacheLeaf(parent.ownerRecord.sourceSha256, parent.ownerRecord.previewQuality)) ||
+          item.directory !== (parent.ownerRecord.mode === 'batch-v1' ? batchReapTarget(value, parent).target :
+            path.join(root, cacheLeaf(parent.ownerRecord.sourceSha256, parent.ownerRecord.previewQuality))) ||
           !Array.isArray(item.directoryIdentity) || item.directoryIdentity.length !== 2 || !item.directoryIdentity.every(preciseDirectoryId) ||
           !/^[0-9a-f]{24}$/.test(item.cacheToken) || !/^[0-9a-f]{64}$/.test(item.ownerSha256) || !/^[0-9a-f]{64}$/.test(item.manifestSha256) ||
           !item.file || !['owner.next.json', 'owner.next-' + item.writerToken + '.json'].includes(item.file.file) ||
@@ -660,8 +688,9 @@ function createCache(options = {}) {
     inspectDirectory(item.directory, 'cache', path.basename(item.directory).slice(6, 70), false, item.file.file);
     return true;
   }
-  function recencyRepair(writer) {
-    const dir = path.join(root, cacheLeaf(writer.sourceSha256, writer.previewQuality));
+  function recencyRepair(writer, batchTarget) {
+    if (writer.mode === 'batch-v1' && !batchTarget) return null;
+    const dir = batchTarget ? batchTarget.target : path.join(root, cacheLeaf(writer.sourceSha256, writer.previewQuality));
     if (!fs.existsSync(dir)) return null;
     directory(dir);
     const candidates = fs.readdirSync(dir).filter(name => /^owner\.next(?:-.*)?\.json$/.test(name));
@@ -689,7 +718,8 @@ function createCache(options = {}) {
     if (verifyReapRecord(resultName).planSha256 !== leafSnapshot(path.join(root, planName)).sha256) fail('恢复回执与原始清单指纹不符。');
     return value;
   }
-  function orphanPartialPlan(dir, writer) {
+  function orphanPartialPlan(dir, writer, batchTarget) {
+    if (writer.mode === 'batch-v1' && !batchTarget) fail('批量残片缺少完整当前目标；保留。');
     if (options.taskOwner && writer.taskOwner && writer.taskOwner.schema === 'eva-task-owner-v1' &&
         writer.taskOwner.key === options.taskOwner.key && writer.taskOwner.epoch !== options.taskOwner.epoch &&
         dir === path.join(root, 'partial-' + writer.token)) {
@@ -735,7 +765,7 @@ function createCache(options = {}) {
     } else {
       // Crash after the ledger was removed but before atomic directory publish:
       // the finished manifest is the only acceptable replacement file list.
-      const inspected = inspectDirectory(dir, marker.kind, writer.sourceSha256);
+      const inspected = inspectDirectory(dir, marker.kind, batchTarget ? batchTarget.sourceSha256 : writer.sourceSha256);
       for (const item of inspected.map.values()) if (leafSnapshot(path.join(dir, item.file)).sha256 !== item.sha256) fail('残留完整清单资产指纹不符。');
     }
     return ownerValue('cleanup-plan', { token: nonce(), writerToken: writer.token, directory: dir,
@@ -751,8 +781,36 @@ function createCache(options = {}) {
     }
     const names = fs.readdirSync(root), pending = names.filter(name => /^reap-[0-9a-f]{24}\.json$/.test(name) &&
       !fs.existsSync(path.join(root, name.replace(/\.json$/, '.result.json'))));
+    // A prior recovery may already have removed current or writer while its
+    // concrete partial-cleanup plan still remains. Seal and validate that
+    // original plan BEFORE considering any new orphan/target inference.
+    const reaps = pending.map(name => {
+      const file = path.join(root, name), raw = readVerifiedBytes(file), plan = verifyReapRecord(name);
+      if (JSON.stringify(plan) !== JSON.stringify(JSON.parse(raw.bytes.toString('utf8')))) fail('读取期间恢复原计划已改变。');
+      return { name, plan, data: raw.bytes, identity: raw.identity, digest: raw.digest };
+    });
+    const priorRecords = new Map();
+    for (const reap of reaps) {
+      for (const item of reap.plan.records) {
+        const value = item.ownerRecord;
+        if (value.mode === 'batch-v1') {
+          if (!validTaskOwner(options.taskOwner) || !validTaskOwner(value.taskOwner) ||
+            options.taskOwner.key !== value.taskOwner.key || options.taskOwner.epoch === value.taskOwner.epoch)
+            fail('原批量恢复计划不属于已确认停止的守护。');
+          if (item.file.file === 'writer.lock' && reap.plan.records.some(slot => slot.file.file === batchCurrentNames(value.token)[0] && slot.ownerRecord.currentBytes))
+            batchReapTarget(reap.plan, item);
+        }
+        if (!processIdentity.inspect(value).safe) fail('原恢复计划的任务仍未确认停止。');
+        const prior = priorRecords.get(item.file.file);
+        if (prior && JSON.stringify(prior) !== JSON.stringify(item)) fail('同一文件存在冲突的恢复原计划。');
+        priorRecords.set(item.file.file, item);
+        const file = path.join(root, item.file.file);
+        if (fs.existsSync(file) && JSON.stringify(leafSnapshot(file)) !== JSON.stringify(item.file)) fail('恢复原计划中的剩余文件已改变。');
+      }
+    }
     const records = [], partialPlans = [], recency = [];
     for (const name of names.filter(name => name === 'writer.lock' || /^lease-[0-9a-f]{24}\.json$/.test(name))) {
+      if (priorRecords.has(name)) continue; // Resume its original sealed plan, never invent a replacement current.
       const file = path.join(root, name); let value;
       try { value = readJSON(file); } catch (_) { continue; } // Unknown locks are never reaped.
       if (value.schema !== 1 || value.owner !== OWNER || value.recipe !== RECIPE || value.root !== root || value.pid !== value.processIdentity?.pid ||
@@ -760,9 +818,14 @@ function createCache(options = {}) {
       if (name === 'writer.lock' && !/^[0-9a-f]{64}$/.test(value.sourceSha256 || '')) continue;
       if (name !== 'writer.lock' && (value.token !== name.slice(6, -5) ||
         !matchesSource(value.cacheDir, value.sourceSha256))) continue;
+      if (name === 'writer.lock' && value.mode !== undefined && value.mode !== 'batch-v1') continue;
+      if (value.mode === 'batch-v1' && (!validTaskOwner(options.taskOwner) || !validTaskOwner(value.taskOwner) ||
+        options.taskOwner.key !== value.taskOwner.key || options.taskOwner.epoch === value.taskOwner.epoch)) continue;
       if (!processIdentity.inspect(value).safe) continue;
-      records.push({ file: leafSnapshot(file), ownerRecord: value });
-      if (name === 'writer.lock') { const item = recencyRepair(value); if (item) recency.push(item); }
+      const captured = { file: leafSnapshot(file), ownerRecord: value }; records.push(captured);
+      const batch = value.mode === 'batch-v1' ? stoppedBatch(value, captured.file.sha256) : null;
+      if (batch) records.push(...batch.slots);
+      if (name === 'writer.lock') { const item = recencyRepair(value, batch?.current?.value); if (item) recency.push(item); }
       if (name === 'writer.lock') for (const child of names.filter(name => /^partial-[0-9a-f]{24}$/.test(name))) {
         const dir = path.join(root, child);
         const prior = names.filter(name => /^cleanup-[0-9a-f]{24}\.json$/.test(name)).map(verifyCleanupRecord)
@@ -774,28 +837,31 @@ function createCache(options = {}) {
               prior.reason === 'owned-job-stopped-interrupted-output' && prior.taskKey !== options.taskOwner?.key ||
               fs.readdirSync(dir).some(leaf => !prior.files.some(old => JSON.stringify(old) === JSON.stringify(leafSnapshot(path.join(dir, leaf))))))
             fail('已有残留清理计划与当前文件不符。');
-        } else partialPlans.push(orphanPartialPlan(dir, value));
+        } else partialPlans.push(orphanPartialPlan(dir, value, batch?.current?.value));
       }
     }
-    if (names.includes('writer.lock') && !records.some(item => item.file.file === 'writer.lock')) return;
+    if (names.includes('writer.lock') && !records.some(item => item.file.file === 'writer.lock') && !priorRecords.has('writer.lock')) return;
     if (!records.length && !pending.length) return;
     const token = nonce(), guardData = jsonBytes(ownerValue('recovery', { token, pid: process.pid, processIdentity: processIdentity.self(), children: [] }));
     const guarded = !!options.taskOwner;
     const guardFd = guarded ? null : fs.openSync(guardPath, 'wx'), guardIdentity = guarded ? null : fs.fstatSync(guardFd); let guardWritten = 0;
     function ownGuard() {
       verifyRoot();
+      for (const reap of reaps) if (!reap.fresh) {
+        const actual = readVerifiedBytes(path.join(root, reap.name));
+        if (actual.digest !== reap.digest || !sameVerifiedStamp(actual.identity, reap.identity)) fail('恢复原计划身份或摘要已改变。');
+      }
       if (!guarded) { const stat = regular(guardPath);
         if (!sameFile(guardIdentity, stat) || !fs.readFileSync(guardPath).equals(guardData)) fail('恢复锁身份已改变。'); }
       const writer = path.join(root, 'writer.lock');
       if (fs.existsSync(writer)) {
-        const captured = records.find(item => item.file.file === 'writer.lock');
+        const captured = records.find(item => item.file.file === 'writer.lock') || priorRecords.get('writer.lock');
         if (!captured || JSON.stringify(leafSnapshot(writer)) !== JSON.stringify(captured.file)) fail('恢复期间出现另一准备事务；停止恢复。');
       }
     }
     try {
       if (!guarded) { writeAll(guardFd, guardData, 0, n => { guardWritten += n; }); fs.fsyncSync(guardFd); fs.closeSync(guardFd); }
       ownGuard();
-      const reaps = pending.map(name => ({ name, plan: verifyReapRecord(name), data: fs.readFileSync(path.join(root, name)) }));
       if (records.length) {
         const plan = ownerValue('reap-plan', { token: nonce(), records, ...(recency.length ? { recency } : {}), createdAt: Date.now() });
         reaps.push({ name: 'reap-' + plan.token + '.json', plan, data: jsonBytes(plan), fresh: true });
@@ -807,18 +873,33 @@ function createCache(options = {}) {
       // Validate and account every current leaf before any delete. No recursive
       // remove, links, unknown root entries or anonymous partial are accepted.
       let used = 0;
-      const interruptedCleanup = new Set(names.filter(name => /^cleanup-[0-9a-f]{24}\.json$/.test(name) &&
-        !fs.existsSync(path.join(root, name.replace(/\.json$/, '.result.json')))).map(name => verifyCleanupRecord(name).directory));
+      const interruptedCleanup = new Map();
+      for (const name of names.filter(name => /^cleanup-[0-9a-f]{24}\.json$/.test(name) &&
+        !fs.existsSync(path.join(root, name.replace(/\.json$/, '.result.json'))))) {
+        const plan = verifyCleanupRecord(name);
+        if (interruptedCleanup.has(plan.directory)) fail('同一目标存在重复的未完成清理计划。');
+        interruptedCleanup.set(plan.directory, plan);
+      }
+      const claimedRecords = new Set(reaps.flatMap(reap => reap.plan.records.map(item => item.file.file)));
       for (const name of fs.readdirSync(root)) {
         const file = path.join(root, name), stat = fs.lstatSync(file);
         if (stat.isDirectory()) {
-          if (!cachePattern.test(name) && !partialPlans.some(plan => plan.directory === file) &&
-            !fs.readdirSync(root).some(leaf => /^cleanup-[0-9a-f]{24}\.json$/.test(leaf) && verifyCleanupRecord(leaf).directory === file)) fail('恢复根含未知目录。');
+          const planned = interruptedCleanup.get(file) || partialPlans.find(plan => plan.directory === file);
+          if (!cachePattern.test(name) && !planned) fail('恢复根含未知目录。');
           directory(file);
+          if (planned) {
+            if (!sameDirectoryIdentity(file, stat, planned.directoryIdentity) ||
+              planned.reason === 'owned-job-stopped-interrupted-output' && planned.taskKey !== options.taskOwner?.key)
+              fail('原清理计划目录身份或任务绑定已改变。');
+            const expected = new Map(planned.files.map(item => [item.file, item]));
+            for (const leaf of fs.readdirSync(file)) if (!expected.has(leaf) ||
+              JSON.stringify(leafSnapshot(path.join(file, leaf))) !== JSON.stringify(expected.get(leaf))) fail('原清理计划剩余文件已改变。');
+          }
           if (name.startsWith('media-') && !interruptedCleanup.has(file)) inspectDirectory(file, 'cache', name.slice(6, 70), false, recencyByDirectory.get(file));
           for (const leaf of fs.readdirSync(file)) used += regular(path.join(file, leaf)).size;
         } else {
           if (!['owner.json', 'writer.lock', 'recovery.lock'].includes(name) && !/^lease-[0-9a-f]{24}\.json$/.test(name) &&
+            !(claimedRecords.has(name) && /^writer-current-[0-9a-f]{24}(?:\.next)?\.json$/.test(name)) &&
             !/^(?:cleanup|reap)-[0-9a-f]{24}(?:\.result)?\.json$/.test(name)) fail('恢复根含未知文件。');
           if (name.startsWith('cleanup-')) verifyCleanupRecord(name);
           if (name.startsWith('reap-')) verifyReapRecord(name);
@@ -835,7 +916,7 @@ function createCache(options = {}) {
         ownGuard();
         if (reap.fresh) writeRecord(path.join(root, reap.name), reap.data);
         for (const item of reap.plan.recency || []) assertRecencyRepair(item, true);
-        for (const item of reap.plan.records) {
+        for (const item of [...reap.plan.records].sort((a, b) => Number(a.file.file === 'writer.lock') - Number(b.file.file === 'writer.lock'))) {
           if (!processIdentity.inspect(item.ownerRecord).safe) fail('恢复任务身份仍不确定；未删除该项。');
           const file = path.join(root, item.file.file);
           if (fs.existsSync(file) && JSON.stringify(leafSnapshot(file)) !== JSON.stringify(item.file)) fail('恢复目标已经替换；未删除。');
@@ -845,7 +926,7 @@ function createCache(options = {}) {
           ownGuard(); if (!assertRecencyRepair(item, true)) continue;
           fs.unlinkSync(path.join(item.directory, item.file.file)); freedBytes += item.file.bytes;
         }
-        for (const item of reap.plan.records) {
+        for (const item of [...reap.plan.records].sort((a, b) => Number(a.file.file === 'writer.lock') - Number(b.file.file === 'writer.lock'))) {
           ownGuard(); const file = path.join(root, item.file.file);
           if (!fs.existsSync(file)) continue;
           if (JSON.stringify(leafSnapshot(file)) !== JSON.stringify(item.file)) fail('恢复删除前目标已变化。');
@@ -889,22 +970,183 @@ function createCache(options = {}) {
     if (job.closed) return false;
     assertWriter(job, true); fs.unlinkSync(path.join(root, 'writer.lock')); job.closed = true; activeRoots.delete(root); return true;
   }
-  function begin({ sourceSha256, signal, clearOthers = false, previewQuality } = {}) {
+  function batchCurrentNames(token) { return ['writer-current-' + token + '.json', 'writer-current-' + token + '.next.json']; }
+  function validTaskOwner(value) {
+    return value && value.schema === 'eva-task-owner-v1' && /^[0-9a-f]{64}$/.test(value.key || '') &&
+      /^[0-9a-f]{32}$/.test(value.epoch || '') && Number.isSafeInteger(value.guardPid) && value.guardPid > 0;
+  }
+  function validateBatchCurrent(writer, writerSha256, value) {
+    if (writer.mode !== 'batch-v1' || !validTaskOwner(writer.taskOwner)) fail('批量写锁格式或守护身份不符。');
+    const keys = new Set(['schema', 'owner', 'recipe', 'root', 'kind', 'token', 'taskOwner', 'writerSha256', 'sequence',
+      'segmentToken', 'sourceSha256', 'previewQuality', 'target', 'previousSha256']);
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !keys.has(key)) ||
+      value.schema !== 1 || value.owner !== OWNER || value.recipe !== RECIPE || value.root !== root || value.kind !== 'batch-current' ||
+      value.token !== writer.token || value.writerSha256 !== writerSha256 || !/^[0-9a-f]{64}$/.test(value.sourceSha256 || '') ||
+      !/^[0-9a-f]{24}$/.test(value.segmentToken || '') || !Number.isSafeInteger(value.sequence) || value.sequence < 1 ||
+      value.previewQuality !== writer.previewQuality || value.target !== path.join(root, cacheLeaf(value.sourceSha256, value.previewQuality)) ||
+      !(value.previousSha256 === null || /^[0-9a-f]{64}$/.test(value.previousSha256 || '')) || !validTaskOwner(value.taskOwner) ||
+      (value.sequence === 1 ? value.previousSha256 !== null : !/^[0-9a-f]{64}$/.test(value.previousSha256 || '')) ||
+      ['schema', 'key', 'epoch', 'guardPid'].some(key => value.taskOwner[key] !== writer.taskOwner[key])) fail('批量目标记录身份或目标不符。');
+    return value;
+  }
+  function readBatchCurrent(writer, writerSha256, next = false) {
+    const name = batchCurrentNames(writer.token)[next ? 1 : 0], file = path.join(root, name);
+    if (regular(file).size > 4096) fail('批量目标记录超过4KiB。');
+    const raw = readVerifiedBytes(file), value = validateBatchCurrent(writer, writerSha256, JSON.parse(raw.bytes.toString('utf8')));
+    return { ...raw, value, file };
+  }
+  function batchReapTarget(plan, parent) {
+    const slot = plan.records.find(record => record.file.file === batchCurrentNames(parent.ownerRecord.token)[0]);
+    if (!slot || typeof slot.ownerRecord.currentBytes !== 'string') fail('批量恢复缺少已验证当前目标字节。');
+    const bytes = Buffer.from(slot.ownerRecord.currentBytes, 'base64');
+    if (bytes.length > 4096 || bytes.toString('base64') !== slot.ownerRecord.currentBytes || sha(bytes) !== slot.file.sha256)
+      fail('批量恢复当前目标摘要不符。');
+    return validateBatchCurrent(parent.ownerRecord, parent.file.sha256, JSON.parse(bytes.toString('utf8')));
+  }
+  function stoppedBatch(writer, writerSha256) {
+    const names = batchCurrentNames(writer.token), partial = path.join(root, 'partial-' + writer.token), recency = [];
+    for (const name of fs.readdirSync(root)) if (cachePattern.test(name)) {
+      const dir = path.join(root, name); directory(dir);
+      if (fs.existsSync(path.join(dir, 'owner.next-' + writer.token + '.json'))) recency.push(dir);
+    }
+    let current = null, currentError = null;
+    try { if (fs.existsSync(path.join(root, names[0]))) current = readBatchCurrent(writer, writerSha256); }
+    catch (error) { currentError = error; }
+    if ((!current || currentError) && (fs.existsSync(partial) || recency.length)) fail('批量当前目标缺失或损坏且有未完成产物；保留全部文件。');
+    if (current && recency.some(dir => dir !== current.value.target)) fail('批量最近使用残片不属于当前目标；保留。');
+    const slots = [];
+    for (const name of names) if (fs.existsSync(path.join(root, name))) {
+      const file = leafSnapshot(path.join(root, name));
+      if (file.bytes > 4096) fail('批量目标残片超过4KiB；保留。');
+      // A stopped guard proves ownership of these two exact names reserved by
+      // its immutable batch writer, including an interrupted/empty next write.
+      const ownerRecord = { ...writer, kind: 'batch-slot', writerSha256,
+        ...(name === names[0] && current ? { currentBytes: current.bytes.toString('base64') } : {}) };
+      slots.push({ file, ownerRecord });
+    }
+    return { current, slots };
+  }
+  function assertBatchCurrent(parent, segmentToken) {
+    const current = readBatchCurrent(parent.writer, parent.lockSha), expected = parent.batch.current;
+    if (!expected || current.digest !== expected.digest || !sameVerifiedStamp(expected.identity, current.identity) ||
+      (segmentToken && current.value.segmentToken !== segmentToken)) fail('批量当前目标已改变。');
+    return current;
+  }
+  function publishBatchCurrent(parent, settings) {
+    const state = parent.batch; assertWriter(parent);
+    const old = state.current ? assertBatchCurrent(parent) : null;
+    const names = batchCurrentNames(parent.token), currentFile = path.join(root, names[0]), nextFile = path.join(root, names[1]);
+    if ((!old && fs.existsSync(currentFile)) || fs.existsSync(nextFile)) fail('批量目标槽含未知记录；保留。');
+    if (!Number.isSafeInteger(state.sequence + 1)) fail('批量目标序号超过安全范围。');
+    const value = ownerValue('batch-current', { token: parent.token, taskOwner: parent.writer.taskOwner, writerSha256: parent.lockSha,
+      sequence: state.sequence + 1, segmentToken: nonce(), sourceSha256: settings.sourceSha256,
+      ...(settings.previewQuality === undefined ? {} : { previewQuality: settings.previewQuality }),
+      target: path.join(root, cacheLeaf(settings.sourceSha256, settings.previewQuality)), previousSha256: old ? old.digest : null });
+    const data = jsonBytes(value); if (data.length > 4096) fail('批量目标记录超过4KiB。');
+    let fd, written = 0, identity, renamed = false;
+    parent.target = value.target; charge(parent, data.length);
+    try {
+      fd = fs.openSync(nextFile, 'wx'); identity = fs.fstatSync(fd, { bigint: true });
+      state.staged = { file: nextFile, identity, data, written: 0 };
+      writeAll(fd, data, 0, count => { written += count; state.staged.written = written; }); fs.fsyncSync(fd);
+      fs.closeSync(fd); fd = undefined;
+      const checked = readBatchCurrent(parent.writer, parent.lockSha, true);
+      if (checked.digest !== sha(data) || !sameVerifiedStamp(identity, checked.identity) &&
+        (identity.ino !== checked.identity.ino || identity.dev !== checked.identity.dev)) fail('批量下一目标落盘校验失败。');
+      if (old) assertBatchCurrent(parent);
+      assertWriter(parent); fs.renameSync(nextFile, currentFile); renamed = true;
+      parent.disk -= old ? old.bytes.length : 0; state.staged = null;
+      const published = readBatchCurrent(parent.writer, parent.lockSha);
+      if (published.digest !== checked.digest || published.identity.ino !== checked.identity.ino || published.identity.dev !== checked.identity.dev)
+        fail('批量当前目标原子发布后身份已改变。');
+      state.current = published; state.sequence = published.value.sequence; return published.value;
+    } catch (error) { if (!renamed) parent.disk -= data.length - written; throw error; }
+    finally { if (fd !== undefined) fs.closeSync(fd); }
+  }
+  function openBatch({ sourceSha256, previewQuality, sessionSignal } = {}) {
+    if (!validTaskOwner(options.taskOwner)) fail('批量写入需要已核验的Windows任务守护身份。');
+    const context = acquireWriter({ sourceSha256, previewQuality, signal: sessionSignal }, true), parent = context.job, state = parent.batch;
+    activeBatch = parent;
+    const api = Object.freeze({
+      beginSegment(settings = {}) {
+        assertWriter(parent);
+        if (state.closing || state.active) fail('上一批量子事务尚未归还或会话正在关闭。');
+        const selected = { sourceSha256: settings.sourceSha256, previewQuality: settings.previewQuality, signal: settings.signal };
+        if (!/^[0-9a-f]{64}$/.test(selected.sourceSha256 || '') || selected.previewQuality !== previewQuality) fail('批量段内容指纹或画质不符。');
+        cancelled(selected.signal);
+        const current = publishBatchCurrent(parent, selected);
+        const child = { ...parent, parent, segmentToken: current.segmentToken, signal: selected.signal, closed: false, partial: null,
+          published: false, target: current.target, files: new Map(), streams: new Set(), closingStreams: new Set(), ledger: null };
+        Object.defineProperty(child, 'disk', { get: () => parent.disk, set: value => { parent.disk = value; } });
+        const writer = { ...context.writer, children: [] }; state.active = child;
+        return createTransaction({ ...context, job: child, writer }, selected);
+      },
+      snapshot() {
+        if (!parent.closed) { assertWriter(parent, true); if (state.current) assertBatchCurrent(parent); }
+        return Object.freeze({ usedBytes: parent.disk, diskLimitBytes: diskBytes, minimumFreeBytes: 128 * MIB,
+          active: !!state.active, sequence: state.sequence, closed: parent.closed });
+      },
+      async close() {
+        if (parent.closed) return false;
+        assertWriter(parent, true);
+        if (state.active) fail('批量子事务仍在处理，不能释放根写锁。');
+        state.closing = true;
+        if (state.staged) {
+          const staged = state.staged, actual = readVerifiedBytes(staged.file);
+          if (actual.identity.ino !== staged.identity.ino || actual.identity.dev !== staged.identity.dev ||
+            !actual.bytes.equals(staged.data.subarray(0, staged.written))) fail('批量下一目标残片身份已改变。');
+          fs.unlinkSync(staged.file); parent.disk -= actual.bytes.length; state.staged = null;
+        }
+        if (state.current) assertBatchCurrent(parent);
+        if (fs.existsSync(path.join(root, 'partial-' + parent.token))) fail('批量临时目录尚未收尾。');
+        const actualBytes = usage(parent);
+        if (actualBytes !== parent.disk) fail('批量账本与实际文件字节不符；保留写锁。');
+        if (state.current) { const current = assertBatchCurrent(parent); fs.unlinkSync(current.file); parent.disk -= current.bytes.length; state.current = null; }
+        const lockBytes = regular(path.join(root, 'writer.lock')).size;
+        releaseWriter(parent); parent.disk -= lockBytes; activeBatch = null; return true;
+      }
+    });
+    return api;
+  }
+  function writeBatchMetadata(job, file, data, precharged = false) {
+    let fd, identity, written = 0; if (!precharged) charge(job, data.length);
+    try {
+      fd = fs.openSync(file, 'wx'); identity = fs.fstatSync(fd, { bigint: true });
+      writeAll(fd, data, 0, count => { written += count; }); fs.fsyncSync(fd); fs.closeSync(fd); fd = undefined;
+      const actual = readVerifiedBytes(file);
+      if (actual.identity.ino !== identity.ino || actual.identity.dev !== identity.dev || !actual.bytes.equals(data)) fail('批量占用记录落盘校验失败。');
+      return regular(file);
+    } catch (error) {
+      job.disk -= data.length - written;
+      try {
+        if (fd !== undefined) { fs.closeSync(fd); fd = undefined; }
+        if (identity) {
+          const actual = readVerifiedBytes(file);
+          if (actual.identity.ino !== identity.ino || actual.identity.dev !== identity.dev || !actual.bytes.equals(data.subarray(0, written)))
+            fail('批量占用残片身份已改变。');
+          fs.unlinkSync(file); job.disk -= written;
+        }
+      } catch (cleanupError) { throw Object.assign(new Error('批量占用写入失败且清理失败：' + cleanupError.message), { code: 'MEDIA_CLEANUP_FAILED', cause: error }); }
+      throw error;
+    }
+  }
+  function acquireWriter({ sourceSha256, signal, clearOthers = false, previewQuality } = {}, batchMode = false) {
     cancelled(signal);
     if (previewQuality !== undefined) previewProfile.quality(previewQuality);
     if (typeof sourceSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sourceSha256)) fail('源内容指纹不正确。');
-    if (activeRoots.has(root)) fail('同一缓存已有准备事务。');
+    if (activeRoots.has(root)) fail('同一缓存已有准备事务，写锁仍被占用。');
     ensureRoot();
     recoverOrphans();
     // Process discovery can block or fail. Do it before creating a lock so
     // interruption there cannot strand an empty file without ownership data.
     const token = nonce();
-    const writer = ownerValue('writer', { token, pid: process.pid, sourceSha256, ...(previewQuality === undefined ? {} : { previewQuality }), processIdentity: processIdentity.self(), children: [] });
+    const writer = ownerValue('writer', { token, pid: process.pid, sourceSha256, ...(batchMode ? { mode: 'batch-v1' } : {}), ...(previewQuality === undefined ? {} : { previewQuality }), processIdentity: processIdentity.self(), children: [] });
     const lockData = jsonBytes(writer);
     cancelled(signal);
     const job = { token, signal, closed: false, partial: null, published: false, disk: 0, initializing: true,
       target: path.join(root, cacheLeaf(sourceSha256, previewQuality)),
-      files: new Map(), streams: new Set(), closingStreams: new Set(), lockIdentity: null, lockSha: sha(lockData) };
+      files: new Map(), streams: new Set(), closingStreams: new Set(), lockIdentity: null, lockSha: sha(lockData), maxSequence: 0,
+      writer, ...(batchMode ? { batch: { active: null, current: null, sequence: 0, closing: false } } : {}) };
     const lockPath = path.join(root, 'writer.lock'); let fd, recoveredEmpty = null;
     try { fd = fs.openSync(lockPath, 'wx'); }
     catch (error) {
@@ -939,8 +1181,17 @@ function createCache(options = {}) {
           fail('未完整建立的写锁身份未知，保留原件。');
         fs.unlinkSync(lockPath); activeRoots.delete(root); job.closed = true;
       } catch (cleanupError) { error.cleanupError = cleanupError.message; }
+      if (batchMode && error.cleanupError) {
+        const failure = Object.assign(new Error('批量写锁初始化失败且归属清理失败：' + error.cleanupError),
+          { code: 'MEDIA_CLEANUP_FAILED', cause: error }); throw failure;
+      }
       throw error;
     }
+    return { job, writer, lockPath, cleanup };
+  }
+  function begin(settings = {}) { return createTransaction(acquireWriter(settings), settings); }
+  function createTransaction(context, { sourceSha256, signal, previewQuality } = {}) {
+    const { job, writer, lockPath, cleanup } = context;
     const target = path.join(root, cacheLeaf(sourceSha256, previewQuality));
     let candidate = null, candidatePinned = null, finished = null;
     function updateWriter() {
@@ -978,7 +1229,9 @@ function createCache(options = {}) {
       const data = Buffer.from(JSON.stringify({ file: name, dev: ledgerId(identity.dev), ino: ledgerId(identity.ino) }) + '\n');
       if (ledger.bytes + data.length > LIMITS.metadataBytes) fail('临时归属账本超过上限。');
       let at = 0;
-      charge(job, data.length); writeAll(ledger.fd, data, ledger.bytes, n => { ledger.hash.update(data.subarray(at, at + n)); at += n; ledger.bytes += n; });
+      charge(job, data.length);
+      try { writeAll(ledger.fd, data, ledger.bytes, n => { ledger.hash.update(data.subarray(at, at + n)); at += n; ledger.bytes += n; }); }
+      catch (error) { if (job.parent) job.disk -= data.length - at; throw error; }
     }
     function closeLedger(remove = false) {
       const ledger = job.ledger; if (!ledger) return;
@@ -994,10 +1247,28 @@ function createCache(options = {}) {
       if (candidate || job.published) fail('完整缓存不能作为临时写入目标。');
       if (!job.partial) {
         const dir = path.join(root, 'partial-' + (options.taskOwner ? job.token : nonce())), data = jsonBytes(ownerValue('partial', { token: job.token }));
-        charge(job, data.length); fs.mkdirSync(dir); job.partial = dir;
-        fs.writeFileSync(path.join(dir, 'owner.json'), data, { flag: 'wx' });
-        const ledgerFd = fs.openSync(path.join(dir, 'transaction.log'), 'wx+');
-        job.ledger = { fd: ledgerFd, identity: fs.fstatSync(ledgerFd), bytes: 0, closed: false, removed: false, hash: crypto.createHash('sha256') };
+        const markerPath = path.join(dir, 'owner.json'); let made = false, ownerStarted = false, ownerWritten = false, dirIdentity;
+        charge(job, data.length);
+        try {
+          fs.mkdirSync(dir); made = true; job.partial = dir; dirIdentity = fs.lstatSync(dir, { bigint: true });
+          ownerStarted = true;
+          if (job.parent) writeBatchMetadata(job, markerPath, data, true);
+          else fs.writeFileSync(markerPath, data, { flag: 'wx' });
+          ownerWritten = true;
+          const ledgerFd = fs.openSync(path.join(dir, 'transaction.log'), 'wx+');
+          try { job.ledger = { fd: ledgerFd, identity: fs.fstatSync(ledgerFd), bytes: 0, closed: false, removed: false, hash: crypto.createHash('sha256') }; }
+          catch (error) { fs.closeSync(ledgerFd); throw error; }
+        } catch (error) {
+          if (!made || !ownerStarted) job.disk -= data.length;
+          else if (!job.parent && !ownerWritten && !fs.existsSync(markerPath)) job.disk -= data.length;
+          if (made && !fs.existsSync(markerPath)) try {
+            const current = directory(dir), exact = fs.lstatSync(dir, { bigint: true });
+            if (!dirIdentity || exact.ino !== dirIdentity.ino || exact.dev !== dirIdentity.dev || !current.isDirectory() || fs.readdirSync(dir).length)
+              fail('未完成的临时目录身份不明；保留。');
+            fs.rmdirSync(dir); job.partial = null;
+          } catch (cleanupError) { error.cleanupError = cleanupError.message; }
+          throw error;
+        }
       }
       const marker = verifyOwner(job.partial, 'partial'); if (marker.token !== job.token) fail('临时缓存事务身份已改变。');
     }
@@ -1019,7 +1290,9 @@ function createCache(options = {}) {
         append(data) {
           checkStream(); if (!Buffer.isBuffer(data)) fail('缓存输出只接受Buffer。');
           if (record.bytes + data.length > (internal ? LIMITS.metadataBytes : maximumBytes)) fail('单个缓存资产超过上限。');
-          charge(job, data.length); writeAll(fileFd, data, record.bytes, count => { record.bytes += count; });
+          const before = record.bytes; charge(job, data.length);
+          try { writeAll(fileFd, data, record.bytes, count => { record.bytes += count; }); }
+          catch (error) { if (job.parent) job.disk -= data.length - (record.bytes - before); throw error; }
         },
         readPrefix(maximum = LIMITS.prefixBytes) {
           checkStream();
@@ -1078,13 +1351,13 @@ function createCache(options = {}) {
       ensurePartial();
       const file = path.join(job.partial, name), fileFd = fs.openSync(file, 'wx+');
       const record = { file: name, bytes: 0, identity: null, closed: false, sha256: null };
-      job.files.set(name, record); job.streams.add(record); let primaryError = null;
+      job.files.set(name, record); job.streams.add(record); let primaryError = null, charged = false;
       try {
         record.identity = fs.fstatSync(fileFd);
         ledgerEntry(name, fs.fstatSync(fileFd, { bigint: true }));
         const openedPath = regular(file);
         if (!sameFile(record.identity, openedPath) || openedPath.size !== 0 || record.identity.size !== 0) fail('缓存输出文件身份或长度已改变。');
-        charge(job, data.length);
+        charge(job, data.length); charged = true;
         writeAll(fileFd, data, 0, count => { record.bytes += count; });
         const written = fs.fstatSync(fileFd), current = regular(file);
         if (!sameFile(record.identity, written) || !sameFile(record.identity, current) || written.size !== record.bytes || current.size !== record.bytes)
@@ -1094,7 +1367,7 @@ function createCache(options = {}) {
         // asset from disk and checks the hash before it can publish the cache.
         record.sha256 = sha(data);
         return Object.freeze({ file: name, bytes: record.bytes, sha256: record.sha256 });
-      } catch (error) { primaryError = error; throw error; }
+      } catch (error) { if (job.parent && charged) job.disk -= data.length - record.bytes; primaryError = error; throw error; }
       finally {
         try { fs.closeSync(fileFd); record.closed = true; job.streams.delete(record); }
         catch (error) { if (primaryError) primaryError.closeError = error.message; else throw error; }
@@ -1108,6 +1381,7 @@ function createCache(options = {}) {
       candidate = null; candidatePinned = null;
       if (!fs.existsSync(target)) return null;
       const inspected = inspectDirectory(target, 'cache', sourceSha256, true); let damaged = !inspected.lengthsMatch;
+      if (job.parent && inspected.info.metrics?.sourceSha256 !== job.parent.writer.sourceSha256) fail('批量复用段的源内容指纹不属于当前原视频。');
       for (const item of inspected.map.values()) {
         if (await hashFile(path.join(target, item.file), signal) !== item.sha256) damaged = true;
         assertWriter(job);
@@ -1129,15 +1403,16 @@ function createCache(options = {}) {
         ...(metrics ? { metrics: JSON.parse(jsonBytes(metrics).toString('utf8')) } : {}), cacheDir: target, leaseId: id };
       const map = readAssetsMap(persisted, manifestAssets(persisted, sourceSha256)), capturedSource = frozenCopy(current);
       touch(job, target);
-      charge(job, data.length); fs.writeFileSync(file, data, { flag: 'wx' });
+      const markerIdentity = job.parent ? writeBatchMetadata(job, file, data) : (charge(job, data.length), fs.writeFileSync(file, data, { flag: 'wx' }), regular(file));
       live.set(info, { active: true, id, file, cacheDir: target, source: capturedSource,
-        markerSha: sha(data), markerIdentity: regular(file), map, reads: 0 });
+        markerSha: sha(data), markerIdentity, map, reads: 0 });
       return info;
     }
     async function finish(manifest, currentSource) {
       assertWriter(job);
       if (finished) fail('缓存事务已提交。');
       if (!currentSource || currentSource.sha256 !== sourceSha256) fail('当前素材绑定与源内容不符。');
+      if (job.parent && manifest.metrics?.sourceSha256 !== job.parent.writer.sourceSha256) fail('批量段必须绑定原视频内容指纹。');
       if (job.streams.size || job.closingStreams.size) fail('必须先等待缓存输出流真正关闭。');
       if (writer.children.some(child => child.state !== 'closed')) fail('辅助进程仍未退出，不能发布完整缓存。');
       if (candidate) {
@@ -1209,8 +1484,15 @@ function createCache(options = {}) {
     }
     return Object.freeze({ readComplete, writeAsset, writeFrame, finishFrames, openAsset, finish, abort, beforeSpawn, childStarted, childClosed, cleanup,
       close() {
+        if (job.parent && job.closed) return false;
         if (job.streams.size || job.closingStreams.size || writer.children.some(child => child.state !== 'closed')) fail('输出流或辅助进程仍未关闭，不能释放写锁。');
-        closeLedger(); return releaseWriter(job);
+        closeLedger();
+        if (job.parent) {
+          assertWriter(job, true);
+          if (job.partial || fs.existsSync(path.join(target, 'owner.next-' + job.token + '.json'))) fail('批量子事务临时产物尚未收尾。');
+          job.parent.batch.active = null; job.closed = true; return true;
+        }
+        return releaseWriter(job);
       } });
   }
   function leaseFor(info) {
@@ -1305,7 +1587,9 @@ function createCache(options = {}) {
     if (lease.reads) fail('缓存读取尚未结束，不能释放占用记录。');
     leaseFor(info); const stat = regular(lease.file);
     if (!sameFile(lease.markerIdentity, stat) || sha(fs.readFileSync(lease.file)) !== lease.markerSha) fail('占用记录身份已改变；未执行删除。');
-    fs.unlinkSync(lease.file); lease.active = false; return true;
+    fs.unlinkSync(lease.file); lease.active = false;
+    if (activeBatch && !activeBatch.closed) activeBatch.disk -= stat.size;
+    return true;
   }
   // Read-only preflight, never a deletion capability or a liveness verdict.
   // A future maintenance transaction must reacquire exclusion and revalidate.
@@ -1383,7 +1667,7 @@ function createCache(options = {}) {
     const tx = begin({ ...settings, clearOthers: true });
     try { return tx.cleanup; } finally { tx.close(); }
   }
-  const api = Object.freeze({ root, begin, readAsset, readFrameBatch, release, inventory, clearOther, adoptReadLease, detachReadLease });
+  const api = Object.freeze({ root, begin, openBatch, readAsset, readFrameBatch, release, inventory, clearOther, adoptReadLease, detachReadLease });
   manifestMemoDiagnostics.set(api, () => Object.freeze({ ...manifestMemoStats, entries: manifestMemo.size,
     bytes: manifestMemoBytes, maxEntries: MANIFEST_MEMO_LIMITS.entries, maxBytes: MANIFEST_MEMO_LIMITS.bytes }));
   return api;

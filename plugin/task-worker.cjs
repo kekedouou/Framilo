@@ -40,13 +40,16 @@ let tail = Promise.resolve(), stopping = false, shutdownTask = null;
 function send(value) { const text = JSON.stringify(value); if (Buffer.byteLength(text) > 8 * 1024 ** 2) throw new Error('Control response exceeds 8MiB.'); process.stdout.write(text + '\n'); }
 function response(id, result, error) { send({ type: 'response', id, ...(error ? { error: { code: error.code || 'TASK_FAILED', message: String(error.message).slice(0, 2048) } } : { result }) }); }
 function enqueue(fn) { const work = tail.then(fn); tail = work.catch(() => {}); return work; }
+async function closeProxyBatches(except) {
+  for (const [leaseId, media] of longOwners) if (leaseId !== except) await media.closeProxyBatch(handles.get(leaseId));
+}
 function shutdown(id) {
   if (shutdownTask) return shutdownTask;
   stopping = true; for(const bg of backgrounds.values())bg.foreground(); for (const controller of controllers.values()) controller.abort();
   shutdownTask = enqueue(async () => {
     for(const bg of backgrounds.values())await bg.close(); backgrounds.clear();
     for (const info of handles.values()) {
-      if (longOwners.has(info.leaseId)) longOwners.get(info.leaseId).releaseLong(info);
+      if (longOwners.has(info.leaseId)) await longOwners.get(info.leaseId).releaseLong(info);
       else await cache.release(info);
     }
     longOwners.clear();
@@ -59,6 +62,7 @@ function shutdown(id) {
 async function execute(message, controller) {
   if (stopping) throw Object.assign(new Error('视频任务正在关闭。'), { code: 'MEDIA_CANCELLED' });
   if (message.method === 'prepare') {
+    await closeProxyBatches();
     const media = require('./media.cjs').createMedia({ tools: message.tools, cache });
     const info = await media.prepare(message.snapshot, { signal: controller.signal, previewQuality: message.previewQuality, playbackBackend: message.playbackBackend,
       onProgress: value => send({ type: 'progress', id: message.id, value }) });
@@ -67,7 +71,9 @@ async function execute(message, controller) {
     if(info.videoEncoding){
       const bg=require('./proxy-background.cjs').createProxyBackground({info,
         prepare:(ordinal,signal)=>media.prepareSegment(info,ordinal,{signal}),release:value=>cache.release(value),
-        enqueue,idle:()=>!stopping&&!controllers.size,inventory:()=>cache.inventory(),emit:value=>backgroundEvent(info.leaseId,value),
+        enqueue,idle:()=>!stopping&&!controllers.size,
+        budget:async signal=>{await closeProxyBatches(info.leaseId);return media.proxyBudget(info,{signal});},
+        closeBatch:()=>media.closeProxyBatch(info),emit:value=>backgroundEvent(info.leaseId,value),
         onSegment:(ordinal,value)=>{send({type:'proxy-segment',parentLeaseId:info.leaseId,ordinal,value});}});
       backgrounds.set(info.leaseId,bg);bg.kick();
     }
@@ -77,6 +83,7 @@ async function execute(message, controller) {
     const info = handles.get(message.leaseId), media = longOwners.get(message.leaseId);
     if (!info || !media) throw new Error('长视频会话已失效。');
     const bg=backgrounds.get(info.leaseId);if(bg?.get(message.ordinal))return bg.get(message.ordinal);
+    await closeProxyBatches(info.videoEncoding ? info.leaseId : undefined);
     let segment = await media.prepareSegment(info, message.ordinal, { signal: controller.signal });
     if(bg) return await bg.retain(message.ordinal,segment);
     handles.set(segment.leaseId, segment);return segment;
@@ -84,11 +91,11 @@ async function execute(message, controller) {
   if (message.method === 'release') {
     const info = handles.get(message.leaseId); if (!info) throw new Error('Unknown task lease.');
     if(backgrounds.has(message.leaseId)){await backgrounds.get(message.leaseId).close();backgrounds.delete(message.leaseId);}
-    if (longOwners.has(message.leaseId)) { longOwners.get(message.leaseId).releaseLong(info); longOwners.delete(message.leaseId); }
+    if (longOwners.has(message.leaseId)) { await longOwners.get(message.leaseId).releaseLong(info); longOwners.delete(message.leaseId); }
     else await cache.release(info);
     handles.delete(message.leaseId); return true;
   }
-  if (message.method === 'clearOther') return cache.clearOther(message.settings);
+  if (message.method === 'clearOther') { await closeProxyBatches(); return cache.clearOther(message.settings); }
   if (['export', 'publishExport', 'discardExport'].includes(message.method)) {
     if (!sourceExports) sourceExports = require('./export.cjs').createExportStore({ pluginRoot: root });
     if (message.method === 'export') {

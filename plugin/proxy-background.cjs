@@ -1,16 +1,31 @@
 'use strict';
 // Retain verified disk-segment leases for this source session. Byte storage
 // remains owned/accounted by cache; no compressed frame data is kept here.
-function createProxyBackground({ info, prepare, release, enqueue, idle, inventory, emit,
+function createProxyBackground({ info, prepare, release, enqueue, idle, budget, closeBatch, emit,
   onSegment = () => {}, schedule = setTimeout, cancel = clearTimeout }) {
-  const ready = new Set(), retained = new Map(), pendingRelease = new Set(), retaining = new Set();
-  let cursor = 0, timer = null, running = null, closed = false, state = 'preparing', failure = null, cleanupFailure = null, preparationCleanupFailure = null, closing = null;
+  if (typeof budget !== 'function' || typeof closeBatch !== 'function') throw new Error('代理后台缺少长会话预算或关闭能力。');
+  const ready = new Set(), published = new Set(), retained = new Map(), pendingRelease = new Set(), retaining = new Set();
+  let cursor = 0, timer = null, running = null, closed = false, state = 'preparing', failure = null, cleanupFailure = null, preparationCleanupFailure = null, closing = null, transitioning = null;
   const total = info.segments.length;
   const valid = ordinal => Number.isSafeInteger(ordinal) && ordinal >= 0 && ordinal < total;
   const snapshot = () => ({ stage: state, ready: retained.size, total, ...(failure ? { error: failure } : {}) });
   const notify = () => emit(snapshot());
   const sameLease = (left, right) => left === right || left?.leaseId && left.leaseId === right?.leaseId;
-  function updateComplete() { if (!closed && retained.size === total) state = 'complete'; }
+  function finishState(next) {
+    if (transitioning) return transitioning;
+    const operation = Promise.resolve().then(closeBatch).then(() => {
+      // Ready leases are usable while the final full-root reconciliation runs.
+      // Do not report complete/budget until that reconciliation has succeeded.
+      if (!closed) { state = next; notify(); }
+    }).catch(error => {
+      if (!closed) { state = 'error'; failure = error.message; notify(); }
+      throw error;
+    });
+    transitioning = operation;
+    operation.then(() => { if (transitioning === operation) transitioning = null; },
+      () => { if (transitioning === operation) transitioning = null; });
+    return operation;
+  }
   async function discard(value) {
     pendingRelease.add(value);
     try { await release(value); pendingRelease.delete(value); }
@@ -31,8 +46,10 @@ function createProxyBackground({ info, prepare, release, enqueue, idle, inventor
         return existing;
       }
       // Install synchronously, before a concurrent foreground/background result.
-      retained.set(ordinal, value); ready.add(ordinal); updateComplete();
-      await onSegment(ordinal, value); notify(); return value;
+      retained.set(ordinal, value); ready.add(ordinal);
+      await onSegment(ordinal, value); published.add(ordinal); notify();
+      if (published.size === total) await finishState('complete');
+      return value;
     })();
     retaining.add(work); work.then(() => retaining.delete(work), () => retaining.delete(work)); return work;
   }
@@ -44,20 +61,30 @@ function createProxyBackground({ info, prepare, release, enqueue, idle, inventor
   function pump() {
     if (closed || state !== 'preparing') return;
     if (!idle()) { kick(); return; }
-    while (cursor < total && retained.has(cursor)) cursor++;
-    if (cursor >= total) { updateComplete(); notify(); return; }
-    const ordinal = cursor, controller = new AbortController(), work = running = { controller, promise: null };
+    const controller = new AbortController(), work = running = { controller, promise: null };
     work.promise = enqueue(async () => {
+      try {
       if (closed || controller.signal.aborted) return;
-      const disk = inventory();
+      while (cursor < total && retained.has(cursor)) cursor++;
+      if (cursor >= total) { if (published.size === total) await finishState('complete'); return; }
+      const ordinal = cursor, disk = await budget(controller.signal);
+      if (closed || controller.signal.aborted) return;
+      if (!disk || !Number.isSafeInteger(disk.usedBytes) || disk.usedBytes < 0 || !Number.isSafeInteger(disk.diskLimitBytes) || disk.diskLimitBytes <= 0)
+        throw Object.assign(new Error('代理长会话预算账本无效。'), { code: 'PROXY_BUDGET_INVALID' });
       // Do not generate a tail which evicts the already prepared front forever.
-      if (disk.usedBytes > disk.diskLimitBytes - 128 * 1024 ** 2) { state = 'budget'; notify(); return; }
+      if (disk.usedBytes > disk.diskLimitBytes - 128 * 1024 ** 2) { await finishState('budget'); return; }
       const value = await prepare(ordinal, controller.signal);
       if (closed || controller.signal.aborted) { await discard(value); return; }
       await retain(ordinal, value); cursor++;
-    }).catch(error => {
+      } catch (error) {
       if (error.code === 'MEDIA_CLEANUP_FAILED') preparationCleanupFailure = error;
-      if (!closed && error.code !== 'MEDIA_CANCELLED' && error.name !== 'AbortError') { state = 'error'; failure = error.message; notify(); }
+      if (!closed && error.code !== 'MEDIA_CANCELLED' && error.name !== 'AbortError') {
+        // Keep this direct: this catch still belongs to the current queued work.
+        // Adding another queued close and awaiting it would deadlock the worker.
+        try { await closeBatch(); } catch (closeError) { cleanupFailure = closeError; }
+        state = 'error'; failure = error.message + (cleanupFailure ? '；长会话关闭失败：' + cleanupFailure.message : ''); notify();
+      }
+      }
     }).finally(() => { if (running === work) running = null; kick(); });
   }
   function foreground() { if (running) running.controller.abort(); }
@@ -79,6 +106,7 @@ function createProxyBackground({ info, prepare, release, enqueue, idle, inventor
         for (const [ordinal, current] of retained) if (current === value) retained.delete(ordinal);
       }));
       const rejected = results.filter(result => result.status === 'rejected');
+      try { await closeBatch(); } catch (error) { rejected.push({ status: 'rejected', reason: error }); }
       if (rejected.length) {
         const error = Object.assign(Error('代理占用释放失败：' + rejected.map(result => result.reason?.message || result.reason).join('；')),
           { code: 'PROXY_RELEASE_FAILED', failures: rejected.map(result => result.reason) });

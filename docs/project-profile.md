@@ -1,22 +1,28 @@
 # 项目说明
 
-见[E-34计划](experiments/E34/plan.md)。
+见[E-35计划](experiments/E35/plan.md)。
 
-当前：E-34已接入常驻播放解码、H264全IDR代理和JPEG切换；本地45秒/5分钟就绪拖动通过，30分钟后台规模两轮失败，转长会话修复，真实Eagle与最终交付未验。见[E-34报告](experiments/E34/report.md)。
+当前：E-35缓存长会话自动关已通过：Node24/Node16各18项真实Job中断恢复，30秒/5分钟/30分钟有声对照及10分钟连续播放。正式plugin保持原入口、JPEG可切换；必要的真实Eagle集中体验及最终交付未验，详见[E35报告](experiments/E35/report.md)。E34两次30分钟后台失败保留为历史。
 
-## E-34 正式模块与当前边界
+## E-35 当前实现与验证边界
+
+E35复用根writer与分段子事务，cache.cjs提供openBatch/beginSegment/snapshot/close及双槽目标记录；long-media持有同源能力，media转发proxyBudget/closeProxyBatch，worker仍单队列。cache冻结aa8ad2ea、long-media冻结b58d71a2；音轨起点省略seek以保留AAC初态，含音轨段key升级audio-preroll-v2，无音轨key、原SHA与永久数据格式不变。
+
+最终30秒、5分钟、30分钟有声对照均通过；30分钟简单720p60重复合成源的源检查/索引prepare约2.812秒，后台完成约9分08秒，已就绪随机定位P95约7.1ms，RAM拖动59.75Hz/最长间隔27.8ms。连续观察600.001秒推进599.933秒，零缓冲、35995次绘制，画面时钟落后P95为6.715ms/最大15.191ms，含首尾的绘制间隔最大81.9ms，300次PCM读取无空洞；这不是复杂VFX、实际Eagle或完整首帧等待验收。Node16完整18点最终记录为e35-cache-node16/batch-95e6dac239b82b60.json，34.976秒，scratch清理完成；命令行守护验证不代替Eagle窗口运行。
 
 新增四个正式模块：avc-access-units.cjs拆分独立AVC帧；proxy-decoder.js复用WebCodecs VideoDecoder；proxy-background.cjs在首片可播放后继续准备未完成段；media-wire.cjs以整数PTS紧凑传输长片索引。常驻的是播放解码器，后台代理生成仍为可取消分段FFmpeg任务，不宣称整片单次连续转码。现有Canvas、Web Audio、UI和永久标注身份继续复用；无需安装额外原生库，prefer-hardware只是偏好，未证实实际NVDEC。
 
-long-media.cjs负责源索引、JPEG或AVC/PCM分段及源身份核对；segment-reader.cjs负责受限读取与借用租约；segment-audio.cjs负责有界PCM排程。后台在同一5GiB总预算内原子提交代理段，保留段描述与租约而不常驻整片图像，额度不足停止扩展；关闭/换片/模式互切等待读取、解码及租约真正释放。完整源哈希与轻量帧索引仍在首帧前读取，未生成位置仍可能等待约0.5～0.94秒，本轮未达到≤250ms低清预览目标。
+long-media.cjs负责源索引、JPEG或AVC/PCM分段及源身份核对；segment-reader.cjs负责受限读取与借用租约；segment-audio.cjs负责有界PCM排程。后台在同一5GiB总预算内原子提交代理段，保留段描述与租约而不常驻整片图像，额度不足停止扩展；关闭/换片/模式互切等待读取、解码及租约真正释放。完整源哈希与轻量帧索引仍在首帧前读取，未生成位置的压缩帧字节返还约0.50～0.56秒，不能当成已提交画面；≤250ms低清预览仍未实现。
 
-源帧上限120000，全索引64MiB，紧凑控制JSON≤6MiB；108000帧实际控制约1.19MiB及源索引通过，但30分钟后台两轮失败，不能补记整片拖动通过。只缓存不变manifest的解析/校验结果，最多4096项、按原始JSON长度计32MiB；每次仍读取并SHA核对原字节、目录身份、实际叶子与长度，writer/lease/partial/cleanup不使用该备忘。inventory两处关联改成同次盘点目录Map，保留全部安全重验；逐段累计全量I/O仍未解决。解析对象、段描述、浏览器及GPU额外内存另计，缓存额度不是全进程上限。
+源帧上限120000，全索引64MiB，紧凑控制JSON≤6MiB；E34的108000帧索引/通信通过及两次后台失败保留，E35后续通过不改写旧结论。manifest解析备忘最多4096项/原始JSON32MiB，逐次完整读取与SHA、目录身份、实际叶子及长度核对保留，writer/lease/partial/cleanup不使用备忘；inventory关联使用同次目录Map。E35将全根盘点移至排他writer开始/结束，各段仍独立校验、原子提交并增量计费，避免逐段全根I/O。
 
-显式媒体入口为scripts/check-proxy-decoder.cjs、check-proxy-playback.cjs及check-proxy-long.cjs，分别对应原生解码、正式链路和时长规模证据；默认模型不生成媒体。默认check-4及Node16新增模型命令行通过，manifest备忘最新补齐13例完整性/隔离模型；真实Eagle Chrome108能力、10分钟连续音画播放、全进程/GPU内存、高分辨率复杂源仍未验。独立Chrome快不等于宿主验收。
+47次外部进程树RSS抽样峰值约1.29GiB，间隔10秒且缺前三分钟，共享页可能重复；GPU及Eagle未测。该数据不能证明全进程硬上限、P-03/P-04整体通过或高分辨率复杂源性能。真实Eagle Chrome108能力、颜色/实际音画与操作体验待集中验证；独立Chrome结果不能替代。
+
+显式验证入口为scripts/check-cache-batch.cjs（真实Job中断，不处理媒体）、check-proxy-decoder.cjs、check-proxy-playback.cjs及check-proxy-long.cjs；各自预算与原始证据见E35/E34计划报告，默认模型不生成媒体，不自动重跑封存轮次。
 
 ## E-33 历史接入
 
-E-33先接入有界JPEG/PCM分段、源帧索引和共享时钟；用户后续反馈拖动不达标，形成[方向与验收评审](experiments/E33/decoder-review.md)。该候选记录由上节E-34实际实施替代，旧失败与证据仍保留。正式plugin不依赖prototypes/long-video。
+E-33先接入有界JPEG/PCM分段、源帧索引和共享时钟；用户后续反馈拖动不达标，形成[方向与验收评审](experiments/E33/decoder-review.md)。后续由E34代理基础及上节E35长会话演进，旧失败与证据仍保留。正式plugin不依赖prototypes/long-video。
 
 
 上一阶段E-32优化二级轮盘节点复用和100ms悬停，切换工具不自动展开属性；统一文字框模糊、工具轨宽度与高亮，设置可直接切换标注/片段。实施与验证状态见[E-32报告](experiments/E32/report.md)。
@@ -39,10 +45,10 @@ E-33先接入有界JPEG/PCM分段、源帧索引和共享时钟；用户后续�
 | 长期权限和工程规则 | 根AGENTS.md；不堆进度 |
 | 产品、架构 | docs/product.md的R/P及批准补充；docs/architecture.md的C/A-01～A-08 |
 | 愿景与未来候选 | docs/roadmap.md；EV决定、近期/中期/远期及调整理由，不是已实现功能 |
-| 任务、清理规则 | docs/development-plan.md；E-34当前交接、历史T/E任务及F-01～F-07 |
+| 任务、清理规则 | docs/development-plan.md；E-35自动关与宿主待验交接、历史T/E任务及F-01～F-07 |
 | 验证协议 | docs/verification.md；协议、真实运行和人工反馈分开 |
 | 当前状态 | docs/progress.md；先读顶部当前交接，后段为历史 |
-| 专项结果 | docs/experiments/E34当前解码/代理与时长规模；E33及此前UI/E/Evolution/A/B/S1/T0～T4保留原数据、失败和测量局限 |
+| 专项结果 | docs/experiments/E35当前长会话/中断恢复/有声规模与边界；E34及此前阶段保留原数据、失败和测量局限 |
 | 发布交接 | docs/releases/v0.1.0-beta.2.md；当前已发布版本清单/风险/授权入口，开发版另见进度 |
 | 旧发行与过程 | docs/releases/旧版本、docs/progress/、demos/standalone-preview/；历史说明不冒充下载或新授权 |
 | 私人原始证据/配置 | verification-runs/和原型evidence/等Git忽略路径；不公开、不覆盖 |
@@ -106,17 +112,17 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 | plugin/session.cjs | 素材/库快照、状态与任务所有权，协调适配、准备、缓存和播放 |
 | plugin/eagle.cjs | 唯一素材/标注 API 边界；独立读回，不直接写 metadata.json |
 | plugin/export.cjs、export-work/ | 源视频图片/片段导出、本次暂存及本地保存；由既有后台任务执行，暂存累计1GiB、正常结束清本次，异常/导入未知保留核对，不受预览缓存清理器删除 |
-| plugin/media.cjs | 只读源媒体、分析和 FFmpeg；通过缓存句柄受限写入，不自行淘汰目录 |
-| plugin/long-media.cjs | 源帧索引、JPEG或全IDR AVC/PCM分段与源身份核对；120000帧/64MiB索引上限，复用cache事务 |
+| plugin/media.cjs | 只读源媒体、分析和 FFmpeg；转发proxyBudget/closeProxyBatch，通过缓存句柄受限写入，不自行淘汰目录 |
+| plugin/long-media.cjs | 源帧索引、JPEG或全IDR AVC/PCM分段与源身份核对；120000帧/64MiB索引上限，持有同源batch、分段取消与统一关闭；音轨起点/两秒预热及audio-preroll-v2派生键 |
 | plugin/avc-access-units.cjs | Annex-B流拆分、AUD/SPS/PPS/IDR框架与8MiB单帧保护；不负责证明完整H264语法或像素正确 |
 | plugin/proxy-decoder.js | 常驻WebCodecs解码、两项在途、受控flush、ImageBitmap所有权及关闭等待；无文件或Eagle访问，硬件偏好不等于实测加速 |
-| plugin/proxy-background.cjs | 前台优先的渐进代理准备、段描述/租约保留、磁盘余量停止和关闭；不把整片图像常驻RAM |
+| plugin/proxy-background.cjs | 前台优先的渐进代理准备、段描述/租约保留及writer账本额度判断；背景完整/容量停止先等batch核对关闭，不把整片图像常驻RAM |
 | plugin/media-wire.cjs | 整数PTS/共同时间基准/显式结束时间的紧凑控制协议，≤6MiB/120000帧、摘要/版本检查及无损重建；不读素材或改源SHA |
 | plugin/segment-reader.cjs、segment-audio.cjs | 受限分段读取/借用归还、共享时钟音频排程；关闭等待实际读取与释放 |
-| plugin/cache.cjs | 文件所有权、实际路径、预算、锁、完整提交、淘汰与清理；完整manifest的有界解析备忘仍每次SHA核对字节，不备忘可变归属记录；不操作UI或素材元数据 |
+| plugin/cache.cjs | 文件所有权、路径、预算、锁、完整提交、淘汰与清理；openBatch/beginSegment/snapshot/close、双槽目标记录、失败退款与原计划恢复；完整manifest备忘仍每次SHA核对字节，不备忘可变归属记录，不操作UI或素材元数据 |
 | plugin/preferences.cjs | RAM档位/物理上限、画质、JPEG/代理方式与交互偏好、旧格式只读兼容和本地原子保存；不访问素材库或清理媒体缓存 |
 | plugin/process-identity.cjs | Windows进程出生/后代只读证明；独占句柄核对后接管空writer记录；未知时保留，不终止进程、不调用Eagle API |
-| plugin/task-client.cjs、task-worker.cjs、native/task-host.cs | 窗口与后台请求、复用媒体/缓存、Windows互斥与任务组；控制消息不传图片，实际实现见A-07 |
+| plugin/task-client.cjs、task-worker.cjs、native/task-host.cs | 窗口与后台请求、Windows互斥与任务组；worker单队列处理同源抢占及维护/换源/关闭时batch收尾，客户端原租约借读；控制消息不传图片，历史基础见A-07 |
 | plugin/frame-pack.cjs | 校验集中JPEG/AVC帧包的纯布局及videoEncoding；物理文件读写仍归cache |
 | plugin/frame-index.cjs | 纯时间/源帧映射；整数 PTS、呈现编号与源时间关系 |
 | plugin/player.js | Canvas、Web Audio、JPEG/代理解码注入与调度；通过缓存读取/预算句柄取得资源，不调用标注API |

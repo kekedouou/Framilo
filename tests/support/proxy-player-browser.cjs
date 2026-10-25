@@ -7,10 +7,15 @@ const { spawn } = require('child_process');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function checkProxyPlayerBrowser({ root, scratch, client, info, ramBytes = 1024 ** 3,
-  backgroundTimeoutMs = 240000, chrome = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' }) {
+  backgroundTimeoutMs = 240000, playDurationMs = 5200, requireAudio = false, requireBackgroundOverlap = true,
+  chrome = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' }) {
   if (!info || !info.streaming || !info.videoEncoding || !info.frames || info.frames.length < 4)
     throw new Error('Formal proxy Player check requires an indexed proxy session.');
   if (![512 * 1024 ** 2, 1024 ** 3].includes(ramBytes)) throw new Error('Browser fixture RAM must be 512MiB or 1GiB.');
+  if (![5200, 600000].includes(playDurationMs) || typeof requireAudio !== 'boolean' || typeof requireBackgroundOverlap !== 'boolean') throw new Error('Playback check duration/audio scope is not registered.');
+  if (requireAudio && !info.audio) throw new Error('Continuous audio check needs an actual source audio stream.');
+  if (playDurationMs === 600000 && info.duration < 610) throw new Error('Ten-minute playback needs a source longer than its observation window.');
+  const maxRawEvents = playDurationMs === 600000 ? 250000 : 30000;
   const result = { origin: 'independent-Chrome-formal-Player-WebCodecs-loopback-owned-cache', eagle: false,
     status: 'running', ramBytes, cases: [], serverErrors: [],
     timingBoundary: 'browser input before local control/read HTTP; ends at formal Player Canvas drawImage submission; no physical presentation measurement',
@@ -106,7 +111,7 @@ async function checkProxyPlayerBrowser({ root, scratch, client, info, ramBytes =
     await call('Target.activateTarget', { targetId: target.targetId }, null);
     for (let n = 0; n < 100 && !await evaluate('!!(window.EVAPlayer&&window.EVAProxyDecoder)'); n++) await pause(50);
     const initialized = await runCase('formal-load', `(async()=>{
-      window.info=await(await fetch('/info')).json();window.raw=[];window.errors=[];window.droppedEvents=0;window.decoders=[];
+      window.info=await(await fetch('/info')).json();window.raw=[];window.errors=[];window.droppedEvents=0;window.decoders=[];window.audioReads=[];window.audioReadOverflow=0;
       window.phase='load';let barrier=Promise.resolve(),prefetchKey=null;
       const response=async r=>{if(!r.ok)throw Object.assign(Error(await r.text()),{code:r.headers.get('x-error-code')||'HTTP_FAILED'});return r;};
       window.percentile=(values,p=.95)=>{const v=[...values].sort((a,b)=>a-b);return v.length?v[Math.min(v.length-1,Math.ceil(v.length*p)-1)]:null;};
@@ -120,40 +125,55 @@ async function checkProxyPlayerBrowser({ root, scratch, client, info, ramBytes =
           fetch('/prefetch?time='+time+'&loop='+encodeURIComponent(JSON.stringify(loop))).then(response).catch(error=>errors.push({phase:'prefetch',code:error.code,message:error.message}));},
         readAsset:async(_,file)=>{await barrier;const r=await response(await fetch('/frame?file='+encodeURIComponent(file)));return new Uint8Array(await r.arrayBuffer());},
         createSegmentAudio:settings=>SegmentAudio.createSegmentAudio({...settings,read:async ordinal=>{
-          await barrier;const r=await fetch('/audio/'+ordinal);if(r.status===204)return null;await response(r);
-          return {bytes:new Uint8Array(await r.arrayBuffer()),start:Number(r.headers.get('x-start')),duration:Number(r.headers.get('x-duration'))};}}),
+          const row={ordinal,phase,started:performance.now(),status:'pending'};if(audioReads.length<5000)audioReads.push(row);else audioReadOverflow++;
+          try{await barrier;const r=await fetch('/audio/'+ordinal);if(r.status===204){row.status='empty';return null;}await response(r);
+          const value={bytes:new Uint8Array(await r.arrayBuffer()),start:Number(r.headers.get('x-start')),duration:Number(r.headers.get('x-duration'))};
+          Object.assign(row,{status:'ready',start:value.start,duration:value.duration,bytes:value.bytes.byteLength});return value;
+          }catch(error){Object.assign(row,{status:'failed',error:error.message,code:error.code});throw error;}finally{row.ended=performance.now();}}}),
         emit:e=>{if(!['request','draw','superseded','reused','error','clock'].includes(e.type))return;
-          const row={phase, ...Object.fromEntries(['type','at','requestId','kind','frameId','frameOrdinal','inputAt','drawAt','responseMs','time','targetTime','cacheStateAtInput','commitSource','status','error','code'].filter(k=>e[k]!==undefined).map(k=>[k,e[k]]))};
+          const row={phase, ...Object.fromEntries(['type','at','requestId','kind','frameId','frameOrdinal','inputAt','drawAt','responseMs','time','targetTime','mediaTime','method','audioContextStart','sincePreviousDrawMs','cacheStateAtInput','commitSource','status','error','code'].filter(k=>e[k]!==undefined).map(k=>[k,e[k]]))};
           if(e.type==='clock')row.clockPhase=e.phase;if(e.barcode)row.barcode={actual:e.barcode.actual,expected:e.barcode.expected,ok:e.barcode.ok,uncertain:e.barcode.uncertain};
-          if(raw.length<30000)raw.push(row);else droppedEvents++;
+          if(raw.length<${maxRawEvents})raw.push(row);else droppedEvents++;
           if(e.type==='error')errors.push(row);
         }});
       const started=performance.now();await player.load(info);return {ms:performance.now()-started,snapshot:player.snapshot(),capabilities:{VideoDecoder:typeof VideoDecoder,secureContext:isSecureContext,userAgent:navigator.userAgent},failed:player.snapshot().state!=='paused'||player.snapshot().frameOrdinal!==0};
     })()`);
     if (initialized.status !== 'passed') throw Error('Formal Player initialization did not pass.');
     const statusBefore = client.cache.backgroundStatus ? client.cache.backgroundStatus(info) : null;
+    const backgroundObservedAt = Date.now();
     const playback = await runCase('play-with-background', `(async()=>{
       phase='background-play';const eventStart=raw.length;await player.play();const start=performance.now(),from=player.snapshot().time;
-      await new Promise(r=>setTimeout(r,5200));const played=player.snapshot(),end=performance.now();await player.pause();
-      const buffers=raw.slice(eventStart).filter(e=>e.type==='clock'&&e.clockPhase==='supply-buffer-start');
-      const advance=played.time-from;return {wallMs:end-start,mediaAdvance:advance,buffers,snapshot:played,failed:played.state==='error'||advance<4.5||buffers.length>0};
-    })()`);
+      await new Promise(r=>setTimeout(r,${playDurationMs}));const played=player.snapshot(),end=performance.now();await player.pause();
+      const events=raw.slice(eventStart),buffers=events.filter(e=>e.type==='clock'&&e.clockPhase==='supply-buffer-start');
+      const draws=events.filter(e=>e.type==='draw'),lags=draws.filter(e=>Number.isFinite(e.mediaTime)&&Number.isFinite(e.time)).map(e=>Math.abs(e.mediaTime-e.time)*1000);
+      const bounds=[start,...draws.map(e=>e.drawAt),end],gaps=bounds.slice(1).map((at,n)=>at-bounds[n]),maxDrawGapMs=gaps.length?Math.max(...gaps):null;
+      const videoClock={scope:'decoded frame PTS at Canvas submission versus formal Player output-clock estimate; physical sound/screen timing unmeasured',samples:lags.length,p95LagMs:percentile(lags),maxLagMs:lags.length?Math.max(...lags):null,drawHz:draws.length/((end-start)/1000),maxDrawGapMs};
+      const advance=played.time-from,extended=${playDurationMs === 600000},audioRequired=${requireAudio},epsilon=1/48000+.000001;
+      const relevant=audioReads.filter(r=>{const g=info.segments[r.ordinal];return g&&g.start<played.time&&g.end>from;});
+      const ranges=relevant.filter(r=>r.status==='ready'&&Number.isFinite(r.start)&&r.duration>0&&r.bytes>44).map(r=>({start:r.start,end:r.start+r.duration})).sort((a,b)=>a.start-b.start);
+      let covered=from;const holes=[];for(const r of ranges){if(r.end<=covered)continue;if(r.start>covered+epsilon)holes.push({start:covered,end:Math.min(r.start,played.time)});covered=Math.max(covered,r.end);if(covered>=played.time-epsilon)break;}
+      if(covered<played.time-epsilon)holes.push({start:covered,end:played.time});
+      const audioCoverage={scope:'nonempty validated segment data requested by the formal audio scheduler; physical sound output unmeasured',from,to:played.time,requests:relevant.length,coveredTo:covered,holes,emptyOrFailed:relevant.filter(r=>r.status==='empty'||r.status==='failed'),complete:holes.length===0&&relevant.every(r=>r.status==='ready'&&Number.isFinite(r.start)&&r.duration>0&&r.bytes>44)&&!audioReadOverflow};
+      return {requestedWallMs:${playDurationMs},wallMs:end-start,mediaAdvance:advance,advanceMinusWallMs:advance*1000-(end-start),buffers,snapshot:played,videoClock,audioCoverage,rawAudioReads:audioReads.map(r=>({...r})),failed:played.state==='error'||advance<${playDurationMs === 600000 ? '(end-start)/1000-.25' : 4.5}||buffers.length>0||(audioRequired&&(!played.audioAvailable||!audioCoverage.complete))||(extended&&(!lags.length||videoClock.p95LagMs>50||videoClock.maxLagMs>100||maxDrawGapMs>100||videoClock.drawHz<30))};
+    })()`, playDurationMs + 60000);
     playback.backgroundAtStart = statusBefore;
     playback.backgroundAtEnd = client.cache.backgroundStatus ? client.cache.backgroundStatus(info) : null;
     playback.backgroundNotCompleteExercised = !!statusBefore && statusBefore.stage !== 'complete' && statusBefore.complete !== true;
     if (!playback.backgroundNotCompleteExercised) {
       playback.scopeNote = 'Background was already complete or unobservable; simultaneous generation not verified.';
-      if (playback.status === 'passed') playback.status = 'not-exercised';
+      if (requireBackgroundOverlap && playback.status === 'passed') playback.status = 'not-exercised';
     }
 
-    const waitStarted = Date.now(); let status = null;
-    while (!ended && Date.now() - waitStarted < backgroundTimeoutMs) {
+    const waitStarted = Date.now(), waitBudgetMs = playDurationMs === 600000 ? Math.max(0, backgroundTimeoutMs - (waitStarted - backgroundObservedAt)) : backgroundTimeoutMs;
+    let status = client.cache.backgroundStatus ? client.cache.backgroundStatus(info) : null;
+    while (!ended && Date.now() - waitStarted < waitBudgetMs) {
       status = client.cache.backgroundStatus ? client.cache.backgroundStatus(info) : null;
       if (status && (status.complete === true || status.stage === 'complete' || ['budget', 'error', 'closed'].includes(status.stage))) break;
       await pause(250);
     }
     const complete = !!status && (status.complete === true || status.stage === 'complete');
-    result.cases.push({ name: 'background-complete', status: complete ? 'passed' : 'failed', waitMs: Date.now() - waitStarted, background: status });
+    result.cases.push({ name: 'background-complete', status: complete ? 'passed' : 'failed', waitMs: Date.now() - waitStarted,
+      ...(playDurationMs === 600000 ? { observedMs: Date.now() - backgroundObservedAt, includesPlaybackObservation: true } : {}), background: status });
     if (complete) {
       await runCase('ready-SSD-random-seek', `(async()=>{
         phase='ready-SSD';await player.pause();const rows=[],selected=new Set();let seed=9341;
@@ -224,7 +244,7 @@ async function checkProxyPlayerBrowser({ root, scratch, client, info, ramBytes =
       return {snapshot,decoderStates,failed:snapshot.budget.used!==0||decoderStates.some(d=>d.pending||d.nativePending||d.bitmapConversions||d.state!=='closed')};
     })()`);
     disposed = closed.status === 'passed';
-    result.diagnostic = await evaluate('({snapshot:player.snapshot(),errors,rawEvents:raw,droppedEvents,decoders:decoders.map(d=>d.snapshot())})');
+    result.diagnostic = await evaluate('({snapshot:player.snapshot(),errors,rawEvents:raw,droppedEvents,audioReadOverflow,decoders:decoders.map(d=>d.snapshot())})');
     result.serverErrorCount = serverErrorCount;
     const genuineServerErrors = result.serverErrors.filter(e => !['MEDIA_CANCELLED', 'PROXY_DECODER_CLOSED'].includes(e.code));
     const pixelEvents = result.diagnostic.rawEvents.filter(e => e.barcode);
@@ -232,7 +252,7 @@ async function checkProxyPlayerBrowser({ root, scratch, client, info, ramBytes =
       attempted: pixelEvents.length, failed: pixelEvents.filter(e => e.barcode.ok === false).length,
       uncertain: pixelEvents.filter(e => e.barcode.uncertain || e.barcode.ok === null).length };
     const pixelFailure = result.pixelChecks.provided && (!result.pixelChecks.attempted || result.pixelChecks.failed || result.pixelChecks.uncertain);
-    result.status = result.cases.some(c => c.status === 'failed') || result.diagnostic.errors.length || result.diagnostic.droppedEvents || genuineServerErrors.length || pixelFailure
+    result.status = result.cases.some(c => c.status === 'failed') || result.diagnostic.errors.length || result.diagnostic.droppedEvents || result.diagnostic.audioReadOverflow || genuineServerErrors.length || pixelFailure
       ? 'failed' : result.cases.some(c => c.status === 'gap') ? 'gap' : result.cases.some(c => c.status === 'not-exercised') ? 'incomplete' : 'passed';
     await call('Browser.close', {}, null).catch(() => {}); await exited;
   } catch (error) {

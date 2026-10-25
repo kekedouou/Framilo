@@ -4,15 +4,16 @@ const { createProxyBackground } = require('../plugin/proxy-background.cjs');
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 function deferred() { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 function harness(settings = {}) {
-  const timers = new Map(), calls = [], released = [], events = [], segments = []; let id = 0, idle = true;
+  const timers = new Map(), calls = [], released = [], events = [], segments = [], batchCloses = []; let id = 0, idle = true;
   const bg = createProxyBackground({ info: { segments: [{}, {}, {}] },
     prepare: settings.prepare || (async ordinal => { calls.push(ordinal); return { ordinal, leaseId: 'lease-' + ordinal }; }),
     release: async value => { released.push(value); if (settings.release) await settings.release(value); },
     enqueue: settings.enqueue || (fn => Promise.resolve().then(fn)), idle: () => idle,
-    inventory: () => settings.disk || ({ usedBytes: 0, diskLimitBytes: 5 * 1024 ** 3 }),
+    budget: settings.budget || (() => settings.disk || ({ usedBytes: 0, diskLimitBytes: 5 * 1024 ** 3 })),
+    closeBatch: async () => { batchCloses.push(true); if (settings.closeBatch) await settings.closeBatch(); },
     emit: value => events.push(value), onSegment: (ordinal, value) => { segments.push([ordinal, value]); if (settings.onSegment) return settings.onSegment(ordinal, value); },
     schedule: fn => { timers.set(++id, fn); return id; }, cancel: value => timers.delete(value) });
-  return { bg, calls, released, events, segments, timers, setIdle: value => { idle = value; },
+  return { bg, calls, released, events, segments, batchCloses, timers, setIdle: value => { idle = value; },
     async tick() { const work = [...timers.values()]; timers.clear(); work.forEach(fn => fn()); await flush(); } };
 }
 async function main() {
@@ -80,6 +81,39 @@ async function main() {
     await h.bg.retain(0, { leaseId: 'known' }); h.bg.kick(); await h.tick(); assert.equal(h.bg.snapshot().stage, 'error');
     await assert.rejects(h.bg.close(), /unknown output cleanup/); assert.equal(h.released.length, 1);
     await assert.rejects(h.bg.close(), /unknown output cleanup/); assert.equal(h.released.length, 1);
+  });
+  await test('final segment is readable but completion waits for batch reconciliation', async () => {
+    const gate = deferred(), h = harness({ closeBatch: () => gate.promise });
+    await h.bg.retain(0, { leaseId: 'a' }); await h.bg.retain(1, { leaseId: 'b' });
+    const value = { leaseId: 'c' }, retaining = h.bg.retain(2, value); await flush();
+    assert.strictEqual(h.bg.get(2), value); assert.equal(h.bg.snapshot().ready, 3);
+    assert.equal(h.bg.snapshot().stage, 'preparing'); assert(!h.events.some(v => v.stage === 'complete'));
+    gate.resolve(); await retaining; assert.equal(h.bg.snapshot().stage, 'complete'); await h.bg.close();
+  });
+  await test('budget stop awaits writer close and uses its asynchronous ledger', async () => {
+    const gate = deferred(), h = harness({ budget: async () => ({ usedBytes: 500 * 1024 ** 2, diskLimitBytes: 512 * 1024 ** 2 }), closeBatch: () => gate.promise });
+    h.bg.kick(); await h.tick(); assert.equal(h.calls.length, 0); assert.equal(h.batchCloses.length, 1);
+    assert.equal(h.bg.snapshot().stage, 'preparing'); gate.resolve(); await flush();
+    assert.equal(h.bg.snapshot().stage, 'budget'); await h.bg.close();
+  });
+  await test('failed batch close never reports complete and can be retried during close', async () => {
+    let fail = true; const h = harness({ closeBatch: async () => { if (fail) throw Error('reconciliation failed'); } });
+    await h.bg.retain(0, { leaseId: 'a' }); await h.bg.retain(1, { leaseId: 'b' });
+    await assert.rejects(h.bg.retain(2, { leaseId: 'c' }), /reconciliation failed/);
+    assert.equal(h.bg.snapshot().stage, 'error'); assert(!h.events.some(v => v.stage === 'complete'));
+    await assert.rejects(h.bg.close(), /reconciliation failed/); fail = false; await h.bg.close();
+  });
+  await test('segment cancellation preserves the reusable batch until source closes', async () => {
+    const h = harness({ prepare: (_, signal) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(Object.assign(Error('cancelled'), { code: 'MEDIA_CANCELLED' })), { once: true })) });
+    h.bg.kick(); await h.tick(); h.bg.foreground(); await flush();
+    assert.equal(h.batchCloses.length, 0); assert.equal(h.bg.snapshot().stage, 'preparing');
+    await h.bg.close(); assert.equal(h.batchCloses.length, 1);
+  });
+  await test('invalid ledgers fail closed rather than bypassing the shared disk quota', async () => {
+    for (const disk of [null, { usedBytes: NaN, diskLimitBytes: 512 * 1024 ** 2 }, { usedBytes: 0, diskLimitBytes: -1 }]) {
+      const h = harness({ budget: () => disk }); h.bg.kick(); await h.tick();
+      assert.equal(h.bg.snapshot().stage, 'error'); assert.equal(h.calls.length, 0); await h.bg.close();
+    }
   });
   console.log('Proxy background: ' + count + ' retention/priority/budget/closure models; no media, files or native host.');
 }

@@ -433,6 +433,7 @@ function createMedia(options) {
     let tx = null, returned = null, primaryError = null;
     const phases = {}, elapsed = start => Number(process.hrtime.bigint() - start) / 1e6;
     try {
+      if (long) await long.closeProxyBatch();
       check(job); notify(job, { stage: 'hash' });
       let phaseStart = process.hrtime.bigint();
       const fingerprint = await hashSource(snapshot.filePath, job); check(job); phases.sourceFingerprintMs = elapsed(phaseStart);
@@ -489,7 +490,8 @@ function createMedia(options) {
       }
     }
   }
-  return Object.freeze({ prepare, prepareSegment: (...args) => longMedia().segment(...args), releaseLong: info => long ? long.release(info) : false });
+  return Object.freeze({ prepare, prepareSegment: (...args) => longMedia().segment(...args), releaseLong: info => long ? long.release(info) : false,
+    proxyBudget: (...args) => longMedia().proxyBudget(...args), closeProxyBatch: info => long ? long.closeProxyBatch(info) : Promise.resolve(false) });
 }
 module.exports = { createMedia, LIMITS, previewRgbFilter,
   _test: { COLOR_VERSION, previewColor, previewRgbFilter, boundedAdd, snapshotCopy, JpegParser, patchWav, videoEnd, resolveVideoEnd, validateProbe, validateDecodedSpan, ffmpegArgs, ratioSeconds, ratioSubtract, ratio } };
