@@ -39,7 +39,7 @@ function backgroundEvent(leaseId,value){send({type:"proxy-progress",leaseId,valu
 let sourceExports = null;
 let tail = Promise.resolve(), stopping = false, shutdownTask = null;
 function send(value) { const text = JSON.stringify(value); if (Buffer.byteLength(text) > 8 * 1024 ** 2) throw new Error('Control response exceeds 8MiB.'); process.stdout.write(text + '\n'); }
-function response(id, result, error) { send({ type: 'response', id, ...(error ? { error: { code: error.code || 'TASK_FAILED', message: String(error.message).slice(0, 2048) } } : { result }) }); }
+function response(id, result, error) { send({ type: 'response', id, ...(error ? { error: { code: error.code || (error.name === 'AbortError' ? 'MEDIA_CANCELLED' : 'TASK_FAILED'), message: String(error.message).slice(0, 2048) } } : { result }) }); }
 function enqueue(fn) { const work = tail.then(fn); tail = work.catch(() => {}); return work; }
 function registerRecordBorrow(info,ordinal,value,bg){
   const prior=recordBorrows.get(value.leaseId);

@@ -17,13 +17,26 @@ function createSegmentAudio({ info, context, read, budget, evict, onError }) {
       const entry = candidates[0]; entries.delete(entry.index); budget.release(entry.token);
     }
   }
-  function load(index) {
+  function load(index, retryOld = true) {
     if (closed) return Promise.reject(new Error('音频读取已关闭。'));
     let entry = entries.get(index);
-    if (entry) { entry.used = ++serial; return entry.promise; }
+    if (entry) {
+      entry.used = ++serial;
+      if (retryOld && !entry.ready && entry.generation !== generation) {
+        const token = generation;
+        // A pause/seek may cancel an old segment while a new play request is
+        // awaiting that same PCM promise. Drain it, then retry once for this
+        // still-current generation. Real errors and closure remain failures.
+        return entry.promise.catch(error => {
+          if (!closed && generation === token && error.code === 'MEDIA_CANCELLED') return load(index, false);
+          throw error;
+        });
+      }
+      return entry.promise;
+    }
     const range = info.segments[index];
     const estimate = Math.ceil((range.end - range.start + .1) * Math.max(48000, context.sampleRate) * info.audio.channels) * 4;
-    entry = { index, token: null, users: 0, ready: false, used: ++serial, buffer: null, start: range.start }; entries.set(index, entry);
+    entry = { index, generation, token: null, users: 0, ready: false, used: ++serial, buffer: null, start: range.start }; entries.set(index, entry);
     entry.promise = (async () => {
       try {
         entry.token = budget.reserve(estimate * 3 + 8192, 'segment-audio-loading', evict);
@@ -44,7 +57,8 @@ function createSegmentAudio({ info, context, read, budget, evict, onError }) {
     loads.add(entry.promise); entry.promise.then(() => loads.delete(entry.promise), () => loads.delete(entry.promise)); return entry.promise;
   }
   async function prime(media, loop) {
-    const first = indexAt(media); await load(first);
+    const token = generation, first = indexAt(media); await load(first);
+    if (closed || token !== generation) return;
     const nextTime = loop && info.segments[first].end >= loop.end ? loop.start : info.segments[first].end;
     if (nextTime < info.duration) await load(indexAt(nextTime));
   }

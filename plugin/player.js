@@ -405,7 +405,7 @@
           this.loadTimings = { initialWarmDeferred: this.forwardPredecode, compressedWarmMs: this.env.now() - warmStartedAt };
           if (!this._valid(epoch)) return { status: 'superseded' };
           const result = await this._request(0, { kind: 'load', final: true, inputAt: this.env.now(), preserveLoading: true, index: 0 });
-          if (result.status === 'error') throw new Error(result.error);
+          if (result.status === 'error') throw Object.assign(new Error(result.error), { code: result.code || undefined });
           if (this._valid(epoch)) { this.loadTimings.firstFrameReadyMs = this.env.now() - loadStartedAt;
             this._emit('cache', { phase: 'first-frame-ready', ...this.loadTimings }); }
           return result;

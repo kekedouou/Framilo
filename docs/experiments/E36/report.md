@@ -1,5 +1,34 @@
 # E-36 开发记录
 
+## 9aeb374后取消故障复查（2026-10-25）
+
+用户继续遇到“视频准备已取消”错误页，本轮不把前次JPEG/末帧检查通过当作完整宿主通过。截图没有调用栈；本轮确实复现以下同文案失败路径，但不能据此唯一归因截图或宣布所有bug消除。
+
+- segment-reader把已取消、尚未收尾的预读promise交给新frame/PCM需求。新需求会继承旧取消，正式Player进入错误；原frame的兜底还会对并非本地发起的取消反复重试。改为确认旧任务落定再共用新租约，针对本地取消且仍需要的请求最多接管一次，关闭/真实错误不重试。
+- segment-audio在暂停/定位后复用上一播放generation的在途PCM，新的play仍会失败。改为等待旧取消并给仍有效的新generation一次重读机会；旧prime被停止后不继续请求下一段。
+- 实际媒体第3轮观察到缓存AbortError被worker压成TASK_FAILED，“缓存处理已取消”失去取消分类。worker现只将无专有码的AbortError归一为MEDIA_CANCELLED，清理失败等显式码不覆盖；Player.load保留首帧错误code。
+
+修前失败证据：`e36-checks/startup-cancel-before.log`、`startup-audio-before.log`、`startup-wire-before.log`。12项新取消回归含正式Player、借用共用、关闭、真实错误、首帧code，及13项client/worker协议模型通过；模型不包含真实宿主DOM。Eagle.exe纯Node16上取消/长播放/task协议/proxy Session/偏好/app入口模型均exit0，最终兼容回执在startup-node16日志。
+
+### 新增有界媒体闭环（4/4已封存）
+
+记录在`verification-runs/e36-startup-lifecycle/`，只生成45秒320×180/6fps/AAC合成源，未读写用户素材库及正式cache。每份JSON含运行源码SHA、事件、耗时和清理清单。
+
+| id | 结果与范围 |
+| --- | --- |
+| e5c9fafc35d87593 | 沙箱阻止worker身份核验，2.137秒失败，无cache writer；已确认任务关闭。保留原失败记录，不算媒体通过 |
+| e70cee4509cc911f | 4.977秒，正式guard+renderer兼容读队列，冷首帧/记录抢占/快速定位/JPEG取消重开/两模式切换；首次路径未复现用户整页错误，不当作根因证明 |
+| 0d4624587e7fe310 | 13.929秒，真实Eagle纯Node16任务及独立Chrome实际VideoDecoder/Web Audio；首帧约386ms，五次跳转后正常播放，五次播放被跳转打断后恢复，dispose RAM账本0；发现取消code跨进程丢失，随后修复 |
+| 26d1442349b036db | 最终正式源码，14.296秒，guard确认Node16.17.1；独立Chrome冷首帧约359ms（已拿到索引之后），真实音视频推进1.167秒/观察1.3秒，连续跳转/打断/恢复/关闭通过，dispose账本0；JPEG整片270帧、加载中取消重开、代理重开、源SHA保持通过 |
+
+`real-cancelled-prefetch-new-pcm`事件只证明该操作顺序能完成，段可能已缓存，不能单凭这一事件宣称实测命中特定竞争；强制竞争由可控延迟模型覆盖。短时声音验证是Web Audio运行及时间推进，不是人工听感、物理同步或长时间稳定性结论；独立Chrome不等于Eagle renderer。3个成功scratch各60/397/397文件、14,123,510/28,374,092/28,374,211字节已按hash回执清理；失败环境scratch核对仅有根owner标记、无writer/lease/partial后，52文件2,471,784字节已清理，回执cleanup-e5c9fafc35d87593.json；四轮共906文件73,343,597字节，原失败/源码hash/运行证据保留。
+
+### 文档影响与收尾
+
+更新README、project-profile、progress、development-plan、roadmap、product、architecture、verification及本E36计划/报告；architecture取消职责和verification测试入口正文同步，不只替换摘要。产品功能、画质/动效和永久数据格式未改变，历史UI01～E35、冻结Beta及发行文档保持冻结。三个既有Git界面探针仍独立暂存，不混入本轮提交。
+
+startup-default.log完整默认检查通过：275脚本语法/依赖、全部默认模型及114文档/784链接；最终媒体后仅收紧segment-reader对显式清理错误码的优先级，12项取消模型另行复验通过（startup-final-cancel.log），未重跑封存媒体。实际Eagle窗口的同素材体验仍未验证，本轮不宣称最终交付通过。提交前handoff及差异检查、提交后状态单列本机收尾回执，三个旧探针保留。
+
 当前：正式源已实现本轮整体优化，基础媒体关与播放中记录定点关通过；媒体后两个集成/资源小修单列模型验证，最终默认检查通过。真实Eagle集中体验及整体产品验收尚未通过。基线bdbdc83；E35的成功/失败原证据封存。用户已确认代理在宿主正常运作、就绪后流畅，同时明确未就绪等待与光标阻塞不合格，不补记全部性能通过。
 
 范围、分工、预算和验收见[计划](plan.md)。已只读确认：现有拖动按下即时thumb，但松手回到实际帧time；renderer接入/逐帧读取含同步身份检查，图像主体是异步；前台优先仍等待整段视频/PCM，临时低清通路没有实现；代理预解码固定方向48帧、压缩池未启用；记录缩略图仅打开侧栏后且暂停/无图像任务才生成。上述事实是本轮修复起点，不能当作已修复。

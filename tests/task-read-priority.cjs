@@ -95,6 +95,13 @@ async function main(){let count=0;const test=async(name,fn)=>{await fn();count++
   await test('worker close cannot claim success while a known static borrow remains unreturned',async()=>{
     const h=worker();await h.start('prepare');await h.start('recordStill',{leaseId:h.info.leaseId,ordinal:0});await assert.rejects(h.start('close'),/尚未交还/);assert(!h.calls.some(call=>call[0]==='release-source'||call[0]==='exit'&&call[1]===0));
   });
+  await test('cache AbortError survives worker serialization as cancellation; cleanup errors keep their code',async()=>{
+    for(const code of [undefined,'MEDIA_CLEANUP_FAILED']){
+      const h=worker({segment:async()=>{throw Object.assign(Error('缓存处理已取消。'),{name:'AbortError',code});}});await h.start('prepare');
+      await assert.rejects(h.start('segment',{leaseId:h.info.leaseId,ordinal:0}),e=>e.code===(code||'MEDIA_CANCELLED'));
+      await h.start('release',{leaseId:h.info.leaseId});await h.start('close');
+    }
+  });
   console.log('Task read priority: '+count+' actual client/worker protocol models; no native host or media.');
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1;});

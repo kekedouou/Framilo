@@ -17,16 +17,39 @@ function createSegmentReader({ info, acquire, release, readAsset }) {
       const old = candidates[0]; entries.delete(old.ordinal); await release(old.value);
     }
   }
-  async function use(ordinal, callback) {
-    if (closed || stopping) throw new Error('视频分段读取已关闭。');
+  const isCancellation = error => error?.code === 'MEDIA_CANCELLED' || !error?.code && error?.name === 'AbortError';
+  function entryFor(ordinal) {
     let entry = entries.get(ordinal);
     if (!entry) {
       entry = { ordinal, users: 0, used: ++clock, value: null, controller: new AbortController() };
       entries.set(ordinal, entry);
-      entry.promise = acquire(ordinal, entry.controller.signal).then(value => { entry.value = value; return value; }, error => { entries.delete(ordinal); throw error; });
+      let acquired;
+      try { acquired = acquire(ordinal, entry.controller.signal); } catch (error) { acquired = Promise.reject(error); }
+      entry.promise = Promise.resolve(acquired).then(value => { entry.value = value; return value; }, error => {
+        if (entries.get(ordinal) === entry) entries.delete(ordinal);
+        throw error;
+      });
     }
+    return entry;
+  }
+  async function use(ordinal, callback, wantedAgain = () => false) {
+    if (closed || stopping) throw new Error('视频分段读取已关闭。');
+    let entry = entryFor(ordinal);
     entry.users++; entry.used = ++clock;
-    const task = (async () => { try { const value = await entry.promise; if (closed) throw new Error('视频分段读取已关闭。'); return await callback(value); }
+    const joinedCancelled = entry.controller.signal.aborted;
+    const task = (async () => { try {
+      let value;
+      try { value = await entry.promise; }
+      catch (error) {
+        // Wait for the old producer's real cancellation/cleanup before replacing
+        // its lease. A new playback/audio request must not inherit that abort.
+        // Retry only our own cancellation, once; never loop on a producer error.
+        if (closed || stopping || !entry.controller.signal.aborted || !isCancellation(error) || !(joinedCancelled || wantedAgain())) throw error;
+        entry.users--; entry = entryFor(ordinal); entry.users++; entry.used = ++clock;
+        value = await entry.promise;
+      }
+      if (closed || stopping) throw new Error('视频分段读取已关闭。'); return await callback(value);
+    }
       finally {
         entry.users--;
         // Release acknowledgement is serialized behind worker decoding. Do not
@@ -44,7 +67,7 @@ function createSegmentReader({ info, acquire, release, readAsset }) {
       const resource = value.frames[ordinal - range.first];
       if (!resource || resource.ptsTicks !== info.frames[ordinal].ptsTicks) throw new Error('分段帧身份不一致。');
       return readAsset(value, resource.file);
-    }).catch(error => { if (!closed && !stopping && error.code === 'MEDIA_CANCELLED' && segment === targetOrdinal) return frame(file); throw error; });
+    }, () => segment === targetOrdinal);
   }
   function audio(ordinal) {
     if (!Number.isSafeInteger(ordinal) || !info.segments[ordinal]) throw new Error('无效的音频分段。');
