@@ -1,7 +1,7 @@
 'use strict';
 // Pure cache model plus one builtin Node thread with synthetic bytes. No media,
 // native task host, library access or physical cache writes.
-const assert=require('assert'),path=require('path'),{EventEmitter}=require('events'),{Worker}=require('worker_threads');
+const fs=require('fs'),assert=require('assert'),path=require('path'),{EventEmitter}=require('events'),{Worker}=require('worker_threads');
 const {createReadHost}=require('../plugin/cache-read-worker.cjs'),{createReadClient,createLocalReadWorker}=require('../plugin/cache-read-client.cjs');
 const {harness,prepared}=require('./t1-cache.cjs');
 const owner={schema:'eva-task-owner-v1',key:'c'.repeat(64),epoch:'d'.repeat(32),guardPid:123};
@@ -17,6 +17,22 @@ function client(cache,settings={}){
   }});return {api,sent,transfers,failures,get worker(){return worker;}};
 }
 async function main(){let count=0;const test=async(name,fn)=>{await fn();count++;console.log('ok cache read thread: '+name);};
+  await test('renderer selects compatibility before native Worker probing and never loads v8',async()=>{
+    const vm=require('vm'),source=fs.readFileSync(path.resolve(__dirname,'../plugin/cache-read-client.cjs'),'utf8');
+    const exports={};let workerLoads=0;const seen=[];
+    const sandbox={module:{exports},process:{type:'renderer'},Buffer,setImmediate,clearImmediate,
+      require(name){if(name==='v8'||name==='worker_threads'){workerLoads++;throw Error('forbidden native capability');}
+        if(name==='./cache-read-worker.cjs')return {createReadHost};return require(name);}};
+    vm.runInNewContext(source,sandbox);
+    const cache={adoptReadLease(info){seen.push(info);},readAsset:async()=>Buffer.from('renderer'),
+      detachReadLease:()=>true};
+    const c=sandbox.module.exports.createReadClient({pluginRoot:'unused',
+      createFallback:()=>sandbox.module.exports.createLocalReadWorker({cache})});
+    const info={leaseId:'renderer',nested:{value:7}};await c.adopt(info,owner);
+    info.nested.value=99;assert.equal(seen[0].nested.value,7);assert.equal(c.mode,'host-queue');
+    assert.equal((await c.readAsset(info,'a')).toString(),'renderer');await c.detach(info);await c.close();
+    assert.equal(workerLoads,0);
+  });
   const unsupported=()=>{throw Error('The V8 platform used by this instance of Node does not support creating Workers');};
   await test('Eagle Worker rejection falls back without fatal failure and keeps actual cache validation',async()=>{
     const h=harness({taskOwner:owner}),info=await prepared(h),cache=h.api.createCache({pluginRoot:'D:\\fixtures\\plugin'}),failures=[];

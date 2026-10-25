@@ -1,6 +1,6 @@
 # 项目说明
 
-E36宿主修复：用户实际Eagle窗口报V8不支持创建Workers，说明纯Node16通过不等于renderer支持线程。现在仅对该明确构造错误启用有界兼容读取队列，复用同一校验/2并发/64请求/租约及关闭屏障；其它启动错误仍失败。兼容队列消息之间让出事件循环，但元数据检查仍有同步部分，因此旧线程模式响应数据不证明此分支性能，实际Eagle重新打开与流畅度待验。
+E36宿主兼容：上一轮修复后用户仍遇到灰屏，实际日志确认renderer原生崩溃（0x80000003），尚未确定具体原生触发函数。现改为Electron renderer直接选有界兼容读取队列，不再试建Node Worker，元数据复制移除v8序列化。普通Node保留线程；校验、2并发/64请求和租约关闭屏障保持。兼容分支同步元数据检查仍在renderer，旧线程性能不代表此分支；真实Eagle恢复与流畅度仍待验。
 
 见[E-36计划](experiments/E36/plan.md)及[报告](experiments/E36/report.md)。
 
@@ -8,7 +8,7 @@ E36宿主修复：用户实际Eagle窗口报V8不支持创建Workers，说明纯
 
 ## E-36 当前模块与资源边界
 
-cache-read-client.cjs/cache-read-worker.cjs优先以Node线程执行接入、身份/租约核验及读取；Eagle拒绝创建Worker时采用同一host的setImmediate兼容队列。两路径均最多2并发/64请求，图像不走守护控制管；兼容路径同步检查仍在renderer；quick-preview.js使用原视频原生解码，临时显示最高480×270、小图240×135，最多64项且≤min(8MiB, RAM/64)。record-previews.js独立于主播放槽，最多96项且≤min(16MiB, RAM/32)，读取与解码先向同一全局Budget预留；long-media的准确单帧JPEG不含PCM，沿普通缓存格式、原PTS/原SHA验证与同一batch事务，永久标注不改。
+cache-read-client.cjs/cache-read-worker.cjs在普通Node以线程执行接入、身份/租约核验及读取；Electron renderer直接采用同一host的setImmediate兼容队列。两路径均最多2并发/64请求，图像不走守护控制管；兼容路径同步检查仍在renderer；quick-preview.js使用原视频原生解码，临时显示最高480×270、小图240×135，最多64项且≤min(8MiB, RAM/64)。record-previews.js独立于主播放槽，最多96项且≤min(16MiB, RAM/32)，读取与解码先向同一全局Budget预留；long-media的准确单帧JPEG不含PCM，沿普通缓存格式、原PTS/原SHA验证与同一batch事务，永久标注不改。
 
 Player压缩热点池≤RAM/8、最多8192项；预留固定及在途资源后，方向近邻使用可用解码容量的75%、最多4096帧，只预读已核验就绪段。后台最新位置/方向→记录→剩余顺序；记录优先级每条位图≤20KiB、静帧最多32租约。原5GiB/128MiB后台余量、完整源SHA和整数PTS索引核验保持；原生video内部/GPU及浏览器/进程开销不被RAM账本穷尽。
 

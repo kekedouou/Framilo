@@ -1,18 +1,20 @@
 'use strict';
-const path = require('path'), { Worker } = require('worker_threads');
+const path = require('path');
 // Eagle's renderer can expose worker_threads but reject Worker construction.
 // Preserve the same validated read host and yield between messages there.
 function createLocalReadWorker({ cache }) {
-  const { EventEmitter } = require('events'), { serialize, deserialize } = require('v8');
+  const { EventEmitter } = require('events');
   const worker = new EventEmitter(), scheduled = new Set(); let stopped = false;
   function dispatch(fn) { const id = setImmediate(() => { scheduled.delete(id); if (!stopped) fn(); }); scheduled.add(id); }
   const host = require('./cache-read-worker.cjs').createReadHost({ cache, send: value => dispatch(() => worker.emit('message', value)) });
-  worker.postMessage = value => { if (stopped) throw Error('只读队列已关闭。'); const copy = deserialize(serialize(value));
+  // Requests contain JSON metadata only; image bytes travel in responses.
+  worker.postMessage = value => { if (stopped) throw Error('只读队列已关闭。'); const copy = JSON.parse(JSON.stringify(value));
     dispatch(() => { try { host.receive(copy); } catch (error) { worker.emit('error', error); } }); };
   worker.terminate = async () => { stopped = true; for (const id of scheduled) clearImmediate(id); scheduled.clear(); worker.emit('exit', 0); return 0; };
   dispatch(() => worker.emit('message', { type: 'ready' })); return worker;
 }
-function createReadClient({ pluginRoot, onFailure = () => {}, createWorker = settings => new Worker(path.join(pluginRoot, 'cache-read-worker.cjs'), settings),
+function createReadClient({ pluginRoot, onFailure = () => {}, renderer = process.type === 'renderer',
+  createWorker = settings => new (require('worker_threads').Worker)(path.join(pluginRoot, 'cache-read-worker.cjs'), settings),
   createFallback = () => createLocalReadWorker({ cache: require('./cache.cjs').createCache({ pluginRoot }) }) }) {
   let thread = null, starting = null, serial = 0, failure = null, closing = null, stopped = false, expectedStop = false;
   let mode = 'unstarted';
@@ -22,7 +24,11 @@ function createReadClient({ pluginRoot, onFailure = () => {}, createWorker = set
     if (starting) return starting;
     starting = new Promise((resolve, reject) => {
       try {
-        try { thread = createWorker({ workerData: { pluginRoot } }); mode = 'thread'; }
+        try {
+          // Do not probe native Worker creation in Electron's embedded renderer.
+          thread = renderer ? createFallback() : createWorker({ workerData: { pluginRoot } });
+          mode = renderer ? 'host-queue' : 'thread';
+        }
         catch (error) {
           if (!String(error?.message).includes('The V8 platform used by this instance of Node does not support creating Workers')) throw error;
           thread = createFallback(); mode = 'host-queue';

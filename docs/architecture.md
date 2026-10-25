@@ -1,6 +1,6 @@
 # 技术架构与模块边界
 
-E36宿主修复：用户实际Eagle窗口报V8不支持创建Workers，说明纯Node16通过不等于renderer支持线程。现在仅对该明确构造错误启用有界兼容读取队列，复用同一校验/2并发/64请求/租约及关闭屏障；其它启动错误仍失败。兼容队列消息之间让出事件循环，但元数据检查仍有同步部分，因此旧线程模式响应数据不证明此分支性能，实际Eagle重新打开与流畅度待验。
+E36宿主兼容：上一轮修复后用户仍遇到灰屏，实际日志确认renderer原生崩溃（0x80000003），尚未确定具体原生触发函数。现改为Electron renderer直接选有界兼容读取队列，不再试建Node Worker，元数据复制移除v8序列化。普通Node保留线程；校验、2并发/64请求和租约关闭屏障保持。兼容分支同步元数据检查仍在renderer，旧线程性能不代表此分支；真实Eagle恢复与流畅度仍待验。
 
 ## E-36 跟手光标、临时预览与分层准备（本地完成，宿主待验）
 
@@ -11,7 +11,7 @@ E36宿主修复：用户实际Eagle窗口报V8不支持创建Workers，说明纯
 | 模块 | E36职责与边界 |
 | --- | --- |
 | ui.js / session.cjs | UI持有最新意图光标，取帧及松手确认不使光标回弹；Session分别装配准确Player、quick及records服务，合并临时预览状态但不改准确帧/原SHA。构造中先register的能力即使后续工厂失败也须收尾；关闭等待Player和全部服务，再释放源租约 |
-| cache-read-client.cjs / cache-read-worker.cjs | 优先使用Node内置worker_threads；仅V8平台明确拒绝Worker构造时，复用createReadHost以setImmediate兼容队列执行。两路径都执行客户端缓存接入、文件身份/租约/守护核对及读取，最多2项并发/64请求；线程路径转移独立ArrayBuffer，兼容路径本机消息保留返回字节，均不走守护控制管。兼容路径的同步核验仍在renderer，不承诺线程隔离。detach等待读完，失败保留归属并报错，不降低原cache校验 |
+| cache-read-client.cjs / cache-read-worker.cjs | 普通Node使用内置worker_threads；Electron renderer不探测构造Worker，直接复用createReadHost以setImmediate兼容队列执行。请求仅复制JSON元数据，不调用v8序列化；其它宿主仍保留明确能力错误的兼容分支。两路径都执行客户端缓存接入、文件身份/租约/守护核对及读取，最多2项并发/64请求；线程路径转移独立ArrayBuffer，兼容路径本机消息保留返回字节，均不走守护控制管。兼容路径的同步核验仍在renderer，不承诺线程隔离。detach等待读完，失败保留归属并报错，不降低原cache校验 |
 | quick-preview.js | 原视频HTMLVideo提供独立、可取消的近似预览，显示Canvas最大480×270；最多64张240×135小图，缓存上限min(8MiB, RAM/64)，与显示/在途资源先向同一全局Budget预留。精确提交、换源或关闭清除浮层，近似画面不成为保存/标注帧 |
 | record-previews.js / long-media.cjs | records独立于主Player解码槽，先可见记录再其它标注；最多96张240×135位图、上限min(16MiB, RAM/32)，读取/解码先预留在途与全帧资源，共用全局Budget。long-media按源ordinal制作准确单JPEG帧、不含PCM，原PTS及metrics.sourceSha256验证后提交 |
 | task-client.cjs / task-worker.cjs / proxy-background.cjs | target与记录优先级是轻量控制消息，不逐次进入媒体任务队列；同段不反复中止。后台顺序为当前位置/方向近邻→可见及其它标注静帧/标注段→剩余顺序。记录优先级用每条≤20KiB的位图传输，适配32768字符管道上限；静帧最多32个保留租约，借读未归还不能淘汰或关闭 |

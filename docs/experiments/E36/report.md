@@ -82,3 +82,17 @@ cache-read-client只对该明确构造错误创建兼容消息适配，继续执
 最终：Node24及实际Eagle纯Node16的11项读取/兼容模型通过，worker-compat-node16.log/err保存exit0/空stderr；完整默认worker-compat-default.log通过271脚本、114文档/784链接及全部模型。新增模型强制重现截图原始Worker构造拒绝，复用实际cache内存文件系统核验，覆盖损坏拒绝、复制后身份不可改向、消息让出事件循环、两在途/第三排队、detach等待、失败close重试及其它构造异常仍致命。它是能力拒绝模拟，不能登记为已启动真实Eagle窗口。
 
 文档影响核对：当前入口/产品/路线/开发/验证/进度均登记本次实际启动失败及兼容性能限制；架构和profile正文模块职责改为线程优先/宿主兼容队列；E36计划/报告及CHANGELOG同步。无缓存格式、持久化或新资源额度变化，无新媒体/测试目录，不重跑四轮主关及定点关，不改旧原始结论。提交前handoff及差异检查，显式提交本轮15文件；提交后仍保留原三个暂存Git探针，不称工作区干净。
+
+
+## 灰屏崩溃与直接兼容路径（2026-10-25）
+用户在2330e35后反馈整个窗口灰色无响应。只读Eagle log.log确认20:45:21.417插件renderer crashed，exitCode=-2147483645（0x80000003）；20:45:32主窗也记录崩溃。20:43/20:45两份既有Crashpad均在Eagle.exe RVA 0x1c82a50，原生具体函数尚未定位，不声称已证明是Worker或v8序列化所致。Crashpad版本Electron22.3.7；原dump未复制、未修改。
+- 06c3bb15-04f9-4245-a1a6-3b4c131b19ac.dmp SHA256 c78864d6314917506a6692324d121b3c70352e97c99b38c0b00b44990db77525
+- cfb0c683-f5a3-44fa-9e0a-377d44446cd8.dmp SHA256 d1cab76a07187a229d758156177d061abb7b2b94e96739ed5e06e6f3d39133cd
+
+定点兼容处理：Electron renderer直接走host-queue，不再通过失败的原生构造探测能力；兼容队列JSON请求快照移除v8.serialize/deserialize调用。响应仍是精确字节，同一cache校验、租约、2并发/64请求与关闭屏障保持。不修改素材、代理格式、画质、RAM或动效；同步元数据验证仍可能占用renderer，不能承诺此前线程性能。
+
+新增模拟renderer禁止worker_threads/v8模块加载的读取/身份快照/关闭检查。Node24及Eagle纯Node16均12模型通过，日志renderer-direct-node16.log/.err。首次默认检查被沙箱硬链接EPERM阻挡，保留renderer-direct-default.log，另行以原命令在沙箱外检查。无新媒体实验，旧预算不重跑。尚无实际Eagle renderer自动控制通道；真实灰屏是否消失与流畅度不能由本轮模型证明。
+
+文档影响：同步产品、架构模块表、开发计划、路线、验证、入口及进度；E36计划/报告追加失败与修复边界，CHANGELOG登记。历史E35及更早冻结实验无改动，因为本次没有重新验证其媒体/发行包。
+
+最终默认检查renderer-direct-default-unsandboxed.log退出0，114文档/784链接及全部默认检查通过；没有运行媒体关或真实Eagle窗口。check-handoff --base HEAD与git diff --check通过。三个原有暂存Git界面探针不属于本轮，不提交或删除；真实宿主恢复仍为待验。
