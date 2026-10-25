@@ -2,7 +2,7 @@
 // Pure cache model plus one builtin Node thread with synthetic bytes. No media,
 // native task host, library access or physical cache writes.
 const assert=require('assert'),path=require('path'),{EventEmitter}=require('events'),{Worker}=require('worker_threads');
-const {createReadHost}=require('../plugin/cache-read-worker.cjs'),{createReadClient}=require('../plugin/cache-read-client.cjs');
+const {createReadHost}=require('../plugin/cache-read-worker.cjs'),{createReadClient,createLocalReadWorker}=require('../plugin/cache-read-client.cjs');
 const {harness,prepared}=require('./t1-cache.cjs');
 const owner={schema:'eva-task-owner-v1',key:'c'.repeat(64),epoch:'d'.repeat(32),guardPid:123};
 const flush=async()=>{for(let n=0;n<60;n++)await Promise.resolve();};
@@ -17,6 +17,33 @@ function client(cache,settings={}){
   }});return {api,sent,transfers,failures,get worker(){return worker;}};
 }
 async function main(){let count=0;const test=async(name,fn)=>{await fn();count++;console.log('ok cache read thread: '+name);};
+  const unsupported=()=>{throw Error('The V8 platform used by this instance of Node does not support creating Workers');};
+  await test('Eagle Worker rejection falls back without fatal failure and keeps actual cache validation',async()=>{
+    const h=harness({taskOwner:owner}),info=await prepared(h),cache=h.api.createCache({pluginRoot:'D:\\fixtures\\plugin'}),failures=[];
+    const c=createReadClient({pluginRoot:'unused',createWorker:unsupported,createFallback:()=>createLocalReadWorker({cache}),onFailure:e=>failures.push(e)});
+    await assert.rejects(c.adopt({...info},{...owner,epoch:'e'.repeat(32)}),/当前任务负责人/);
+    const copy=JSON.parse(JSON.stringify(info));await c.adopt(copy,owner);assert.equal(c.mode,'host-queue');
+    assert.equal((await c.readAsset(copy,copy.frames[0].file)).toString(),'frame-data');
+    h.nodes.get(path.win32.join(info.cacheDir,info.frames[0].file)).data=Buffer.from('other-data');
+    await assert.rejects(c.readAsset(copy,copy.frames[0].file),/改变/);
+    await assert.rejects(c.close(),/未交还/);await c.detach(copy);h.cache.release(info);await c.close();
+    assert.equal(failures.length,0);assert.equal(h.descriptors.size,0);await assert.rejects(c.inventory(),/关闭/);
+  });
+  await test('compatibility queue yields and keeps two read slots, copied identity and detach barrier',async()=>{
+    const gates=[],seen=[];let active=0,peak=0,detached=false;
+    const c=createReadClient({pluginRoot:'unused',createWorker:unsupported,createFallback:()=>createLocalReadWorker({cache:{
+      adoptReadLease(){},readAsset:async info=>{seen.push(info.leaseId);active++;peak=Math.max(peak,active);const g=deferred();gates.push(g);await g.promise;active--;return Buffer.from('local');},
+      detachReadLease(){assert.equal(active,0);detached=true;return true;}}})});
+    const info={leaseId:'a'};let adopted=false;const adopting=c.adopt(info,owner).then(()=>adopted=true);await flush();assert(!adopted,'fallback must yield rather than run synchronous validation from a microtask');await adopting;
+    info.leaseId='retargeted';const reads=[0,1,2].map(i=>c.readAsset(info,String(i)));for(let i=0;i<5;i++)await new Promise(setImmediate);
+    assert.equal(gates.length,2);assert.equal(peak,2);const detach=c.detach(info);await flush();assert(!detached);await assert.rejects(c.readAsset(info,'late'),/失效/);
+    gates[0].resolve();for(let i=0;i<5;i++)await new Promise(setImmediate);assert.equal(gates.length,3);gates[1].resolve();gates[2].resolve();
+    assert.deepEqual((await Promise.all(reads)).map(b=>b.toString()),['local','local','local']);await detach;assert.deepEqual(seen,['a','a','a']);await c.close();
+  });
+  await test('unrelated Worker startup failures are not hidden by compatibility fallback',async()=>{
+    let fallback=0;const failures=[],c=createReadClient({pluginRoot:'unused',createWorker(){throw Error('module corrupt');},createFallback(){fallback++;},onFailure:e=>failures.push(e)});
+    await assert.rejects(c.adopt({leaseId:'a'},owner),/module corrupt/);assert.equal(fallback,0);assert.equal(failures.length,1);await assert.rejects(c.close(),/module corrupt/);
+  });
   await test('actual cache adoption keeps guard binding, full manifest and asset hash checks',async()=>{
     const h=harness({taskOwner:owner}),info=await prepared(h),reader=h.api.createCache({pluginRoot:'D:\\fixtures\\plugin'}),c=client(reader);
     const copy=JSON.parse(JSON.stringify(info));await assert.rejects(c.api.adopt({...copy}, {...owner,epoch:'e'.repeat(32)}),/当前任务负责人/);

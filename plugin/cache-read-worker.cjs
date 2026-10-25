@@ -1,5 +1,5 @@
 'use strict';
-// Only this thread performs renderer-side cache metadata checks and byte reads.
+// Shared read host for thread transport and the Eagle compatibility queue.
 // It never creates writers, releases OS-owned leases or receives image pipes.
 const { isMainThread, parentPort, workerData } = require('worker_threads');
 const MAX_PENDING = 64, MAX_ACTIVE = 2, MAX_ASSET = 256 * 1024 ** 2;

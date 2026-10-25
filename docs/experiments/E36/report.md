@@ -72,3 +72,13 @@ quick清除预览时虽已退Budget，480×270画布仍保留backing store（实
 F-01～F-07整理：五个终态媒体记录均在实际自身Chrome/guard停止后，按预先清单、真实根路径、inode/dev/大小/SHA逐文件清理本轮自有scratch，共2641文件/430631653B（约410.7MiB）。内容为合成源、参照、隔离runtime/cache及浏览器profile；全部清理回执在原记录，三个证据根均无scratch目录。e36-media为38文件/3583848B、e36-records-fix为6文件/785688B，均小于各8MiB；checks不足1MiB，≤8MiB。保留必要失败/成功原始证据，不动用户素材/标注、正式缓存、旧安装包或其它任务输出。未用的e36-cache预算没有启动，不为占满轮次增加检查。
 
 本地提交前继续运行check-handoff --base HEAD及git diff --check，显式暂存本轮文件；不推送。提交后--require-clean预期仍被三个既有暂存codex-changes-button*.txt探针拦截，这是已登记的非本轮工作，不能混入或称工作区干净；提交短号与实际状态另外保存本机e36-checks/handoff.json并回告用户。
+
+## 用户宿主反馈：Worker构造拒绝（本地修复，窗口待复验）
+
+用户截图原文“The V8 platform used by this instance of Node does not support creating Workers”。Eagle纯Node16命令行与Eagle窗口renderer具有不同V8平台能力，先前兼容检查没有覆盖此路径；E36此前整体宿主仍待验，现实际加载失败，不能用本地通过抵消。
+
+cache-read-client只对该明确构造错误创建兼容消息适配，继续执行原createReadHost/cache校验；每条消息用setImmediate让出循环，采用对象复制和原两并发/64上限，detach/close仍等全部读取归还。不支持线程时同步元数据仍在renderer，不能外推原独立线程性能。11项模型已初步通过，最终Node16/默认检查与宿主重开结果分别记录。
+
+最终：Node24及实际Eagle纯Node16的11项读取/兼容模型通过，worker-compat-node16.log/err保存exit0/空stderr；完整默认worker-compat-default.log通过271脚本、114文档/784链接及全部模型。新增模型强制重现截图原始Worker构造拒绝，复用实际cache内存文件系统核验，覆盖损坏拒绝、复制后身份不可改向、消息让出事件循环、两在途/第三排队、detach等待、失败close重试及其它构造异常仍致命。它是能力拒绝模拟，不能登记为已启动真实Eagle窗口。
+
+文档影响核对：当前入口/产品/路线/开发/验证/进度均登记本次实际启动失败及兼容性能限制；架构和profile正文模块职责改为线程优先/宿主兼容队列；E36计划/报告及CHANGELOG同步。无缓存格式、持久化或新资源额度变化，无新媒体/测试目录，不重跑四轮主关及定点关，不改旧原始结论。提交前handoff及差异检查，显式提交本轮15文件；提交后仍保留原三个暂存Git探针，不称工作区干净。

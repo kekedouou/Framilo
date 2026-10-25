@@ -1,14 +1,32 @@
 'use strict';
 const path = require('path'), { Worker } = require('worker_threads');
-function createReadClient({ pluginRoot, onFailure = () => {}, createWorker = settings => new Worker(path.join(pluginRoot, 'cache-read-worker.cjs'), settings) }) {
+// Eagle's renderer can expose worker_threads but reject Worker construction.
+// Preserve the same validated read host and yield between messages there.
+function createLocalReadWorker({ cache }) {
+  const { EventEmitter } = require('events'), { serialize, deserialize } = require('v8');
+  const worker = new EventEmitter(), scheduled = new Set(); let stopped = false;
+  function dispatch(fn) { const id = setImmediate(() => { scheduled.delete(id); if (!stopped) fn(); }); scheduled.add(id); }
+  const host = require('./cache-read-worker.cjs').createReadHost({ cache, send: value => dispatch(() => worker.emit('message', value)) });
+  worker.postMessage = value => { if (stopped) throw Error('只读队列已关闭。'); const copy = deserialize(serialize(value));
+    dispatch(() => { try { host.receive(copy); } catch (error) { worker.emit('error', error); } }); };
+  worker.terminate = async () => { stopped = true; for (const id of scheduled) clearImmediate(id); scheduled.clear(); worker.emit('exit', 0); return 0; };
+  dispatch(() => worker.emit('message', { type: 'ready' })); return worker;
+}
+function createReadClient({ pluginRoot, onFailure = () => {}, createWorker = settings => new Worker(path.join(pluginRoot, 'cache-read-worker.cjs'), settings),
+  createFallback = () => createLocalReadWorker({ cache: require('./cache.cjs').createCache({ pluginRoot }) }) }) {
   let thread = null, starting = null, serial = 0, failure = null, closing = null, stopped = false, expectedStop = false;
+  let mode = 'unstarted';
   const pending = new Map(), adopted = new WeakMap();
   function failed(error) { if (failure) return; failure = error; for (const entry of pending.values()) entry.reject(error); pending.clear(); onFailure(error); }
   function start() {
     if (starting) return starting;
     starting = new Promise((resolve, reject) => {
       try {
-        thread = createWorker({ workerData: { pluginRoot } });
+        try { thread = createWorker({ workerData: { pluginRoot } }); mode = 'thread'; }
+        catch (error) {
+          if (!String(error?.message).includes('The V8 platform used by this instance of Node does not support creating Workers')) throw error;
+          thread = createFallback(); mode = 'host-queue';
+        }
         thread.on('message', value => {
           if (value.type === 'ready') { resolve(); return; }
           const entry = pending.get(value.id); if (!entry) { failed(Error('读取线程响应编号无效。')); return; }
@@ -52,6 +70,6 @@ function createReadClient({ pluginRoot, onFailure = () => {}, createWorker = set
     closing = (async () => { if (!thread && !starting) return; await ask('close'); expectedStop = true; await thread.terminate(); if (failure) throw failure; })();
     const work=closing;work.catch(() => {if(closing===work)closing=null;});return work;
   }
-  return { adopt, readAsset, readFrameBatch, detach, inventory: () => ask('inventory'), close };
+  return { adopt, readAsset, readFrameBatch, detach, inventory: () => ask('inventory'), close, get mode() { return mode; } };
 }
-module.exports = { createReadClient };
+module.exports = { createReadClient, createLocalReadWorker };

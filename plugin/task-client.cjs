@@ -1,5 +1,5 @@
 'use strict';
-// Guard pipe carries control metadata only. Cache I/O runs in a read thread.
+// Guard pipe carries control metadata only. Cache I/O uses a read thread or the bounded Eagle compatibility queue.
 const fs = require('fs'), path = require('path'), crypto = require('crypto'), { spawn } = require('child_process');
 const { createReadClient } = require('./cache-read-client.cjs');
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
