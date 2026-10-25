@@ -198,7 +198,9 @@ async function main() {
   });
   await test('reused manifest asset mutation cannot extend read capabilities', async () => {
     const h = harness(), info = await prepared(h), tx = h.cache.begin({ sourceSha256: SOURCE_SHA }), candidate = await tx.readComplete();
-    candidate.frames[0].file = 'elsewhere.jpg'; await assert.rejects(() => tx.finish(candidate, snapshot()), /原始清单/);
+    assert.throws(() => { candidate.frames[0].file = 'elsewhere.jpg'; }, TypeError);
+    assert.strictEqual(candidate.frames[0].file, '000000.jpg');
+    assert.strictEqual((await h.cache.readAsset(info, '000000.jpg')).toString(), 'frame-data');
     tx.close(); h.cache.release(info);
   });
   await test('invalid reuse metrics do not create an unregistered lease', async () => {

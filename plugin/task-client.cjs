@@ -20,6 +20,14 @@ function verifyGuard(root) {
 function createTaskClient(options) {
   const root = fs.realpathSync(options.pluginRoot), local = createCache({ pluginRoot: root });
   const key = sha(Buffer.from(root.toLowerCase())), runtime = options.runtime || process.execPath;
+  const backgroundProgress=new Map(),retainedSegments=new Map(),closingSources=new Set(),retainedValues=new WeakSet();
+  function retainLocal(parent,ordinal,value){
+    if(!/^[0-9a-f]{24}$/.test(parent)||!Number.isSafeInteger(ordinal)||ordinal<0||ordinal>=120000||!value?.videoEncoding)throw Error('代理段登记无效。');
+    let group=retainedSegments.get(parent);if(!group){group=new Map();retainedSegments.set(parent,group);}
+    const prior=group.get(ordinal);if(prior){if(prior.leaseId!==value.leaseId)throw Error('代理段租约冲突。');return prior;}
+    local.adoptReadLease(value,taskOwner);retainedValues.add(value);group.set(ordinal,value);return value;
+  }
+  function detachRetained(parent){const group=retainedSegments.get(parent);if(group)for(const value of group.values())local.detachReadLease(value);retainedSegments.delete(parent);}
   let host = null, ready = null, serial = 0, closing = null, ended = false, failure = null, guardFinished = false;
   let readyResolve, readyReject, exitResolve;
   let taskOwner = null;
@@ -60,6 +68,8 @@ function createTaskClient(options) {
             }
             else if (value.type === 'guard' && value.event === 'finished') guardFinished = value.exitCode === 0;
             else if (value.type === 'progress') { const request = pending.get(value.id); if (request && request.onProgress) request.onProgress(value.value); }
+            else if (value.type === 'proxy-segment') {if(!closingSources.has(value.parentLeaseId))retainLocal(value.parentLeaseId,value.ordinal,value.value);}
+            else if (value.type === 'proxy-progress') {if(closingSources.has(value.leaseId))continue;backgroundProgress.set(value.leaseId,value.value);if(options.onBackground)options.onBackground(value.value);}
             else if (value.type === 'response') {
               const request = pending.get(value.id); if (!request) throw new Error('任务响应编号无效。'); pending.delete(value.id);
               if (value.error) request.reject(issue(value.error.code, value.error.message)); else request.resolve(value.result);
@@ -93,25 +103,28 @@ function createTaskClient(options) {
     prefetch: (info, time, loop) => { if (readers.has(info)) readers.get(info).prefetch(time, loop); },
     cancelReads: info => { if (readers.has(info)) readers.get(info).cancelAll(); },
     readFrameBatch: (...args) => failure ? Promise.reject(failure) : local.readFrameBatch(...args),
-    async release(info) { if (!leases.has(info)) return false;
+    async release(info) { if (!leases.has(info)) return false; closingSources.add(info.leaseId);
       if (readers.has(info)) { await readers.get(info).close(); readers.delete(info); }
       else local.detachReadLease(info);
-      await ask('release', { leaseId: info.leaseId }); leases.delete(info); return true; },
+      detachRetained(info.leaseId);
+      await ask('release', { leaseId: info.leaseId }); leases.delete(info); backgroundProgress.delete(info.leaseId); closingSources.delete(info.leaseId); return true; },
     clearOther: settings => ask('clearOther', { settings }),
+    backgroundStatus: info=>backgroundProgress.get(info.leaseId)||null,
     inventory: local.inventory
   };
   const media = { async prepare(snapshot, settings = {}) {
     const tools = await options.discoverTools(settings.signal);
-    const info = await ask('prepare', { snapshot, tools, previewQuality: settings.previewQuality }, settings);
-    if (settings.signal && settings.signal.aborted) { await ask('release', { leaseId: info.leaseId }); throw issue('MEDIA_CANCELLED', '视频准备已取消。'); }
+    const info = require('./media-wire.cjs').unpackInfo(await ask('prepare', { snapshot, tools, previewQuality: settings.previewQuality, playbackBackend: settings.playbackBackend }, settings));
+    if (settings.signal && settings.signal.aborted) { closingSources.add(info.leaseId);detachRetained(info.leaseId);await ask('release', { leaseId: info.leaseId });backgroundProgress.delete(info.leaseId);closingSources.delete(info.leaseId);throw issue('MEDIA_CANCELLED', '视频准备已取消。'); }
     if (info.streaming) {
       const reader = require('./segment-reader.cjs').createSegmentReader({ info,
         acquire: async (ordinal, signal) => {
+          const retained=retainedSegments.get(info.leaseId)?.get(ordinal);if(retained)return retained;
           const value = await ask('segment', { leaseId: info.leaseId, ordinal }, { signal });
-          try { if (signal.aborted) throw issue('MEDIA_CANCELLED', '分段准备已取消。'); local.adoptReadLease(value, taskOwner); }
-          catch (error) { await ask('release', { leaseId: value.leaseId }); throw error; }
+          try { if(info.videoEncoding){const retained=retainLocal(info.leaseId,ordinal,value);if(signal.aborted)throw issue('MEDIA_CANCELLED','分段准备已取消。');return retained;} if (signal.aborted) throw issue('MEDIA_CANCELLED', '分段准备已取消。'); local.adoptReadLease(value, taskOwner); }
+          catch (error) { if(!info.videoEncoding)await ask('release', { leaseId: value.leaseId }); throw error; }
           return value;
-        }, release: async value => { local.detachReadLease(value); await ask('release', { leaseId: value.leaseId }); },
+        }, release: async value => { if(retainedValues.has(value))return; local.detachReadLease(value); await ask('release', { leaseId: value.leaseId }); },
         readAsset: (value, file) => local.readAsset(value, file) });
       readers.set(info, reader);
     } else try { local.adoptReadLease(info, taskOwner); } catch (error) { await ask('release', { leaseId: info.leaseId }); throw error; }
@@ -121,10 +134,11 @@ function createTaskClient(options) {
     if (closing) return closing;
     closing = (async () => {
       if (!host && !ready) return { status: 'closed' };
-      beginClose();
+      beginClose();for(const info of leases)closingSources.add(info.leaseId);
       for (const reader of readers.values()) await reader.close(); readers.clear();
       for (const info of leases) if (!info.streaming) local.detachReadLease(info);
-      leases.clear();
+      for(const parent of retainedSegments.keys())detachRetained(parent);
+      leases.clear(); backgroundProgress.clear();
       try { if (!failure && !ended) await ask('close'); }
       catch (error) { if (!guardCancelled) throw error; }
       finally { if (host && !ended) host.stdin.end(); await exited; }

@@ -7,6 +7,10 @@ const OPTIONS = Object.freeze([512, ...Array.from({ length: 10 }, (_, i) => (i +
 const WHEEL_OPTIONS = Object.freeze([1, 2, 5, 10]);
 const RATE_STEP_OPTIONS = Object.freeze([.1, .2, .25, .5]);
 const DEFAULT_INTERACTION = Object.freeze({ wheelFrames: 1, showCacheStrip: false, rateStep: .1, drawingFadeSeconds: .25, drawingToolbar: false });
+function backendValue(value = 'proxy') {
+  if (!['proxy', 'jpeg'].includes(value)) throw new Error('播放方式只支持帧内代理或JPEG序列。');
+  return value;
+}
 function interactionValue(wheelFrames = 1, showCacheStrip = false, rateStep = .1, drawingFadeSeconds = .25, drawingToolbar = false) {
   if (!WHEEL_OPTIONS.includes(wheelFrames)) throw new Error('滚轮灵敏度请选择1、2、5或10帧。');
   if (typeof showCacheStrip !== 'boolean') throw new Error('缓存绿条显示设置必须为开或关。');
@@ -25,6 +29,7 @@ function memoryValue(total, ramMiB, persisted = false) {
 function createMemoryPreferences(options) {
   let selectedQuality = '720p';
   let selectedPredecode = true;
+  let selectedBackend = 'proxy';
   let selectedInteraction = DEFAULT_INTERACTION;
   const io = options.io || fs, root = path.resolve(options.pluginRoot), total = options.totalRamBytes === undefined ? os.totalmem() : options.totalRamBytes;
   const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
@@ -54,22 +59,24 @@ function createMemoryPreferences(options) {
       const tier = candidates.reduce((a, b) => Math.abs(b - oldMiB) < Math.abs(a - oldMiB) ? b : a, candidates[0]);
       return Object.freeze({ ...memoryValue(total, tier, true), legacyConverted: true });
     }
-    const keys = Object.keys(value).filter(key => !['wheelFrames', 'showCacheStrip', 'rateStep', 'drawingFadeSeconds', 'drawingToolbar'].includes(key)).sort().join(',');
+    const keys = Object.keys(value).filter(key => !['wheelFrames', 'showCacheStrip', 'rateStep', 'drawingFadeSeconds', 'drawingToolbar', 'playbackBackend'].includes(key)).sort().join(',');
     if (!['owner,ramMiB', 'owner,previewQuality,ramMiB', 'forwardPredecode,owner,previewQuality,ramMiB'].includes(keys)) throw new Error('播放器设置格式无法识别；原件已保留。');
     if (value.forwardPredecode !== undefined && typeof value.forwardPredecode !== 'boolean') throw new Error('提前解压设置必须为开或关。');
+    const backend = backendValue(value.playbackBackend);
     const interaction = interactionValue(value.wheelFrames, value.showCacheStrip, value.rateStep, value.drawingFadeSeconds, value.drawingToolbar), selected = quality(value.previewQuality), memory = memoryValue(total, value.ramMiB, true);
     selectedPredecode = value.forwardPredecode === undefined ? true : value.forwardPredecode;
-    selectedQuality = selected; selectedInteraction = interaction;
+    selectedQuality = selected; selectedInteraction = interaction; selectedBackend = backend;
     return memory;
   }
   let current = read() || memoryValue(total, DEFAULT_BYTES / 1024 ** 2);
-  return Object.freeze({ snapshot: () => current, quality: () => selectedQuality, forwardPredecode: () => selectedPredecode, interaction: () => selectedInteraction,
-    preview: ramMiB => memoryValue(total, ramMiB), save(ramMiB, previewQuality = selectedQuality, forwardPredecode = selectedPredecode, interaction = selectedInteraction) {
+  return Object.freeze({ snapshot: () => current, quality: () => selectedQuality, forwardPredecode: () => selectedPredecode, interaction: () => selectedInteraction, backend: () => selectedBackend,
+    preview: ramMiB => memoryValue(total, ramMiB), save(ramMiB, previewQuality = selectedQuality, forwardPredecode = selectedPredecode, interaction = selectedInteraction, playbackBackend = selectedBackend) {
     quality(previewQuality);
+    backendValue(playbackBackend);
     if (typeof forwardPredecode !== 'boolean') throw new Error('提前解压设置必须为开或关。');
     const nextInteraction = interactionValue(interaction.wheelFrames, interaction.showCacheStrip, interaction.rateStep, interaction.drawingFadeSeconds, interaction.drawingToolbar);
     const next = memoryValue(total, ramMiB, true); checkRoot(); read(); const before = identity(stat(file));
-    const bytes = Buffer.from(JSON.stringify({ owner: OWNER, ramMiB, previewQuality, forwardPredecode, ...nextInteraction }, null, 2));
+    const bytes = Buffer.from(JSON.stringify({ owner: OWNER, ramMiB, previewQuality, forwardPredecode, ...nextInteraction, playbackBackend }, null, 2));
     let fd = null, owned = null;
     try {
       fd = io.openSync(temp, 'wx'); owned = io.fstatSync(fd);
@@ -78,7 +85,7 @@ function createMemoryPreferences(options) {
       if (identity(stat(file)) !== before || !io.readFileSync(temp).equals(bytes)) throw new Error('内存设置保存期间改变，未覆盖原件。');
       const s = stat(temp);
       if (!s || s.dev !== owned.dev || s.ino !== owned.ino) throw new Error('内存设置临时文件身份改变。');
-      io.renameSync(temp, file); owned = null; current = next; selectedQuality = previewQuality; selectedPredecode = forwardPredecode; selectedInteraction = nextInteraction; return current;
+      io.renameSync(temp, file); owned = null; current = next; selectedQuality = previewQuality; selectedPredecode = forwardPredecode; selectedInteraction = nextInteraction; selectedBackend = playbackBackend; return current;
     } finally {
       if (fd !== null) io.closeSync(fd);
       if (owned) { const s = stat(temp); if (s && s.dev === owned.dev && s.ino === owned.ino) io.unlinkSync(temp); }

@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const frameIndex = require('./frame-index.cjs');
 const profile = require('./preview-profile.cjs');
 const { OWNER, RECIPE } = require('./cache.cjs');
-const LIMITS = Object.freeze({ frames: 24000, indexBytes: 6 * 1024 ** 2,
+const LIMITS = Object.freeze({ frames: 120000, indexBytes: 64 * 1024 ** 2,
   segmentFrames: 120, segmentSeconds: 2, segmentBytes: 64 * 1024 ** 2, timeoutMs: 30000 });
 const fail = (message, code = 'LONG_MEDIA_INVALID') => { throw Object.assign(new Error(message), { code }); };
 function packetIndex(text, video, helpers) {
@@ -90,7 +90,7 @@ function createLongMedia({ cache, tools, helpers: h }) {
     return jobRun(settings, async job => {
       const video = probe.streams.find(s => s.codec_type === 'video');
       const packets = await capture(job, ['-v', 'error', '-select_streams', 'v:0', '-show_packets', '-show_entries', 'packet=pts,flags', '-of', 'compact=p=0:nk=0', snapshot.filePath]);
-      const indexed = packetIndex(packets, video, h), preview = profile.dimensions(video, settings.previewQuality || '720p');
+      const indexed = packetIndex(packets, video, h), proxy = settings.playbackBackend === 'proxy', preview = profile.dimensions(video, settings.previewQuality || '720p');
       const origin = h.ratio(indexed.originPtsTicks, indexed.timeBase);
       let audioStream = probe.streams.find(s => s.codec_type === 'audio');
       if (audioStream && !h.streamRatio(audioStream, 'duration_ts', 'duration')) audioStream = { ...audioStream, duration: probe.format.duration };
@@ -102,9 +102,13 @@ function createLongMedia({ cache, tools, helpers: h }) {
         audio = { start, duration, channels: audioStream.channels, sampleRate: 48000, file: 'streamed-audio.wav', bytes: 1, segmented: true };
       }
       const duration = Math.max(indexed.videoDuration, audio ? audio.start + audio.duration : 0);
+      if (proxy) for (const frame of indexed.frames) frame.file = frame.file.replace(/\.jpg$/, '.avc');
       const groups = groupFrames(indexed.frames, duration);
+      const end = h.videoEnd(probe);
       const info = { schema: 1, owner: OWNER, recipe: RECIPE, streaming: 'segments-v1', leaseId: crypto.randomBytes(12).toString('hex'),
         source: { ...snapshot, sha256: fingerprint.sha256, codec: video.codec_name, width: video.width, height: video.height, hasAudioStream: !!audio },
+        ...(proxy ? { videoEncoding: { format: 'annexb-idr-v1', codec: 'avc1.42c033' } } : {}),
+        lastFrameEndTicks: end.lastFrameEndTicks, endTimeBase: end.timeBase,
         preview, width: preview.width, height: preview.height, duration, frames: indexed.frames, audio,
         segments: groups.map(group => ({ ...group })), metrics: { indexedPackets: indexed.frames.length, fullVideoRendered: false } };
       if (Buffer.byteLength(JSON.stringify(info)) > LIMITS.indexBytes) fail('源帧索引超过通信资源上限。', 'LONG_INDEX_LIMIT');
@@ -119,7 +123,7 @@ function createLongMedia({ cache, tools, helpers: h }) {
     return jobRun(settings, async job => {
       unchanged(session);
       const group = session.groups[ordinal], frames = info.frames.slice(group.first, group.last + 1);
-      const key = crypto.createHash('sha256').update(JSON.stringify(['segments-v1', info.source.sha256, info.preview, group, h.COLOR_VERSION])).digest('hex');
+      const key = crypto.createHash('sha256').update(JSON.stringify([info.videoEncoding ? 'avc-idr-v1' : 'segments-v1', ...(info.videoEncoding ? [info.videoEncoding] : []), info.source.sha256, info.preview, group, h.COLOR_VERSION])).digest('hex');
       const tx = await cache.begin({ sourceSha256: key, previewQuality: info.preview.quality, signal: job.signal }); job.tx = tx;
       let returned = null;
       try {
@@ -140,6 +144,14 @@ function createLongMedia({ cache, tools, helpers: h }) {
     const hasAudio = audioEnd > audioStart;
     const args = h.ffmpegArgs(snapshot.filePath, false, video.codec_name, video, info.preview);
     args.splice(args.indexOf('-i'), 0, '-noaccurate_seek', '-seek_timestamp', '1', '-ss', videoStart.toFixed(9));
+    if (info.videoEncoding) {
+      args[args.indexOf('-c:v')+1] = 'libx264';
+      args.splice(args.indexOf('-q:v'), 2, '-preset', 'ultrafast', '-crf', '20', '-profile:v', 'baseline', '-level:v', '5.1', '-g', '1', '-bf', '0',
+        '-x264-params', 'aud=1:repeat-headers=1:keyint=1:scenecut=0', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv');
+      args[args.indexOf('-f')+1] = 'h264';
+      const filter = args.indexOf('-vf') + 1;
+      args[filter] = args[filter].replace('out_range=pc:out_color_matrix=bt601', 'out_range=tv:out_color_matrix=bt709').replace('format=yuvj420p','format=yuv420p');
+    }
     const vf = args.indexOf('-vf') + 1;
     args[vf] = `trim=start=${videoStart.toFixed(9)},trim=end_frame=${expected.length},` + args[vf];
     if (hasAudio) {
@@ -154,15 +166,24 @@ function createLongMedia({ cache, tools, helpers: h }) {
         '-c:a', 'pcm_f32le', '-f', 'wav', 'pipe:3');
     }
     const { child, finish } = h.childProcess(job, tools.ffmpeg, args, ['ignore', 'pipe', 'pipe', hasAudio ? 'pipe' : 'ignore'], false);
-    const parser = new h.JpegParser(), assets = [], pts = []; let base = null, audioFirst = null, total = 0, tail = '';
+    const parser = info.videoEncoding ? new (require('./avc-access-units.cjs').AccessUnitParser)() : new h.JpegParser(), assets = [], pts = []; let base = null, audioFirst = null, total = 0, tail = '';
+    const storeFrame = async value => {
+      const bytes = info.videoEncoding ? value.bytes : value;
+      if (info.videoEncoding && value.codec.toLowerCase() !== info.videoEncoding.codec) fail('代理编码参数与声明不一致。');
+      if (assets.length >= expected.length) fail('分段图片数量超出源帧索引。');
+      assets.push(await (tx.writeFrame || tx.writeAsset)(String(assets.length) + (info.videoEncoding ? '.avc' : '.jpg'), bytes));
+    };
     const videoTask = h.guarded(job, (async () => {
-      for await (const chunk of child.stdout) { h.check(job); total = h.boundedAdd(total, chunk.length, LIMITS.segmentBytes);
+      let packed = null;
+      try { for await (const chunk of child.stdout) { h.check(job); total = h.boundedAdd(total, chunk.length, LIMITS.segmentBytes);
         for (const bytes of parser.push(chunk)) {
-          if (assets.length >= expected.length) fail('分段图片数量超出源帧索引。');
-          assets.push(await (tx.writeFrame || tx.writeAsset)(`${assets.length}.jpg`, bytes));
+          await storeFrame(bytes);
         }
       }
-      return tx.finishFrames ? tx.finishFrames() : null;
+      h.check(job);
+      if (info.videoEncoding) for (const value of parser.end()) await storeFrame(value);
+      } finally { if (tx.finishFrames) packed = await tx.finishFrames(); }
+      return packed;
     })());
     const stderrTask = h.guarded(job, (async () => {
       let pending = '', bytes = 0;
@@ -183,6 +204,7 @@ function createLongMedia({ cache, tools, helpers: h }) {
       const writer = await tx.openAsset('audio.wav'); let count = 0, fmt, asset;
       try {
         for await (const chunk of child.stdio[3]) { h.check(job); count = h.boundedAdd(count, chunk.length, 4 * 1024 ** 2); total = h.boundedAdd(total, chunk.length, LIMITS.segmentBytes); await writer.append(chunk); }
+        h.check(job);
         const prefix = await writer.readPrefix(Math.min(count, 4096)); fmt = h.patchWav(prefix, count); await writer.patch(0, prefix.subarray(0, fmt.dataOffset));
       } finally { asset = await writer.close(); }
       return { ...asset, sampleRate: fmt.sampleRate, channels: fmt.channels, duration: fmt.duration };
@@ -190,7 +212,7 @@ function createLongMedia({ cache, tools, helpers: h }) {
     const results = await Promise.allSettled([videoTask, audioTask, stderrTask]), exit = await finish; h.check(job);
     for (const result of results) if (result.status === 'rejected') throw result.reason;
     if (exit.error || exit.code !== 0) throw exit.error || new Error('分段读取失败：' + tail);
-    if (!base || pts.length !== expected.length || assets.length !== expected.length || parser.buffer.length) fail('分段图片与时间戳不完整。');
+    if (!base || pts.length !== expected.length || assets.length !== expected.length || (info.videoEncoding ? 0 : parser.buffer.length)) fail('分段图片与时间戳不完整。');
     for (let i = 0; i < pts.length; i++) {
       const a = h.ratio(pts[i], base), b = h.ratio(expected[i].ptsTicks, expected[i].timeBase);
       if (a.n * b.d !== b.n * a.d) fail('分段解码与源帧索引不一致，已停止，未显示错误画面。', 'MEDIA_PTS');
@@ -208,6 +230,7 @@ function createLongMedia({ cache, tools, helpers: h }) {
     if (group.audioOnly) localFrames[0].end = group.end - group.start;
     const duration = Math.max(localFrames[localFrames.length - 1].end, audio ? audio.start + audio.duration : 0);
     const manifest = { schema: 1, owner: OWNER, recipe: RECIPE, colorVersion: h.COLOR_VERSION, color: h.previewColor(video),
+      ...(info.videoEncoding ? { videoEncoding: info.videoEncoding } : {}),
       source: { sha256: key, codec: video.codec_name, width: video.width, height: video.height, hasAudioStream: hasAudio },
       preview: info.preview, width: info.width, height: info.height, duration, frames: localFrames, audio,
       ...(results[0].value ? { framePack: results[0].value } : {}), metrics: { segmentStart: group.start, sourceSha256: info.source.sha256 } };

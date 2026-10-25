@@ -37,7 +37,7 @@ function createSegmentReader({ info, acquire, release, readAsset }) {
     active.add(task); task.then(() => active.delete(task), () => active.delete(task)); return task;
   }
   function frame(file) {
-    const match = /^frame-(\d+)\.jpg$/.exec(file), ordinal = match && Number(match[1]);
+    const match = /^frame-(\d+)\.(?:jpg|avc)$/.exec(file), ordinal = match && Number(match[1]);
     if (!match || !Number.isSafeInteger(ordinal) || !info.frames[ordinal] || info.frames[ordinal].file !== file) throw new Error('无效的长视频帧资源。');
     const segment = groupAt(info.frames[ordinal].time), range = info.segments[segment];
     return use(segment, value => {

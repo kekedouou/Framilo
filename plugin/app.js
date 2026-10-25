@@ -84,6 +84,7 @@
       const cache = { readAsset: (...args) => backend.cache.readAsset(...args),
         readAudioSegment: (...args) => backend.cache.readAudioSegment(...args),
         target: (...args) => backend.cache.target(...args),
+        backgroundStatus: (...args) => backend?.cache?.backgroundStatus?.(...args) || null,
         prefetch: (...args) => backend.cache.prefetch(...args),
         cancelReads: (...args) => backend.cache.cancelReads(...args),
         readFrameBatch: (...args) => backend.cache.readFrameBatch(...args),
@@ -102,6 +103,7 @@
           if (!preparedMedia) {
             backend = createTaskClient({ pluginRoot: root, discoverTools: async () => tools,
               onWaiting: () => { if (session && !closed) ui.update({ ...session.snapshot(), progress: { stage: 'handover', message: '正在等待上一个视频任务结束' } }); },
+              onBackground: () => { if (session && !closed) ui.update(session.snapshot()); },
               onFailure: error => { if (session && !closed) session.close().finally(() => startupError(error)).catch(() => {}); } });
             preparedMedia = backend.media;
           }
@@ -116,7 +118,8 @@
           const binding = Object.freeze({ sessionEpoch: value.epoch, libraryEpoch: value.libraryEpoch,
             itemId: identity && identity.itemId, sourceSha256: identity && identity.sha256 });
           const memory = preferences.snapshot();
-          return new window.EVAPlayer.Player({ ...options, ramBytes: memory.ramBytes, compressedRamBytes: memory.compressedRamBytes,
+          return new window.EVAPlayer.Player({ ...options,
+            createFrameDecoder: settings => { if (!window.EVAProxyDecoder) throw Error('帧内代理解码组件没有加载，请切换JPEG序列。'); return window.EVAProxyDecoder.createProxyDecoder(settings); }, ramBytes: memory.ramBytes, compressedRamBytes: memory.compressedRamBytes,
             forwardPredecode: preferences.forwardPredecode(), canvas: ui.canvas, frameIndex,
             emit: event => diagnostics.publish('player', () => ({ binding, event })) });
         }, onChange: snapshot => { ui.update(snapshot); diagnostics.publish('state', snapshot); } });

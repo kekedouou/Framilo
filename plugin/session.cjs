@@ -52,6 +52,8 @@ function createSession(options) {
       loadMetrics: loadMetrics ? { ...loadMetrics } : null,
       comments: observedComments(), drawings: drawings.snapshot(), exportState, exportFolders,
       preview: owner && owner.ready && owner.epoch === epoch && owner.info.preview ? owner.info.preview : null,
+      playbackBackend: options.memoryPreferences && typeof options.memoryPreferences.backend === 'function' ? options.memoryPreferences.backend() : 'jpeg',
+      proxyPreparation: owner && owner.info && cache.backgroundStatus ? cache.backgroundStatus(owner.info) : null,
       previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : '720p',
       forwardPredecode: !!(options.memoryPreferences && typeof options.memoryPreferences.forwardPredecode === 'function' && options.memoryPreferences.forwardPredecode()),
       interactionSettings: options.memoryPreferences && typeof options.memoryPreferences.interaction === 'function' ? options.memoryPreferences.interaction() : DEFAULT_INTERACTION,
@@ -127,7 +129,7 @@ function createSession(options) {
       loadComments(request, selected); // Independent read; never add API work to the frame loop.
       owned = { epoch: request.epoch, info: null, player: null, dispose: null, released: false, ready: false }; owner = owned;
       const mediaStartedAt = now();
-      const info = await media.prepare(selected, { signal: request.controller.signal, previewQuality: request.previewQuality, onProgress: value => {
+      const info = await media.prepare(selected, { signal: request.controller.signal, previewQuality: request.previewQuality, playbackBackend: request.playbackBackend, onProgress: value => {
         if (current(request) && owner === owned) { progress = typeof value === 'object' && value ? { ...value } : { stage: 'media-prepare', message: String(value) }; notify(); }
       } });
       const mediaReturnedAt = now(); owned.info = info;
@@ -214,6 +216,7 @@ function createSession(options) {
     const startedAt = Number.isFinite(settings.startedAt) ? settings.startedAt : now();
     const request = { epoch: invalidate(), controller: new AbortController(), captured: null, startedAt, trigger: settings.trigger || 'selected-load',
       restoreTime: settings.restoreTime, restoreFrameId: settings.restoreFrameId, transportState: settings.transportState,
+      playbackBackend: options.memoryPreferences && typeof options.memoryPreferences.backend === 'function' ? options.memoryPreferences.backend() : 'jpeg',
       previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : undefined };
     if (!current(request)) return Promise.resolve({ status: 'superseded' });
     controller = request.controller;
@@ -239,10 +242,11 @@ function createSession(options) {
     const result = await cache.clearOther({ sourceSha256: retained.sha256 });
     return closed || token !== epoch ? { status: 'superseded' } : { status: 'cleared', ...result };
   }
-  async function setPlaybackSettings({ ramMiB, previewQuality, forwardPredecode, wheelFrames, showCacheStrip, rateStep, drawingFadeSeconds } = {}, trigger = 'playback-settings') {
+  async function setPlaybackSettings({ ramMiB, previewQuality, playbackBackend, forwardPredecode, wheelFrames, showCacheStrip, rateStep, drawingFadeSeconds } = {}, trigger = 'playback-settings') {
     if (activeExport) throw issue('EXPORT_BUSY', '请等待导出结束或取消。');
     const preferences = options.memoryPreferences;
     if (!preferences) throw issue('MEMORY_SETTINGS_UNAVAILABLE', '当前入口没有内存设置接口。');
+    if (playbackBackend !== undefined && !['proxy','jpeg'].includes(playbackBackend)) throw issue('SETTINGS_INVALID','播放方式无效。');
     if (previewQuality !== undefined) quality(previewQuality);
     if (forwardPredecode !== undefined && typeof forwardPredecode !== 'boolean') throw issue('SETTINGS_INVALID', '提前解压设置必须为开或关。');
     const previousInteraction = typeof preferences.interaction === 'function' ? preferences.interaction() : DEFAULT_INTERACTION;
@@ -253,7 +257,8 @@ function createSession(options) {
     preferences.preview(ramMiB);
     if (closed || state === 'preparing' || comments.draft || drawings.snapshot().draft) throw issue('MEMORY_SETTINGS_BUSY', '请等待准备完成，并先保存或取消标注。');
     const token = epoch, retained = source;
-    const onlyControls = (forwardPredecode !== undefined || wheelFrames !== undefined || showCacheStrip !== undefined || rateStep !== undefined || drawingFadeSeconds !== undefined) && preferences.snapshot().ramMiB === ramMiB &&
+    const backendChanged = playbackBackend !== undefined && (typeof preferences.backend !== 'function' || preferences.backend() !== playbackBackend);
+    const onlyControls = !backendChanged && (forwardPredecode !== undefined || wheelFrames !== undefined || showCacheStrip !== undefined || rateStep !== undefined || drawingFadeSeconds !== undefined) && preferences.snapshot().ramMiB === ramMiB &&
       (previewQuality === undefined || typeof preferences.quality === 'function' && previewQuality === preferences.quality());
     const predecodeChanged = forwardPredecode !== undefined && (typeof preferences.forwardPredecode !== 'function' || forwardPredecode !== preferences.forwardPredecode());
     if (onlyControls && predecodeChanged && owner && owner.ready && typeof owner.player.setForwardPredecode !== 'function')
@@ -265,7 +270,7 @@ function createSession(options) {
     const time = actual ? actual.time : retainedTime;
     const frameId = actual ? actual.frameId : memoryResume ? memoryResume.frameId : undefined;
     const transportState = actual && actual.transport && retained ? { sourceSha256: retained.sha256, value: actual.transport } : memoryResume && memoryResume.transportState;
-    preferences.save(ramMiB, previewQuality, forwardPredecode, interaction);
+    preferences.save(ramMiB, previewQuality, forwardPredecode, interaction, playbackBackend);
     if (onlyControls && owner && owner.ready) {
       if (predecodeChanged) owner.player.setForwardPredecode(forwardPredecode);
       notify(); return { status: 'applied' };

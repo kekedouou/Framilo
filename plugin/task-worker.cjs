@@ -33,7 +33,8 @@ const identity = { self: () => { const value = base.self(); if (!value) throw ne
   } };
 const cache = require('./cache.cjs').createCache({ pluginRoot: root, taskOwner, processIdentity: identity, packFrames: true });
 const handles = new Map(), controllers = new Map();
-const longOwners = new Map();
+const longOwners = new Map(), backgrounds = new Map();
+function backgroundEvent(leaseId,value){send({type:"proxy-progress",leaseId,value});}
 let sourceExports = null;
 let tail = Promise.resolve(), stopping = false, shutdownTask = null;
 function send(value) { const text = JSON.stringify(value); if (Buffer.byteLength(text) > 8 * 1024 ** 2) throw new Error('Control response exceeds 8MiB.'); process.stdout.write(text + '\n'); }
@@ -41,8 +42,9 @@ function response(id, result, error) { send({ type: 'response', id, ...(error ? 
 function enqueue(fn) { const work = tail.then(fn); tail = work.catch(() => {}); return work; }
 function shutdown(id) {
   if (shutdownTask) return shutdownTask;
-  stopping = true; for (const controller of controllers.values()) controller.abort();
+  stopping = true; for(const bg of backgrounds.values())bg.foreground(); for (const controller of controllers.values()) controller.abort();
   shutdownTask = enqueue(async () => {
+    for(const bg of backgrounds.values())await bg.close(); backgrounds.clear();
     for (const info of handles.values()) {
       if (longOwners.has(info.leaseId)) longOwners.get(info.leaseId).releaseLong(info);
       else await cache.release(info);
@@ -58,20 +60,30 @@ async function execute(message, controller) {
   if (stopping) throw Object.assign(new Error('视频任务正在关闭。'), { code: 'MEDIA_CANCELLED' });
   if (message.method === 'prepare') {
     const media = require('./media.cjs').createMedia({ tools: message.tools, cache });
-    const info = await media.prepare(message.snapshot, { signal: controller.signal, previewQuality: message.previewQuality,
+    const info = await media.prepare(message.snapshot, { signal: controller.signal, previewQuality: message.previewQuality, playbackBackend: message.playbackBackend,
       onProgress: value => send({ type: 'progress', id: message.id, value }) });
     handles.set(info.leaseId, info);
     if (info.streaming) longOwners.set(info.leaseId, media);
-    return info;
+    if(info.videoEncoding){
+      const bg=require('./proxy-background.cjs').createProxyBackground({info,
+        prepare:(ordinal,signal)=>media.prepareSegment(info,ordinal,{signal}),release:value=>cache.release(value),
+        enqueue,idle:()=>!stopping&&!controllers.size,inventory:()=>cache.inventory(),emit:value=>backgroundEvent(info.leaseId,value),
+        onSegment:(ordinal,value)=>{send({type:'proxy-segment',parentLeaseId:info.leaseId,ordinal,value});}});
+      backgrounds.set(info.leaseId,bg);bg.kick();
+    }
+    return info.streaming ? require('./media-wire.cjs').packInfo(info) : info;
   }
   if (message.method === 'segment') {
     const info = handles.get(message.leaseId), media = longOwners.get(message.leaseId);
     if (!info || !media) throw new Error('长视频会话已失效。');
-    const segment = await media.prepareSegment(info, message.ordinal, { signal: controller.signal });
-    handles.set(segment.leaseId, segment); return segment;
+    const bg=backgrounds.get(info.leaseId);if(bg?.get(message.ordinal))return bg.get(message.ordinal);
+    let segment = await media.prepareSegment(info, message.ordinal, { signal: controller.signal });
+    if(bg) return await bg.retain(message.ordinal,segment);
+    handles.set(segment.leaseId, segment);return segment;
   }
   if (message.method === 'release') {
     const info = handles.get(message.leaseId); if (!info) throw new Error('Unknown task lease.');
+    if(backgrounds.has(message.leaseId)){await backgrounds.get(message.leaseId).close();backgrounds.delete(message.leaseId);}
     if (longOwners.has(message.leaseId)) { longOwners.get(message.leaseId).releaseLong(info); longOwners.delete(message.leaseId); }
     else await cache.release(info);
     handles.delete(message.leaseId); return true;
@@ -98,9 +110,10 @@ input.on('line', line => {
   if (message.method === 'cancel') { const controller = controllers.get(message.id); if (controller) controller.abort(); return; }
   if (!Number.isSafeInteger(message.id) || message.id < 1 || controllers.has(message.id)) { shutdown(); return; }
   if (message.method === 'close') { shutdown(message.id); return; }
+  for(const bg of backgrounds.values())bg.foreground();
   const controller = new AbortController(); controllers.set(message.id, controller);
   enqueue(() => execute(message, controller)).then(result => response(message.id, result), error => response(message.id, null, error))
-    .finally(() => controllers.delete(message.id));
+    .finally(() => {controllers.delete(message.id);for(const bg of backgrounds.values())bg.kick();});
 });
 input.on('close', () => shutdown());
 send({ type: 'ready', pid: process.pid, taskOwner, node: process.versions.node });

@@ -22,6 +22,8 @@ const RECIPE = 'jpeg-q3-720p-pcm-f32-48000-v1';
 const MIB = 1024 ** 2;
 const LIMITS = Object.freeze({ cacheBytes: 5 * 1024 * MIB, metadataBytes: 8 * MIB,
   assetBytes: 256 * MIB, duration: 30, prefixBytes: 4096 });
+const MANIFEST_MEMO_LIMITS = Object.freeze({ entries: 4096, bytes: 32 * MIB });
+const manifestMemoDiagnostics = new WeakMap();
 const recipeId = crypto.createHash('sha256').update(RECIPE).digest('hex').slice(0, 12);
 // Preserve legacy identifiers/receipts; new variants share this same root and budget.
 const variantIds = new Map(previewProfile.QUALITIES.map(q => [q, crypto.createHash('sha256').update(RECIPE + ':' + previewProfile.VERSION + ':' + q).digest('hex').slice(0, 12)]));
@@ -79,10 +81,40 @@ function readJSON(file, before = regular(file)) {
     return JSON.parse(data.toString('utf8'));
   } finally { fs.closeSync(fd); }
 }
+function sameVerifiedStamp(before, after) {
+  return before.isFile() && after.isFile() && before.ino === after.ino && before.dev === after.dev &&
+    before.nlink === 1n && after.nlink === 1n && before.size === after.size &&
+    before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
+}
+// Only immutable complete manifests use this reader/memo. Mutable owner,
+// writer, lease, partial and cleanup records keep their full original checks.
+function readVerifiedBytes(file) {
+  regular(file);
+  const before = fs.lstatSync(file, { bigint: true });
+  if (before.size < 0n || before.size > BigInt(LIMITS.metadataBytes)) fail('缓存元数据超过容量限制。');
+  const fd = fs.openSync(file, 'r');
+  try {
+    if (!sameVerifiedStamp(before, fs.fstatSync(fd, { bigint: true }))) fail('缓存元数据身份已改变。');
+    const bytes = Buffer.alloc(Number(before.size)); let offset = 0;
+    while (offset < bytes.length) {
+      const count = fs.readSync(fd, bytes, offset, bytes.length - offset, offset);
+      if (!Number.isSafeInteger(count) || count < 1 || count > bytes.length - offset) fail('读取期间缓存元数据已改变。');
+      offset += count;
+    }
+    if (!sameVerifiedStamp(before, fs.fstatSync(fd, { bigint: true })) ||
+      !sameVerifiedStamp(before, fs.lstatSync(file, { bigint: true }))) fail('读取期间缓存元数据已改变。');
+    regular(file);
+    // Hash all raw bytes every time, even when size and timestamps match.
+    return { bytes, digest: sha(bytes), identity: before };
+  } finally { fs.closeSync(fd); }
+}
+function freezeTree(value) {
+  if (value && typeof value === 'object') { Object.values(value).forEach(freezeTree); Object.freeze(value); }
+  return value;
+}
 function frozenCopy(value) {
   const result = JSON.parse(jsonBytes(value).toString('utf8'));
-  function freeze(object) { if (object && typeof object === 'object') { Object.values(object).forEach(freeze); Object.freeze(object); } }
-  freeze(result); return result;
+  return freezeTree(result);
 }
 function assets(info) { return [...(info.framePack ? [info.framePack] : info.frames), ...(info.audio ? [info.audio] : [])]; }
 function contentSource(source, expectedSha) {
@@ -137,6 +169,56 @@ function createCache(options = {}) {
   if (/^c:/i.test(plugin)) fail('缓存不能位于C盘。');
   directory(plugin);
   const live = new WeakMap();
+  const manifestMemo = new Map(); let manifestMemoBytes = 0;
+  const manifestMemoStats = { reads: 0, hits: 0, validations: 0, evictions: 0 };
+  function memoKey(dir, expectedSha) { return (process.platform === 'win32' ? dir.toLowerCase() : dir) + ':' + expectedSha; }
+  function forgetManifest(key) {
+    const prior = manifestMemo.get(key);
+    if (prior) { manifestMemo.delete(key); manifestMemoBytes -= prior.bytes; }
+  }
+  function forgetDirectory(dir) {
+    const prefix = (process.platform === 'win32' ? dir.toLowerCase() : dir) + ':';
+    for (const key of manifestMemo.keys()) if (key.startsWith(prefix)) forgetManifest(key);
+  }
+  function completeManifest(dir, expectedSha) {
+    const key = memoKey(dir, expectedSha);
+    try {
+      const before = fs.lstatSync(dir, { bigint: true }), raw = readVerifiedBytes(path.join(dir, 'manifest.json'));
+      const after = fs.lstatSync(dir, { bigint: true });
+      if (!before.isDirectory() || !after.isDirectory() || before.isSymbolicLink() || after.isSymbolicLink() ||
+        before.ino !== after.ino || before.dev !== after.dev) fail('读取期间缓存目录身份已改变。');
+      manifestMemoStats.reads++;
+      let entry = manifestMemo.get(key);
+      if (entry && (entry.digest !== raw.digest || entry.bytes !== raw.bytes.length ||
+        entry.directory.ino !== before.ino || entry.directory.dev !== before.dev ||
+        !sameVerifiedStamp(entry.identity, raw.identity))) {
+        forgetManifest(key); entry = null;
+      }
+      if (entry) {
+        manifestMemoStats.hits++;
+        manifestMemo.delete(key); manifestMemo.set(key, entry);
+      } else {
+        const info = JSON.parse(raw.bytes.toString('utf8'));
+        if (path.basename(dir) !== cacheLeaf(expectedSha, info.preview && info.preview.quality)) fail('缓存目录与画质身份不一致。');
+        manifestMemoStats.validations++;
+        const map = manifestAssets(info, expectedSha);
+        // The map remains private. Prevent accidental mutation by future internal callers.
+        const readonly = () => fail('已验证缓存资产表不能改写。');
+        Object.defineProperties(map, { set: { value: readonly }, delete: { value: readonly }, clear: { value: readonly } });
+        Object.freeze(map);
+        entry = { info: freezeTree(info), map, digest: raw.digest, bytes: raw.bytes.length,
+          identity: raw.identity, directory: { ino: before.ino, dev: before.dev } };
+        manifestMemo.set(key, entry); manifestMemoBytes += entry.bytes;
+        while (manifestMemo.size > MANIFEST_MEMO_LIMITS.entries || manifestMemoBytes > MANIFEST_MEMO_LIMITS.bytes) {
+          forgetManifest(manifestMemo.keys().next().value); manifestMemoStats.evictions++;
+        }
+      }
+      // Preparation may add top-level metrics, but can never mutate canonical data.
+      const info = { ...entry.info };
+      if (info.metrics && typeof info.metrics === 'object') info.metrics = Array.isArray(info.metrics) ? info.metrics.slice() : { ...info.metrics };
+      return { info, map: entry.map };
+    } catch (error) { forgetManifest(key); throw error; }
+  }
   const processIdentity = options.processIdentity || createIdentity();
   const ownerValue = (kind, extra) => ({ schema: 1, owner: OWNER, recipe: RECIPE, root, kind,
     ...(['writer', 'lease'].includes(kind) && options.taskOwner ? { taskOwner: options.taskOwner } : {}), ...extra });
@@ -191,9 +273,10 @@ function createCache(options = {}) {
     job.disk += bytes;
   }
   function inspectDirectory(dir, kind, expectedSha, allowDamaged = false, ownedRecencyFile = null) {
-    verifyOwner(dir, kind); const info = readJSON(path.join(dir, 'manifest.json'));
-    if (kind === 'cache' && path.basename(dir) !== cacheLeaf(expectedSha, info.preview && info.preview.quality)) fail('缓存目录与画质身份不一致。');
-    const map = manifestAssets(info, expectedSha), expected = new Set(['owner.json', 'manifest.json', ...map.keys()]);
+    verifyOwner(dir, kind);
+    const checked = kind === 'cache' ? completeManifest(dir, expectedSha) : null;
+    const info = checked ? checked.info : readJSON(path.join(dir, 'manifest.json'));
+    const map = checked ? checked.map : manifestAssets(info, expectedSha), expected = new Set(['owner.json', 'manifest.json', ...map.keys()]);
     const actual = fs.readdirSync(dir);
     if (ownedRecencyFile) expected.add(ownedRecencyFile);
     if (kind === 'partial' && actual.includes('transaction.log')) expected.add('transaction.log');
@@ -405,6 +488,7 @@ function createCache(options = {}) {
       fs.unlinkSync(file); freedBytes += before.bytes;
     }
     if (fs.existsSync(plan.directory)) { directory(plan.directory); fs.rmdirSync(plan.directory); }
+    forgetDirectory(plan.directory);
     const data = jsonBytes(ownerValue('cleanup-result', { token: plan.token, status: 'completed', planSha256: sha(planData),
       freedBytes, plannedBytes: plan.files.reduce((sum, item) => sum + item.bytes, 0), recovered: recovering, completedAt: Date.now() }));
     if (data.length > 4096) fail('清理回执超出预留。');
@@ -488,6 +572,9 @@ function createCache(options = {}) {
       // Missing/future recency never proves one day of non-use.
       if (!all && (!Number.isSafeInteger(owner.lastUsedAt) || at - owner.lastUsedAt < 86400000)) continue;
       const checked = inspectDirectory(dir, 'cache', match[1]);
+      // Segment keys are derived from the original SHA. Clearing "other"
+      // materials must retain this material's unleased JPEG/AVC segments too.
+      if (all && checked.info.metrics?.sourceSha256 === path.basename(job.target).slice(6, 70)) continue;
       const plan = ownerValue('cleanup-plan', { token: nonce(), writerToken: job.token, directory: dir,
         directoryIdentity: captureDirectoryIdentity(dir), cacheToken: owner.token,
         reason: all ? 'user-clear-other-cache' : 'idle-one-day', createdAt: at,
@@ -611,7 +698,7 @@ function createCache(options = {}) {
       // creation, so interruption within file/ledger/owner writes is recoverable.
       directory(dir); const names = fs.readdirSync(dir).sort();
       const captured = names.map(name => {
-        if (!/^(?:owner\.json|transaction\.log|manifest\.json|audio\.wav|frames\.pack|\d{6}\.jpg)$/.test(name)) fail('中断任务含未知文件，保留原件。');
+        if (!/^(?:owner\.json|transaction\.log|manifest\.json|audio\.wav|frames\.pack|\d{6}\.jpg|\d{1,12}\.avc)$/.test(name)) fail('中断任务含未知文件，保留原件。');
         const stat = regular(path.join(dir, name));
         if (stat.size > (name.endsWith('.json') || name === 'transaction.log' ? LIMITS.metadataBytes : name === framePack.FILE ? LIMITS.cacheBytes : LIMITS.assetBytes)) fail('中断任务文件越界，保留原件。');
         return leafSnapshot(path.join(dir, name));
@@ -965,7 +1052,7 @@ function createCache(options = {}) {
     async function writeFrame(name, data) {
       if (!options.packFrames) return writeAsset(name, data);
       safeName(name);
-      if (!name.endsWith('.jpg') || packedClosing || packedRecords.has(name) || job.files.has(name) || !Buffer.isBuffer(data) || !data.length || data.length > LIMITS.assetBytes)
+      if (!(name.endsWith('.jpg') || /^\d{1,12}\.avc$/.test(name)) || packedClosing || packedRecords.has(name) || job.files.has(name) || !Buffer.isBuffer(data) || !data.length || data.length > LIMITS.assetBytes)
         fail('图片包帧写入无效、重复或已经关闭。');
       if (!packedWriter) packedWriter = openAsset(framePack.FILE, false, diskBytes);
       packedWriter.append(data); packedHash.update(data);
@@ -1091,7 +1178,7 @@ function createCache(options = {}) {
         writeAll(markerFd, marker, 0); fs.ftruncateSync(markerFd, marker.length);
       } finally { fs.closeSync(markerFd); }
       if (marker.length < oldMarker.size) job.disk -= oldMarker.size - marker.length;
-      fs.renameSync(job.partial, target); job.partial = null; job.published = true;
+      fs.renameSync(job.partial, target); forgetDirectory(target); job.partial = null; job.published = true;
       finished = registerLease(persistent, currentSource); return finished;
     }
     function abort() {
@@ -1227,9 +1314,15 @@ function createCache(options = {}) {
     const base = { root, diskLimitBytes: diskBytes, deletionAuthorized: false, assetHashesVerified: false };
     if (!fs.existsSync(root)) return frozenCopy({ ...base, exists: false, usedBytes: 0, caches: [], leases: [] });
     const rootBefore = directory(root); verifyRoot();
-    const names = fs.readdirSync(root).sort(), stamps = new Map();
+    const names = fs.readdirSync(root).sort(), stamps = new Map(), capturedLeaves = new Map(), cacheByDirectory = new Map();
     const stamp = stat => JSON.stringify([stat.dev, stat.ino, stat.size, stat.mtimeMs]);
-    function capture(file) { stamps.set(file, stamp(regular(file))); }
+    const directoryKey = dir => { const resolved = path.resolve(dir); return process.platform === 'win32' ? resolved.toLowerCase() : resolved; };
+    function capture(file) {
+      stamps.set(file, stamp(regular(file)));
+      const key = directoryKey(path.dirname(file));
+      if (!capturedLeaves.has(key)) capturedLeaves.set(key, []);
+      capturedLeaves.get(key).push(path.basename(file));
+    }
     if (names.includes('writer.lock')) { const error = new Error('缓存正在写入或留有未确认写锁，暂不盘点；未修改文件。'); error.code = 'CACHE_BUSY'; throw error; }
     const caches = [], leases = [];
     for (const name of names) {
@@ -1241,8 +1334,9 @@ function createCache(options = {}) {
         const checked = inspectDirectory(file, 'cache', match[1]);
         for (const leaf of checked.names) if (!stamps.has(path.join(file, leaf))) capture(path.join(file, leaf));
         const owner = verifyOwner(file, 'cache');
-        caches.push({ directory: file, sourceSha256: match[1], recipe: RECIPE, bytes: checked.totalBytes,
-          assetCount: checked.map.size, leaseCount: 0, protected: false, lastUsedAt: owner.lastUsedAt || null, useSequence: owner.useSequence || null });
+        const item = { directory: file, sourceSha256: match[1], recipe: RECIPE, bytes: checked.totalBytes,
+          assetCount: checked.map.size, leaseCount: 0, protected: false, lastUsedAt: owner.lastUsedAt || null, useSequence: owner.useSequence || null };
+        caches.push(item); cacheByDirectory.set(directoryKey(file), item);
       } else {
         capture(file);
         if (name === 'owner.json') continue;
@@ -1266,7 +1360,7 @@ function createCache(options = {}) {
       }
     }
     for (const lease of leases) {
-      const item = caches.find(value => samePath(value.directory, lease.cacheDir));
+      const item = cacheByDirectory.get(directoryKey(lease.cacheDir));
       if (!item || item.sourceSha256 !== lease.sourceSha256) fail('占用记录与完整缓存不匹配，停止盘点。');
       item.leaseCount++; item.protected = true;
     }
@@ -1277,8 +1371,7 @@ function createCache(options = {}) {
       if (!Number.isSafeInteger(usedBytes) || usedBytes > diskBytes) fail('缓存现有容量超过预算。');
     }
     for (const item of caches) {
-      const leaves = fs.readdirSync(item.directory).sort(), captured = [...stamps.keys()]
-        .filter(file => samePath(path.dirname(file), item.directory)).map(file => path.basename(file)).sort();
+      const leaves = fs.readdirSync(item.directory).sort(), captured = capturedLeaves.get(directoryKey(item.directory)).sort();
       if (JSON.stringify(leaves) !== JSON.stringify(captured)) fail('盘点期间缓存目录内容已变化。');
     }
     const rootAfter = directory(root); verifyRoot();
@@ -1290,7 +1383,11 @@ function createCache(options = {}) {
     const tx = begin({ ...settings, clearOthers: true });
     try { return tx.cleanup; } finally { tx.close(); }
   }
-  return Object.freeze({ root, begin, readAsset, readFrameBatch, release, inventory, clearOther, adoptReadLease, detachReadLease });
+  const api = Object.freeze({ root, begin, readAsset, readFrameBatch, release, inventory, clearOther, adoptReadLease, detachReadLease });
+  manifestMemoDiagnostics.set(api, () => Object.freeze({ ...manifestMemoStats, entries: manifestMemo.size,
+    bytes: manifestMemoBytes, maxEntries: MANIFEST_MEMO_LIMITS.entries, maxBytes: MANIFEST_MEMO_LIMITS.bytes }));
+  return api;
 }
 
-module.exports = { createCache, OWNER, RECIPE, LIMITS };
+module.exports = { createCache, OWNER, RECIPE, LIMITS,
+  _test: Object.freeze({ manifestMemoSnapshot: cache => { const read = manifestMemoDiagnostics.get(cache); return read ? read() : null; } }) };

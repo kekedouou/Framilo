@@ -440,7 +440,7 @@ function createMedia(options) {
       notify(job, { stage: 'analyze' }); phaseStart = process.hrtime.bigint();
       const analyzed = await captureProbe(job, tools, snapshot.filePath); check(job); phases.probeMs = elapsed(phaseStart);
       const selectedMetadata = validateProbe(analyzed.probe, Infinity);
-      if (selectedMetadata.mediaSpan > LIMITS.duration) {
+      if (settings.playbackBackend === 'proxy' || selectedMetadata.mediaSpan > LIMITS.duration) {
         const info = await longMedia().prepare(snapshot, fingerprint, analyzed.probe, { ...settings, tx });
         await tx.abort(); return info;
       }

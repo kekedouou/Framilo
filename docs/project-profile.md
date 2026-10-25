@@ -1,12 +1,22 @@
 # 项目说明
 
-当前：E-33长视频仍未达到用户要求的跟手体验；正在评审常驻解码、磁盘代理与有界RAM组合，保留JPEG路径。新后端未实现或验证，详见本阶段方向与验收草案。
+见[E-34计划](experiments/E34/plan.md)。
 
-## E-33 新增开发文件
+当前：E-34已接入常驻播放解码、H264全IDR代理和JPEG切换；本地45秒/5分钟就绪拖动通过，30分钟后台规模两轮失败，转长会话修复，真实Eagle与最终交付未验。见[E-34报告](experiments/E34/report.md)。
 
-长片新后端仍在[方向与验收评审](experiments/E33/decoder-review.md)，常驻解码和帧内代理未实现；JPEG继续保留。
+## E-34 正式模块与当前边界
 
-plugin/long-media.cjs负责轻量帧索引、分段解码和实际音频尾部检测；segment-reader.cjs负责分段租约/取消/释放；segment-audio.cjs负责有界PCM与Web Audio排程。正式plugin不引用prototypes/long-video中的比较或候选模型。完整源文件哈希与轻量帧表仍在首帧前读取，整片JPEG/PCM不再是长视频就绪前提。scripts/check-long-media.cjs显式执行合成集成检查，tests/long-playback.cjs为默认模型检查。
+新增四个正式模块：avc-access-units.cjs拆分独立AVC帧；proxy-decoder.js复用WebCodecs VideoDecoder；proxy-background.cjs在首片可播放后继续准备未完成段；media-wire.cjs以整数PTS紧凑传输长片索引。常驻的是播放解码器，后台代理生成仍为可取消分段FFmpeg任务，不宣称整片单次连续转码。现有Canvas、Web Audio、UI和永久标注身份继续复用；无需安装额外原生库，prefer-hardware只是偏好，未证实实际NVDEC。
+
+long-media.cjs负责源索引、JPEG或AVC/PCM分段及源身份核对；segment-reader.cjs负责受限读取与借用租约；segment-audio.cjs负责有界PCM排程。后台在同一5GiB总预算内原子提交代理段，保留段描述与租约而不常驻整片图像，额度不足停止扩展；关闭/换片/模式互切等待读取、解码及租约真正释放。完整源哈希与轻量帧索引仍在首帧前读取，未生成位置仍可能等待约0.5～0.94秒，本轮未达到≤250ms低清预览目标。
+
+源帧上限120000，全索引64MiB，紧凑控制JSON≤6MiB；108000帧实际控制约1.19MiB及源索引通过，但30分钟后台两轮失败，不能补记整片拖动通过。只缓存不变manifest的解析/校验结果，最多4096项、按原始JSON长度计32MiB；每次仍读取并SHA核对原字节、目录身份、实际叶子与长度，writer/lease/partial/cleanup不使用该备忘。inventory两处关联改成同次盘点目录Map，保留全部安全重验；逐段累计全量I/O仍未解决。解析对象、段描述、浏览器及GPU额外内存另计，缓存额度不是全进程上限。
+
+显式媒体入口为scripts/check-proxy-decoder.cjs、check-proxy-playback.cjs及check-proxy-long.cjs，分别对应原生解码、正式链路和时长规模证据；默认模型不生成媒体。默认check-4及Node16新增模型命令行通过，manifest备忘最新补齐13例完整性/隔离模型；真实Eagle Chrome108能力、10分钟连续音画播放、全进程/GPU内存、高分辨率复杂源仍未验。独立Chrome快不等于宿主验收。
+
+## E-33 历史接入
+
+E-33先接入有界JPEG/PCM分段、源帧索引和共享时钟；用户后续反馈拖动不达标，形成[方向与验收评审](experiments/E33/decoder-review.md)。该候选记录由上节E-34实际实施替代，旧失败与证据仍保留。正式plugin不依赖prototypes/long-video。
 
 
 上一阶段E-32优化二级轮盘节点复用和100ms悬停，切换工具不自动展开属性；统一文字框模糊、工具轨宽度与高亮，设置可直接切换标注/片段。实施与验证状态见[E-32报告](experiments/E32/report.md)。
@@ -16,10 +26,10 @@ plugin/long-media.cjs负责轻量帧索引、分段解码和实际音频尾部�
 ## 身份与入口
 
 - 正式主线是Eagle Window视频分析插件，唯一实现位于 `plugin/`；开发入口 `plugin/manifest.json`，界面名“视频分析”。
-- 当前开发版支持MP4及720p/1080p/1440p JPEG预览，超过30秒走有界分段路径（首版24,000帧/6MiB索引上限，重复/缺失PTS不猜测）。默认720p/1GiB，提供512MiB及1～10GiB档位；JPEG池≤总额度1/8。额度不是整个程序内存硬上限，1440p与真实长片性能仍需实际体验。
+- 当前开发版支持MP4及720p/1080p/1440p预览，设置高级菜单可选帧内代理或JPEG序列，缺少旧偏好字段时默认proxy；代理使用分段路径，JPEG短片保留原完整路径、长片按需分段。源帧上限120000、索引64MiB/控制JSON6MiB，重复/缺失PTS不猜测。默认720p/1GiB，提供512MiB及1～10GiB档位；压缩帧池≤总额度1/8。额度不是整个程序内存硬上限，1440p与真实长片性能仍需实际体验。
 - 已发布MVP Beta2/R4已归档；冻结的是发行包、标签与仓库外安装，不表示后续开发停止。发行入口名“视频分析 · MVP Beta”、独立ID，功能固定720p；历史路径公开已接受，许可证未指定。
 - Git根为 `eagle-video-analysis/`，保留单一仓库。原型A/B/S1及preview-quality受局部AGENTS约束，默认封存；旧T2/T4自动测量入口停用。
-- 技术栈：HTML/CSS/JavaScript、Eagle API、Node内置模块和Eagle现有FFmpeg/ffprobe；Windows守护使用系统已有.NET Framework编译器。
+- 技术栈：HTML/CSS/JavaScript、Eagle API、Chromium WebCodecs/Canvas/Web Audio、Node内置模块和Eagle现有FFmpeg/ffprobe；Windows守护使用系统已有.NET Framework编译器。
 - 实际已测Eagle为Node16.17.1/Chrome108，开发默认检查用Node24；命令行兼容、独立Chrome、本地媒体、真实Eagle和用户体验分别记录。
 
 ## 资料位置
@@ -29,10 +39,10 @@ plugin/long-media.cjs负责轻量帧索引、分段解码和实际音频尾部�
 | 长期权限和工程规则 | 根AGENTS.md；不堆进度 |
 | 产品、架构 | docs/product.md的R/P及批准补充；docs/architecture.md的C/A-01～A-08 |
 | 愿景与未来候选 | docs/roadmap.md；EV决定、近期/中期/远期及调整理由，不是已实现功能 |
-| 任务、清理规则 | docs/development-plan.md；E-32当前交接、历史T/E任务及F-01～F-07 |
+| 任务、清理规则 | docs/development-plan.md；E-34当前交接、历史T/E任务及F-01～F-07 |
 | 验证协议 | docs/verification.md；协议、真实运行和人工反馈分开 |
 | 当前状态 | docs/progress.md；先读顶部当前交接，后段为历史 |
-| 专项结果 | docs/experiments/E31及UI01～UI05/E01～E30、Evolution、A/B/S1、T0～T4；保留原数据/失败/测量局限 |
+| 专项结果 | docs/experiments/E34当前解码/代理与时长规模；E33及此前UI/E/Evolution/A/B/S1/T0～T4保留原数据、失败和测量局限 |
 | 发布交接 | docs/releases/v0.1.0-beta.2.md；当前已发布版本清单/风险/授权入口，开发版另见进度 |
 | 旧发行与过程 | docs/releases/旧版本、docs/progress/、demos/standalone-preview/；历史说明不冒充下载或新授权 |
 | 私人原始证据/配置 | verification-runs/和原型evidence/等Git忽略路径；不公开、不覆盖 |
@@ -97,15 +107,19 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 | plugin/eagle.cjs | 唯一素材/标注 API 边界；独立读回，不直接写 metadata.json |
 | plugin/export.cjs、export-work/ | 源视频图片/片段导出、本次暂存及本地保存；由既有后台任务执行，暂存累计1GiB、正常结束清本次，异常/导入未知保留核对，不受预览缓存清理器删除 |
 | plugin/media.cjs | 只读源媒体、分析和 FFmpeg；通过缓存句柄受限写入，不自行淘汰目录 |
-| plugin/long-media.cjs | 长片源帧索引、按需JPEG/PCM分段与源身份核对；复用cache事务 |
-| plugin/segment-reader.cjs、segment-audio.cjs | 分段租约读取与有界保留、共享时钟音频排程；关闭等待实际读取释放 |
-| plugin/cache.cjs | 文件所有权、实际路径、预算、锁、完整提交、淘汰与清理；不操作 UI 或素材元数据 |
-| plugin/preferences.cjs | RAM档位/物理上限、画质与交互偏好、旧格式只读兼容和本地原子保存；不访问素材库或清理媒体缓存 |
+| plugin/long-media.cjs | 源帧索引、JPEG或全IDR AVC/PCM分段与源身份核对；120000帧/64MiB索引上限，复用cache事务 |
+| plugin/avc-access-units.cjs | Annex-B流拆分、AUD/SPS/PPS/IDR框架与8MiB单帧保护；不负责证明完整H264语法或像素正确 |
+| plugin/proxy-decoder.js | 常驻WebCodecs解码、两项在途、受控flush、ImageBitmap所有权及关闭等待；无文件或Eagle访问，硬件偏好不等于实测加速 |
+| plugin/proxy-background.cjs | 前台优先的渐进代理准备、段描述/租约保留、磁盘余量停止和关闭；不把整片图像常驻RAM |
+| plugin/media-wire.cjs | 整数PTS/共同时间基准/显式结束时间的紧凑控制协议，≤6MiB/120000帧、摘要/版本检查及无损重建；不读素材或改源SHA |
+| plugin/segment-reader.cjs、segment-audio.cjs | 受限分段读取/借用归还、共享时钟音频排程；关闭等待实际读取与释放 |
+| plugin/cache.cjs | 文件所有权、实际路径、预算、锁、完整提交、淘汰与清理；完整manifest的有界解析备忘仍每次SHA核对字节，不备忘可变归属记录；不操作UI或素材元数据 |
+| plugin/preferences.cjs | RAM档位/物理上限、画质、JPEG/代理方式与交互偏好、旧格式只读兼容和本地原子保存；不访问素材库或清理媒体缓存 |
 | plugin/process-identity.cjs | Windows进程出生/后代只读证明；独占句柄核对后接管空writer记录；未知时保留，不终止进程、不调用Eagle API |
 | plugin/task-client.cjs、task-worker.cjs、native/task-host.cs | 窗口与后台请求、复用媒体/缓存、Windows互斥与任务组；控制消息不传图片，实际实现见A-07 |
-| plugin/frame-pack.cjs | 校验集中图片包的纯布局；物理文件读写仍归cache |
+| plugin/frame-pack.cjs | 校验集中JPEG/AVC帧包的纯布局及videoEncoding；物理文件读写仍归cache |
 | plugin/frame-index.cjs | 纯时间/源帧映射；整数 PTS、呈现编号与源时间关系 |
-| plugin/player.js | Canvas、Web Audio 与调度；通过缓存读取/预算句柄取得资源，不调用标注 API |
+| plugin/player.js | Canvas、Web Audio、JPEG/代理解码注入与调度；通过缓存读取/预算句柄取得资源，不调用标注API |
 | tests/、scripts/check.cjs | 隔离测试与统一检查；正式代码不依赖 prototypes，开发检查不进入产品 UI |
 
 ### 工作区整理入口

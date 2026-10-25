@@ -1,7 +1,22 @@
 'use strict';
-// Storage layout only: JPEG bytes and source PTS remain unchanged. No I/O.
+// Storage layout only: frame bytes and source PTS remain unchanged. No I/O.
 const FILE = 'frames.pack', BATCH_BYTES = 1024 ** 2;
+function validateEncoding(info) {
+  const encoding = info.videoEncoding;
+  if (encoding === undefined) {
+    if (info.frames.some(frame => typeof frame.file === 'string' && frame.file.endsWith('.avc')))
+      throw Error('AVC帧必须声明明确的视频编码。');
+    return null;
+  }
+  if (!encoding || Object.keys(encoding).sort().join(',') !== 'codec,format' ||
+      encoding.format !== 'annexb-idr-v1' || typeof encoding.codec !== 'string' || !/^avc1\.[0-9a-fA-F]{6}$/.test(encoding.codec))
+    throw Error('视频帧编码版本或AVC编码标识无效。');
+  if (info.frames.some(frame => typeof frame.file !== 'string' || !/^\d{1,12}\.avc$/.test(frame.file)))
+    throw Error('AVC代理只接受独立数字名称的.avc帧。');
+  return encoding;
+}
 function validate(info, limit) {
+  validateEncoding(info);
   const pack = info.framePack;
   if (pack === undefined) {
     if (info.frames.some(f => f.offset !== undefined)) throw Error('未声明图片包却包含帧偏移。');
@@ -20,4 +35,4 @@ function validate(info, limit) {
   if (offset !== pack.bytes) throw Error('图片包长度与全部帧目录不符。');
   return pack;
 }
-module.exports = { FILE, BATCH_BYTES, validate };
+module.exports = { FILE, BATCH_BYTES, validate, validateEncoding };

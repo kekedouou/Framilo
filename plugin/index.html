@@ -102,7 +102,9 @@
         <summary>设置</summary>
         <label for="qualitySelect">预览画质</label>
         <select id="qualitySelect" aria-label="预览画质" disabled><option value="720p">720p</option><option value="1080p">1080p</option><option value="1440p">2K（1440p）</option></select>
-        <p class="muted">保持比例，不放大小视频。JPEG轻量预览。</p>
+        <p class="muted">保持比例，不放大小视频。</p>
+        <label for="playbackBackend">播放方式</label>
+        <select id="playbackBackend" aria-label="播放方式" disabled><option value="proxy">帧内代理</option><option value="jpeg">JPEG 序列</option></select>
         <label class="predecode-option"><input id="forwardPredecode" type="checkbox" checked disabled> 提前解压周围画面</label>
         <label class="predecode-option"><input id="showDrawings" type="checkbox" checked> 显示屏幕标注（H）</label>
         <label class="predecode-option"><input id="drawingToolbar" type="checkbox"> 显示圈画工具条</label>
@@ -159,6 +161,7 @@
   <div id="drawingExit" class="drawing-exit" role="dialog" aria-modal="true" aria-label="未保存圈画" hidden>
     <div><p id="drawingExitMessage"></p><button id="drawingExitSave" type="button">保存后继续</button><button id="drawingExitDiscard" type="button">放弃修改</button><button id="drawingExitReturn" type="button">返回编辑</button></div>
   </div>
+  <script src="proxy-decoder.js"></script>
   <script src="player.js"></script>
   <script src="loop-selection.js"></script>
   <script src="timeline-view.js"></script>

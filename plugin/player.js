@@ -98,6 +98,7 @@
       this.ctx = this.canvas.getContext('2d', { alpha: false, colorSpace: 'srgb' }); if (!this.ctx) throw new Error('无法取得2D画布。');
       this.readAsset = options.readAsset; this.readFrameBatch = options.readFrameBatch;
       this.setMediaTarget = options.setMediaTarget; this.createSegmentAudio = options.createSegmentAudio; this.segmentAudio = null;
+      this.createFrameDecoder = options.createFrameDecoder; this.frameDecoder = null;
       this.cancelMediaReads = options.cancelMediaReads; this.prefetchMedia = options.prefetchMedia;
       this.emit = options.emit || (() => {}); this.onChange = options.onChange || (() => {});
       this.budget = options.budget || new Budget(options.ramBytes === undefined ? RAM_LIMIT : options.ramBytes);
@@ -153,6 +154,7 @@
           residentBytes: ledger.kinds && ledger.kinds['compressed-jpeg'] || 0, limitBytes: this.experimentMode === 'compressed-ram' ? this.compressedLimit : 0 },
         forwardPredecode: this.forwardPredecode, forwardStatus: this.forwardStatus, forwardIssue: this.forwardIssue,
         loadTimings: this.loadTimings ? { ...this.loadTimings } : null,
+        frameDecoder: this.frameDecoder ? this.frameDecoder.snapshot() : null,
         transport: this.transportSnapshot(),
         memoryScope: 'managed decoded RGBA, audio, compressed/copy buffers and in-flight reservations; browser/GPU/internal decoder copies excluded' };
     }
@@ -306,6 +308,7 @@
       this.compressedStats = { warmedBytes: 0, warmedFrames: 0, hits: 0, misses: 0, warmMs: 0, admittedFrames: 0, evictions: 0 };
       this.lastSubmission = null; this.observedSerial = this.submissionSerial; this.observedFrame = null;
       const oldContext = this.audioContext; this.audioContext = null; this.audioBuffer = null;
+      const oldFrameDecoder = this.frameDecoder; this.frameDecoder = null;
       const oldSegmentAudio = this.segmentAudio; this.segmentAudio = null;
       this.budget.release(this.audioBudget); this.audioBudget = null; this.info = null;
       ++this.forwardToken; this.preparePlan = null; this.forwardStatus = this.forwardPredecode ? 'waiting' : 'disabled';
@@ -317,12 +320,18 @@
       const operation = Promise.resolve().then(async () => {
         let context = null, reservation = null, transferred = false;
         try {
+          if (oldFrameDecoder) await oldFrameDecoder.close();
           if (oldSegmentAudio) await oldSegmentAudio.close();
           if (oldContext) await this._closeContext(oldContext);
           // Uncancellable work keeps its reservation; do not overlap images from two materials.
           await Promise.allSettled(oldLoads.concat(oldTasks)); if (!this._valid(epoch)) return { status: 'superseded' };
           this.index.validateIndex(rawInfo); const info = freezeInfo(rawInfo);
-          this.info = info; this.canvas.width = info.width; this.canvas.height = info.height;
+          this.info = info;
+          if (info.videoEncoding) {
+            if (!this.createFrameDecoder) throw new Error('当前宿主没有帧内代理解码能力，请在设置中切换JPEG序列。');
+            this.frameDecoder = this.createFrameDecoder({ width: info.width, height: info.height });
+          }
+          this.canvas.width = info.width; this.canvas.height = info.height;
           if (info.audio && info.streaming) {
             if (!this.createSegmentAudio) throw new Error('缺少分段音频读取能力。');
             context = this.env.createAudioContext({ sampleRate: 48000 }); this.contexts.add(context); this.audioContext = context;
@@ -831,7 +840,7 @@
           }
           if (role === 'forward-fill' && (!this.forwardPredecode || holder.forwardToken !== this.forwardToken) && (!this.target || this.target.index !== ordinal)) return null;
           const delay = this.decodeDelayMs, decodeStartedAt = this.env.now();
-          bitmap = await this.env.decodeImage(bytes);
+          bitmap = this.frameDecoder ? await this.frameDecoder.decode(bytes, frame) : await this.env.decodeImage(bytes);
           const decodeEndedAt = this.env.now();
           // Test delay models service that has already entered the non-cancellable decoder.
           // An obsolete result can populate this material's bounded LRU, never its canvas.
@@ -1086,6 +1095,7 @@
       this._clearTarget('disposed'); this._clearCache(); this._clearCompressed(); this.audioBuffer = null; this.budget.release(this.audioBudget); this.audioBudget = null;
       this._change('disposed');
       this.disposePromise = (async () => {
+        if (this.frameDecoder) { await this.frameDecoder.close(); this.frameDecoder = null; }
         if (this.segmentAudio) { await this.segmentAudio.close(); this.segmentAudio = null; }
         await Promise.allSettled(Array.from(this.contexts).map(context => this._closeContext(context)));
         await Promise.allSettled(Array.from(this.loads).concat(Array.from(this.tasks.values()).map(task => task.promise)));

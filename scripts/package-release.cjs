@@ -6,7 +6,7 @@ const VERSION = '0.1.0-beta.2', NAME = 'eagle-video-analysis-' + VERSION + '-win
 const ID = 'EVAVIDEOANALYSISBETA20261014', ROOT = path.resolve(__dirname, '..'), LIMIT = 2 * 1024 ** 2;
 const RUNTIME = Object.freeze(['manifest.json', 'index.html', 'styles.css', 'graphite.css', 'interface-icons.js', 'settings-view.js','graphite-shell.js', 'timeline-strip.js', 'logo.png', 'app.js', 'window-drag.cjs', 'ui.js', 'loop-selection.js', 'timeline-view.js', 'screen-gestures.js', 'screen-gesture-ui.js', 'context-wheel.js', 'player.js',
   'session.cjs', 'eagle.cjs', 'drawing-erase.js', 'drawing-model.js', 'drawing-ui.js', 'drawing-session.cjs', 'drawing-store.cjs', 'export.cjs', 'media.cjs', 'cache.cjs', 'process-identity.cjs', 'frame-index.cjs', 'frame-pack.cjs',
-  'diagnostics.cjs', 'preferences.cjs', 'preview-profile.cjs', 'task-client.cjs', 'task-worker.cjs', 'long-media.cjs', 'segment-reader.cjs', 'segment-audio.cjs',
+  'diagnostics.cjs', 'preferences.cjs', 'preview-profile.cjs', 'task-client.cjs', 'task-worker.cjs', 'long-media.cjs', 'segment-reader.cjs', 'segment-audio.cjs', 'proxy-decoder.js', 'avc-access-units.cjs', 'media-wire.cjs', 'proxy-background.cjs',
   'native/task-host.cs', 'native/task-host.local.exe', 'native/task-host.local.json']);
 const NAMES = [...RUNTIME, 'README.md', 'CHANGELOG.md', 'BUILD-INFO.json'].sort();
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
