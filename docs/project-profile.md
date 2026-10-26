@@ -1,5 +1,8 @@
 # 项目说明
 
+当前：E-37 三处菜单体验修正；按用户要求暂停E-36播放核心后续开发。颜色与橡皮换位，颜色二级轮盘位于下半圈；属性/颜色面板对齐触发按钮右侧；设置子菜单中心对齐父项，窗口边缘限位。真实Eagle体验待验。
+
+
 当前E-36拖动断连修复：用户确认“任务负责人异常退出：0”发生于拖动；隔离真实Windows管道复现密集位置消息使32项队列超时断开。位置/两类记录优先级改为各通道一条在途＋一条最新替代，worker接收后回执，不等待媒体完成；准确帧和取消请求保持原路径。5000次突发及Eagle纯Node16协议检查通过，真实Eagle窗口拖动仍待确认。此前取消/末帧与JPEG整片策略修复保留。
 
 
@@ -112,7 +115,7 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 | plugin/app.js | 宿主生命周期、依赖装配和事件接线，不承载媒体、缓存、标注业务 |
 | plugin/ui.js、styles.css | 原始控件/输入路由、会话状态；正式可见布局由graphite模块承载，默认不显示帧数/秒数、带输入焦点保护的空格操作；只向会话发出操作，不直接访问文件或 Eagle 素材/标注 API；正式页面无测试控制 |
 | plugin/graphite-shell.js、graphite.css、interface-icons.js | 视频优先布局、直角透明材质、图标、左工具/右记录、缩略图租约和标注输入位置；不访问素材库 |
-| plugin/settings-view.js | 原设置控件的分级展示；子菜单跟随父项，保留原应用/即时生效写入端 |
+| plugin/settings-view.js | 原设置控件的分级展示；子菜单中心跟随父项并在视口边缘限位，保留原应用/即时生效写入端 |
 | plugin/timeline-strip.js | 灰色带、蓝光标、白标注、内嵌片段及真实帧刻度的正式呈现 |
 | plugin/window-drag.cjs | 宿主窗口恢复和拖动调度，不改播放核心 |
 | plugin/loop-selection.js | UI层短/长按与端点草稿，只通过Session预览/确认；无文件、缓存或Eagle API访问 |

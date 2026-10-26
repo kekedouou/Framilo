@@ -69,6 +69,20 @@
       Object.assign(el.drawingTextDelete.style, { left: left + boxWidth - 9 + 'px', top: Math.max(2, top - 8) + 'px' });
       el.drawingTextDelete.disabled = el.drawingText.disabled;
     }
+    function positionPopovers() {
+      if (el.drawingPanel.hidden || !el.drawingPanel.closest?.('[data-graphite]')) return;
+      const base = el.drawingPanel.getBoundingClientRect();
+      for (const [panel, trigger] of [[el.drawingProperties, el.drawingOptions], [el.drawingPalette, el.drawingColorButton]]) {
+        if (panel.hidden) continue;
+        const r = trigger.getBoundingClientRect();
+        panel.style.maxHeight = Math.max(40, win.innerHeight - 88) + 'px';
+        const top = Math.max(44, Math.min(win.innerHeight - 44 - panel.offsetHeight, r.top + r.height / 2 - panel.offsetHeight / 2));
+        panel.style.top = (top - base.top - el.drawingPanel.clientTop) + 'px';
+        panel.style.bottom = 'auto';
+      }
+    }
+    on(el.drawingPanel, 'scroll', positionPopovers, true);
+    on(win, 'resize', () => win.requestAnimationFrame?.(positionPopovers));
     function properties() {
       const o = current();
       for (const [k, button] of Object.entries(buttons)) button.setAttribute('aria-pressed', String(k === tool));
@@ -83,6 +97,8 @@
       el.drawingDelete.hidden = !o || !!textDraft && !el.drawingText.value.trim(); el.drawingDelete.disabled = !editor || !o;
       el.drawingOptions.setAttribute('aria-expanded', String(!el.drawingProperties.hidden));
       el.drawingColorButton.setAttribute('aria-expanded', String(!el.drawingPalette.hidden));
+      positionPopovers();
+      if (!el.drawingProperties.hidden || !el.drawingPalette.hidden) win.requestAnimationFrame?.(positionPopovers);
     }
     function closeProperties() { el.drawingProperties.hidden = el.drawingPalette.hidden = true; properties(); }
     function handles(o) {
@@ -430,8 +446,8 @@
         tap: 'save', color: current()?.color || styles.color,
         items: [{ id: 'types', label: '类型', symbol: '✎', disabled: !editable,
           children: [['pen','手写','✎'],['arrow','箭头','↗'],['rect','矩形','▭'],['ellipse','椭圆','○'],['text','画面文字','T']].map(([id,label,symbol]) => ({ id, label, symbol, selected: tool === id, disabled: !editable })) },
-          { id: 'color', label: '颜色', symbol: '●', disabled: !editable || tool === 'eraser' },
           { id: 'eraser', label: '橡皮', symbol: '◇', selected: tool === 'eraser', disabled: !editable },
+          { id: 'color', label: '颜色', symbol: '●', disabled: !editable || tool === 'eraser' },
           { id: 'undo', label: '撤销', symbol: '↶', disabled: !editable || !editor.canUndo() && !textDraft && !work }] };
     }
     function menuCommand(id, value) {

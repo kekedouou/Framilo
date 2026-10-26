@@ -26,7 +26,7 @@
     function menuCenter(){const r=screen.getBoundingClientRect();return{x:r.left+parseFloat(menu.style.left),y:(r.top||0)+parseFloat(menu.style.top)};}
     function choose(index){for(let i=0;i<buttons.length;i++){const active=items[index]?.id===buttons[i].getAttribute('data-wheel-command');if(buttons[i].getAttribute('data-active')!==String(active)){buttons[i].setAttribute('data-active',String(active));wedges[i]?.setAttribute('data-active',String(active));}}}
     function direction(e,p=press){if(!p||!items.length)return null;const at=p.held||childStart?menuCenter():p,dx=e.clientX-at.x,dy=e.clientY-at.y,dist=Math.hypot(dx,dy);
-      if(childStart&&dist>83.2){items=children;const angle=Math.atan2(dy,dx);if(angle>=0)return null;return Math.min(children.length-1,Math.floor((angle+Math.PI)/Math.PI*children.length));}
+      if(childStart&&dist>83.2){items=children;const angle=Math.atan2(dy,dx);const lower=branch?.id==='color';if(lower?angle<0:angle>=0)return null;return Math.min(children.length-1,Math.floor((angle+(lower?0:Math.PI))/Math.PI*children.length));}
       if(childStart)items=rootItems;return wheelIndex(dx,dy,items.length);}
     function show(values,at){const ctx=getContext();if(!ctx.enabled)return reset();if(!values.length)return;
       remove(ringListeners);remove(panelListeners);opened={epoch:ctx.epoch,mode:ctx.mode};items=values;ring.replaceChildren();buttons=[];wedges=[];panel.hidden=true;
@@ -40,7 +40,7 @@
       }
       rootItems.forEach((item,i)=>add(item,i*Math.PI*2/rootItems.length-Math.PI/2,Math.PI*2/rootItems.length,33.6,80.8));
       // Build each outer branch once per opening; switching never rebuilds the root or SVG icons.
-      for(const parent of rootItems){const values=childValues(parent);if(!values?.length||parent.disabled)continue;const layer=make('div','context-wheel-branch');layer.hidden=true;layer.setAttribute('data-branch',parent.id);ring.appendChild(layer);branches.set(parent.id,{layer,values});values.forEach((item,i)=>add(item,-Math.PI+(i+.5)*Math.PI/values.length,Math.PI/values.length,84.8,124,layer));}
+      for(const parent of rootItems){const values=childValues(parent);if(!values?.length||parent.disabled)continue;const layer=make('div','context-wheel-branch');layer.hidden=true;layer.setAttribute('data-branch',parent.id);ring.appendChild(layer);branches.set(parent.id,{layer,values});values.forEach((item,i)=>add(item,(parent.id==='color'?0:-Math.PI)+(i+.5)*Math.PI/values.length,Math.PI/values.length,84.8,124,layer));}
       menu.setAttribute('data-closing','false');menu.setAttribute('data-open','true');menu.setAttribute('aria-hidden','false');menu.inert=false;menu.hidden=false;choose(null);
     }
     function childValues(item){return item.children||(item.id==='color'?['#ffd54f','#ff5252','#69d785','#65b6ff','#ffffff','#222222'].map((color,i)=>({id:'color-'+i,label:color,color})).concat({id:'custom-color',label:'自定义颜色'}):null);}
