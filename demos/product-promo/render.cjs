@@ -1,0 +1,26 @@
+'use strict';
+const fs=require('fs'),path=require('path'),http=require('http'),{spawn}=require('child_process'),{once}=require('events');
+const root=path.resolve(__dirname,'../..'),out=__dirname;
+const {scratch}=require('../../tests/support/annotation-scratch.cjs');
+const temp=scratch('product-demo');const wait=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{let browser,encoder,ws,server;const errors=[];try{
+server=http.createServer((req,res)=>{let name=decodeURIComponent(req.url.split('?')[0]),file;
+if(name==='/')file=path.join(out,'index.html');else if(name==='/plugin/app.js')file=path.join(out,'fixture.js');else if(/^\/plugin\/[a-z0-9.-]+$/.test(name))file=path.join(root,name);else{res.writeHead(404).end();return;}
+try{res.setHeader('Content-Type',file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css':'text/javascript; charset=utf-8');res.end(fs.readFileSync(file));}catch(e){res.writeHead(404).end();}});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));
+browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--no-first-run','--disable-background-networking','--disable-component-update','--disable-sync','--disable-extensions','--no-default-browser-check','--remote-debugging-port=0','--user-data-dir='+path.join(temp.root,'profile'),'--window-size=1600,900','about:blank'],{windowsHide:true,stdio:'ignore'});
+let port;for(let i=0;i<150&&!port;i++){try{port=fs.readFileSync(path.join(temp.root,'profile/DevToolsActivePort'),'utf8').trim().split(/\r?\n/);}catch{}if(!port)await wait(100);}if(!port)throw Error('Browser unavailable');
+ws=new WebSocket('ws://127.0.0.1:'+port[0]+port[1]);await new Promise((r,j)=>{ws.onopen=r;ws.onerror=j;});let id=0;const pending=new Map();ws.onmessage=e=>{const v=JSON.parse(e.data);if(v.id){const p=pending.get(v.id);pending.delete(v.id);if(v.error)p.j(Error(JSON.stringify(v.error)));else p.r(v.result);}else if(v.method==='Runtime.exceptionThrown')errors.push(v.params);};
+const call=(method,params={},sessionId)=>new Promise((r,j)=>{const n=++id;pending.set(n,{r,j});ws.send(JSON.stringify({id:n,method,params,sessionId}));});
+const target=await call('Target.createTarget',{url:'about:blank'}),{sessionId}=await call('Target.attachToTarget',{targetId:target.targetId,flatten:true});
+await call('Runtime.enable',{},sessionId);await call('Emulation.setDeviceMetricsOverride',{width:1600,height:900,deviceScaleFactor:1,mobile:false},sessionId);await call('Page.navigate',{url:'http://127.0.0.1:'+server.address().port},sessionId);
+const evaluate=async expression=>{const r=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},sessionId);if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
+for(let i=0;i<100;i++){if(await evaluate('!!document.querySelector("iframe")?.contentWindow?.demo'))break;await wait(100);}if(errors.length)throw Error(JSON.stringify(errors));
+const preview=process.argv.includes('--preview');
+if(!preview){encoder=spawn('D:/Tools/ffmpeg-9.0.2-essentials_build/bin/ffmpeg.exe',['-y','-v','error','-f','image2pipe','-framerate','30','-vcodec','mjpeg','-i','pipe:0','-an','-c:v','libx264','-preset','fast','-crf','18','-pix_fmt','yuv420p','-movflags','+faststart',path.join(out,'functional-demo-v1.mp4')],{windowsHide:true,stdio:['pipe','ignore','pipe']});encoder.stderr.on('data',b=>process.stderr.write(b));}
+const points=preview?[0,6,11,19.5,25]:Array.from({length:900},(_,i)=>i/30);
+for(let i=0;i<points.length;i++){await evaluate('window.render('+points[i]+')');const r=await call('Page.captureScreenshot',{format:'jpeg',quality:92,captureBeyondViewport:false},sessionId),bytes=Buffer.from(r.data,'base64');if(preview)fs.writeFileSync(path.join(out,'preview-'+i+'.jpg'),bytes);else{if(!encoder.stdin.write(bytes))await once(encoder.stdin,'drain');if(i%150===0)console.log('Rendered '+i+'/900');}}
+if(encoder){encoder.stdin.end();const [code]=await once(encoder,'close');if(code!==0)throw Error('Encoder exit '+code);}
+fs.writeFileSync(path.join(out,preview?'preview-check.json':'render-check.json'),JSON.stringify({frames:points.length,fps:30,duration:preview?null:30,width:1600,height:900,errors,source:'Current plugin UI with synthetic session and procedural energy arc; no Eagle/media performance measurement'},null,2));
+await call('Browser.close');
+}finally{ws?.close();if(browser&&browser.exitCode===null){await wait(1200);if(browser.exitCode===null){browser.kill();await once(browser,'close');}}if(encoder&&encoder.exitCode===null)encoder.kill();if(server)await new Promise(r=>server.close(r));temp.clean();}})().catch(e=>{console.error(e);process.exitCode=1;});
