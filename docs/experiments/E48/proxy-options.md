@@ -2,6 +2,8 @@
 
 2026-10-29。研究建议，未采用新格式；本机未进行本轮新格式编码计时，不承诺倍率。现行范围见[计划](plan.md)。
 
+用户随后明确“关于代理，目前就先不做调整”。以下仅保留研究依据，不作为下一轮自动执行的授权。
+
 ## 当前真正做了什么
 
 whole-proxy.cjs的配方已是完整H.264/MP4全I（g=1、bf=0），每帧独立；CPU为ultrafast/CRF20，NVIDIA为p1/constQP20。它并非普通长GOP视频。GPU配方仍先CPU解原片、CPU scale/format，然后交NVENC编码；播放硬解又需要读回CPU，经管道交UI并上传WebGL，并非GPU表面直接显示。

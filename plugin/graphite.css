@@ -18,6 +18,7 @@
 
 /* Override legacy ruler spacing and disk backing; retain only the individual sectors. */
 .workspace[data-graphite] .timeline-area{padding-top:0}
+.workspace[data-graphite] .timeline:focus{outline:none}
 .context-wheel-ring{background:none;border:0;box-shadow:none;border-radius:0}
 .shell-editor textarea{font-family:inherit;font-size:14px;line-height:1.7}
 .context-wheel-wedge[data-active="true"]{background:var(--highlight)}
