@@ -11,6 +11,7 @@ async function main() {
     assert.deepEqual(preparationWindow(rows,3,3).order,[3,4,5],'Real time proximity, not average FPS or ordinal distance.');
     assert.deepEqual(preparationWindow(rows,0,3).order,[0,1,2]);assert.deepEqual(preparationWindow(rows,5,3).order,[5,4,3]);
     assert.equal(preparationWindow(rows,3,100).order.length,rows.length);
+    assert.deepEqual(preparationWindow(rows,3,100,2,4).order,[3,4,2],'The native shared window respects loop bounds without slicing the source index.');
   }
   {
     const gate=deferred();gate.file='f15.jpg'; const h=harness({...opts,readGate:gate});
@@ -92,6 +93,15 @@ async function main() {
     await frames(h,2);assert.equal(h.events.filter(e=>e.phase==='image-work-start').length,work,'Quiet delay protects busy dragging.');
     await frames(h,100);assert.equal(h.player.preparePlan.center,40);assert(h.player.cache.has(39)&&h.player.cache.has(41),'A stationary held cursor fills both sides without requiring release.');
     await h.close();
+  }
+  {
+    const h=harness({...opts,forwardPredecode:false});await h.load(sample('hot-drag',null,80));
+    await h.settle(h.player.seek(1,{kind:'release',final:true}));h.player.setForwardPredecode(true);
+    const before=h.events.filter(e=>e.phase==='image-work-start'&&e.role==='forward-fill').length;
+    await h.settle(h.player.seek(1,{kind:'rapid',final:false}));
+    assert.equal(h.player.target.cacheStateAtInput,'decoded');
+    assert(h.events.filter(e=>e.phase==='image-work-start'&&e.role==='forward-fill').length>before,'A completed RAM hit leaves room for surrounding decode without the cold-drag 80ms hold.');
+    assert(h.maxDecodes()<=2);await h.close();
   }
   {
     const h=harness({...opts,ramBytes:300000});await h.load(sample('small',null,80));await frames(h,100);

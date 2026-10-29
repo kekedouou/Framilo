@@ -1,5 +1,13 @@
 # 技术架构与模块边界
 
+## E48 闲时前读补齐
+
+JPEG沿用现有准备窗口、预算与单次forward-fill；仅已完成且cacheStateAtInput为decoded的目标豁免80ms连续拖动静默期。未完成/冷拖动仍保留保护，旧分段实验分支不复活。
+
+native-player原先仅播放_tick有短前读，暂停/拖动没有通用邻域填充，记录缩略图读取可能顺带增长缓存。现以同一reader的带kind所有权及单次延后任务补附近源时间窗口，复用player.preparationWindow可选循环上下限。热命中不取消forward-fill，冷目标/播放立即抢占，代理接管/关闭令旧结果失效；后台只入RAM、不绘制、不改变源序号。预留在途及前台像素空间，最多4096邻域帧、受原RAM预算约束；仅淘汰窗口外帧，窗口收敛后停止，失败帧不无限重试。缩略图优先且异常也归还reader所有权。
+
+不新增解码器、线程、设置或持久化字段。代理配方与硬件播放链未变；GPU编码并不代表转码全程GPU，[本轮研究](experiments/E48/proxy-options.md)独立于当前架构批准。
+
 ## E47 热路径小范围优化
 
 Budget以kind增量统计reserve/shrink/release，snapshot只复制类别汇总而不遍历每个缓存token；返回值可修改但不影响内部账本。native-player同步热帧不再先发seeking通知，仅提交一次，重复源帧不上传/绘制，非空闲读取才发取消；未命中与JPEG异步路径仍及时公开未就绪状态。

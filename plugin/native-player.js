@@ -9,19 +9,20 @@
    this.playbackRate=1;this.loopStart=null;this.loopEnd=null;this.loopEnabled=false;this.forwardPredecode=!!o.forwardPredecode;this.disposed=false;this.lastIssue=null;this.lastErrorCode=null;
    this.now=o.env?.now||(()=>performance.now());this.raf=o.env?.raf||(fn=>requestAnimationFrame(fn));this.caf=o.env?.caf||(id=>cancelAnimationFrame(id));
    this.audio=null;this.audioResume=null;this.reader=null;this.readerBusy=false;this.playToken=0;this.playIntent=0;this.thumbQueue=[];this.thumbCache=new Map();this.thumbBytes=0;this.playReadMs=20;this.playRequest=0;this.switchTask=null;this.leases=new Set();this.canvasLeases=new WeakMap();
+   this.fillFailures=new Set();this.fillStatus='idle';this.forwardIssue=null;
   }
   _emit(type,extra={}){try{this.o.emit?.({type,at:this.now(),epoch:this.epoch,...extra});}catch(_){} }
   _change(){if(!this.disposed)try{this.o.onChange?.(this.snapshot());}catch(_){} }
-  _beginRead(reader){const lease={reader,at:this.now()};this.readOwner=lease;this.readerBusy=true;return lease;}
+  _beginRead(reader,kind='foreground'){const lease={reader,kind,at:this.now()};this.readOwner=lease;this.readerBusy=true;return lease;}
   _endRead(lease){if(this.readOwner===lease){this.readOwner=null;this.readerBusy=false;}}
   snapshot(){return {state:this.state,time:this.time,frameId:this.info?.frames[this.currentIndex]?.id??null,frameOrdinal:this.currentIndex,frameCount:this.info?.frames.length||0,targetTime:this.targetTime,pendingTargets:this.pendingTargets,frameHeld:this.frameHeld||this.pendingTargets>0,
    budget:this.budget.snapshot(),cacheBytes:this.budget.used,cachePeakBytes:this.budget.peak,activeImageTasks:this.readerBusy?1:0,drawCount:this.drawCount,epoch:this.epoch,
    audioAvailable:!!this.audio,playbackRate:this.playbackRate,transport:this.transportSnapshot(),lastIssue:this.lastIssue,lastErrorCode:this.lastErrorCode,
-   frameDecoder:this.reader?.snapshot(),native:true,proxyActive:!!this.proxyActive,forwardPredecode:this.forwardPredecode,forwardStatus:this.readerBusy?'preparing':'idle',memoryScope:'managed YUV/RGBA frames, thumbnails, render-surface allowance and native GOP reservation; OS audio and decoder/driver internal buffers excluded'};}
+   frameDecoder:this.reader?.snapshot(),native:true,proxyActive:!!this.proxyActive,forwardPredecode:this.forwardPredecode,forwardStatus:this.readerBusy?'preparing':this.fillStatus,forwardIssue:this.forwardIssue,memoryScope:'managed YUV/RGBA frames, thumbnails, render-surface allowance and native GOP reservation; OS audio and decoder/driver internal buffers excluded'};}
   auxiliaryBudget(){return {budget:this.budget,evict:()=>this._evict()};}
   _evict(){for(const [n,e] of this.cache){if(n===this.currentIndex)continue;this.cache.delete(n);this.budget.release(e.token);this.revision++;return true;}return false;}
-  _entry(n,r){if(this.cache.has(n))return this.cache.get(n);const bytes=r.pixels.byteLength;
-   const token=this.budget.reserve(bytes+256,'native-frame-pixels',()=>this._evict());
+  _entry(n,r,reserved){if(this.cache.has(n)){if(reserved)this.budget.release(reserved);return this.cache.get(n);}const bytes=r.pixels.byteLength;
+   const token=reserved||this.budget.reserve(bytes+256,'native-frame-pixels',()=>this._evict());if(reserved)this.budget.shrink(token,bytes+256,'native-frame-pixels');
    const image=this.renderer?null:new ImageData(new Uint8ClampedArray(r.pixels.buffer,r.pixels.byteOffset,bytes),r.metrics.width,r.metrics.height),entry={image,token,pixels:r.pixels,header:r.metrics};
    this.cache.set(n,entry);this.revision++;return entry;
   }
@@ -48,7 +49,7 @@
     // The cached/displayed frame is still the same source identity. Never restore an old target.
     if(version===this.serial&&!this.pendingTargets&&this.state==='paused')this._draw(n,this._entry(n,r));this._change();
    }finally{if(candidate)await this.runtime.closeReader(candidate);this.candidateReader=null;if(extra)this.budget.release(extra);}})();
-   try{await this.switchTask;}finally{this.switchTask=null;if(retry&&!this.disposed&&!this.pendingTargets)this._takeProxy().catch(()=>{});}
+   try{await this.switchTask;}finally{this.switchTask=null;this.fillFailures.clear();this._scheduleFill();if(retry&&!this.disposed&&!this.pendingTargets)this._takeProxy().catch(()=>{});}
   }
   async seek(time,settings={}){
    if(this.disposed||!this.info)return {status:'superseded'};
@@ -61,26 +62,27 @@
    if(this.disposed||version!==this.serial)return {status:'superseded'};
    const began=settings.inputAt??this.now(),frame=this.info.frames[n];if(settings.final)this._primeAudio(frame.time);this._emit('request',{phase:'input',requestId:version,kind:settings.kind||'seek',frameId:frame.id,frameOrdinal:n,ptsTicks:frame.ptsTicks,timeBase:frame.timeBase,sourceTime:frame.time,targetTime:this.targetTime,inputAt:began,final:!!settings.final,cacheStateAtInput:cached?'decoded':'miss'});
    if(this.disposed||version!==this.serial)return {status:'superseded'};
-   if(cached){if(this.readerBusy){this.reader.cancel();this.readOwner=null;this.readerBusy=false;}const submit=this.now(),repeated=n===this.currentIndex;
+   if(cached){if(this.readerBusy&&this.readOwner?.kind!=='forward-fill'){this.reader.cancel();this.readOwner=null;this.readerBusy=false;}const submit=this.now(),repeated=n===this.currentIndex;
     if(!repeated)this._draw(n,cached);else{this.frameHeld=false;this.lastIssue=null;this.lastErrorCode=null;}
-    this.pendingTargets=0;this.state='paused';this._change();this._emit('reused',{requestId:version,inputAt:began,frameId:frame.id,time:frame.time,readyAt:began,submitStartedAt:submit,drawAt:repeated?null:this.now(),repeatedFrame:repeated});if(this.runtime.proxyAsset())this._takeProxy().catch(()=>{});return {status:'reused',frameId:frame.id};}
+    this.pendingTargets=0;this.state='paused';this._change();this._emit('reused',{requestId:version,inputAt:began,frameId:frame.id,time:frame.time,readyAt:began,submitStartedAt:submit,drawAt:repeated?null:this.now(),repeatedFrame:repeated});this._scheduleFill();if(this.runtime.proxyAsset())this._takeProxy().catch(()=>{});return {status:'reused',frameId:frame.id};}
    // Keep the last confirmed pixels while the new intent is pending. Its source
    // identity stays unchanged and frameHeld prevents treating it as the target.
    if(this.currentIndex===null)this.canvas.style.visibility='hidden';
+   if(this.readerBusy){this.reader.cancel();this.readOwner=null;this.readerBusy=false;}
    const reader=this.reader,lease=this._beginRead(reader),startedAt=this.now();this._emit('stage-begin',{requestId:version,phase:'native',startedAt});let r;
    try{r=await reader.request(n);}catch(failure){r={status:'error',error:failure?.message||String(failure)};}
    finally{this._endRead(lease);this._emit('stage',{requestId:version,phase:'native',startedAt});}
    if(this.disposed||version!==this.serial){this._emit('superseded',{requestId:version});return {status:'superseded'};}
    if(r.status!=='exact'){this._emit('error',{requestId:version});this.pendingTargets=0;this.state='paused';this.lastIssue=r.error||'目标画面暂未准备完成，请重试。';this.lastErrorCode='NATIVE_FRAME_FAILED';this._change();return {status:'error',error:this.lastIssue};}
    const readyAt=this.now(),entry=this._entry(n,r),submit=this.now();this._draw(n,entry);this.pendingTargets=0;this.state='paused';this.lastIssue=null;this._change();
-   this._emit('draw',{requestId:version,kind:settings.kind||'seek',frameId:frame.id,time:frame.time,inputAt:began,readyAt,submitStartedAt:submit,drawAt:this.now(),source:'native',nativeMetrics:r.metrics});this._drainThumbnails();if(this.runtime.proxyAsset())this._takeProxy().catch(()=>{});
+   this._emit('draw',{requestId:version,kind:settings.kind||'seek',frameId:frame.id,time:frame.time,inputAt:began,readyAt,submitStartedAt:submit,drawAt:this.now(),source:'native',nativeMetrics:r.metrics});this._drainThumbnails();this._scheduleFill();if(this.runtime.proxyAsset())this._takeProxy().catch(()=>{});
    return {status:'drawn',frameId:this.info.frames[n].id,actualPtsTicks:this.info.frames[n].ptsTicks};
   }
   step(delta){const start=this.pendingTargets?this.index.frameAt(this.info.frames,this.targetTime):this.currentIndex??0;const n=Math.max(0,Math.min(this.info.frames.length-1,start+delta));return this.seek(this.info.frames[n].time,{index:n,kind:'step',final:true});}
   pause(notify=true,keepIntent=false){if(!keepIntent)this.playIntent++;this.playToken++;this.audioSeekCancel?.();if(this.rafId!==undefined)this.caf(this.rafId);this.rafId=undefined;
    const wasPlaying=this.state==='playing';this.audio?.pause();
    if(wasPlaying){this.audioResume=this.audio&&!this.audio.seeking&&!this.audio.ended?{ordinal:this.currentIndex,time:this.audio.currentTime}:null;this.reader?.cancel();this.readOwner=null;this.readerBusy=false;}
-   this.anchor=null;if(!this.disposed&&this.info&&wasPlaying)this.state='paused';if(notify)this._change();return Promise.resolve({status:'paused'});}
+   this.anchor=null;if(!this.disposed&&this.info&&wasPlaying)this.state='paused';if(notify)this._change();this._scheduleFill();return Promise.resolve({status:'paused'});}
   async play(){if(this.disposed||!this.info)return {status:'superseded'};const intent=++this.playIntent;await this.pause(false,true);if(this.disposed||intent!==this.playIntent)return {status:'superseded'};if(this.pendingTargets){const r=await this.seek(this.targetTime,{final:true,keepPlayIntent:true});if(!['drawn','reused'].includes(r.status)||this.disposed||intent!==this.playIntent)return {status:'superseded'};}
    // Foreground playback owns the decoder; a record thumbnail must not delay it.
    this.serial++;this.reader.cancel();this.readOwner=null;this.readerBusy=false;
@@ -138,7 +140,35 @@
     }).catch(e=>{if(!this.disposed&&token===this.playToken){this._emit('error',{requestId});this.lastIssue=e.message;this.pause();}}).finally(()=>{this._endRead(lease);if(!this.disposed&&token===this.playToken&&serial===this.serial&&this.state==='playing'){if(this.rafId!==undefined)this.caf(this.rafId);this._tick(token);}});}
    this.rafId=this.raf(()=>this._tick(token));
   }
-  setForwardPredecode(on){this.forwardPredecode=!!on;this._change();return {status:'applied'};}
+  _scheduleFill(){if(this.fillTimer!==undefined||this.fillTask||!this.forwardPredecode||this.disposed||!this.reader||this.state!=='paused'||this.frameHeld||this.pendingTargets||this.readerBusy||this.switchTask||this.thumbRunning)return;
+   this.fillTimer=setTimeout(()=>{this.fillTimer=undefined;this._fillAround();},0);
+  }
+  _fillAround(){if(this.fillTask||!this.forwardPredecode||this.disposed||this.state!=='paused'||this.frameHeld||this.pendingTargets||this.readerBusy||this.switchTask||this.thumbRunning)return;
+   // The same reader supplies foreground and idle work. Fill a finite nearby
+   // window, leaving space for an immediately requested picture; never evict
+   // another member of that window just to decode it again at the next tick.
+   const center=this.currentIndex,current=this.cache.get(center);if(!current)return;
+   const ledger=this.budget.snapshot(),bytes=current.pixels.byteLength+256,maximum=this.info.width*this.info.height*4+256;
+   const fixed=ledger.used-(ledger.kinds['native-frame-pixels']||0),capacity=Math.max(1,Math.min(4096,Math.floor((ledger.limit-fixed-maximum*2)*.75/bytes)));
+   const first=this.loopEnabled?this.loopStart:0,last=this.loopEnabled?this.loopEnd:this.info.frames.length-1;
+   if(center<first||center>last)return;
+   const key=[center,capacity,first,last].join(':');if(this.fillPlan?.key!==key)this.fillPlan={...root.EVAPlayer.preparationWindow(this.info.frames,center,capacity,first,last),key};
+   const plan=this.fillPlan,n=plan.order.find(i=>!this.cache.has(i)&&!this.fillFailures.has(i));
+   if(n===undefined){this.fillStatus=this.fillFailures.size?'waiting':'ready';return;}
+   while(this.budget.limit-this.budget.used<maximum*2){let victim=null;for(const i of this.cache.keys())if(i!==this.currentIndex&&(i<plan.start||i>plan.end)){victim=i;break;}
+    if(victim===null){this.fillStatus='budget';return;}const old=this.cache.get(victim);this.cache.delete(victim);this.budget.release(old.token);this.revision++;
+   }
+   const reserved=this.budget.reserve(maximum,'native-fill-pending'),reader=this.reader,lease=this._beginRead(reader,'forward-fill');this.fillStatus='preparing';
+   this.fillTask=Promise.resolve().then(async()=>{let transferred=false;try{
+     if(this.disposed||this.reader!==reader||this.readOwner!==lease||!this.forwardPredecode||this.state!=='paused'||this.pendingTargets)return;
+     const r=await reader.request(n);
+     if(this.disposed||this.reader!==reader||this.readOwner!==lease||!this.forwardPredecode||this.state!=='paused'||this.pendingTargets)return;
+     if(r.status==='exact'){this._entry(n,r,reserved);transferred=true;}
+     else if(!['superseded','closed'].includes(r.status)){this.fillFailures.add(n);this.forwardIssue=r.error||'周围画面暂未准备完成。';}
+    }catch(e){if(!this.disposed&&this.reader===reader&&this.readOwner===lease){this.fillFailures.add(n);this.forwardIssue=e.message;}}
+    finally{if(!transferred)this.budget.release(reserved);this._endRead(lease);this.fillTask=null;this._drainThumbnails();this._scheduleFill();}});
+  }
+  setForwardPredecode(on){this.forwardPredecode=!!on;if(!on){clearTimeout(this.fillTimer);this.fillTimer=undefined;if(this.readOwner?.kind==='forward-fill'){this.reader.cancel();this.readOwner=null;this.readerBusy=false;}this.fillStatus='disabled';}else this._scheduleFill();this._change();return {status:'applied'};}
   setPlaybackRate(rate){if(!root.EVAPlayer.validRate(rate))return Promise.reject(Error('播放速度须为0.1×至4×。'));const resume=this.state==='playing';this.pause(false);this.playbackRate=rate;if(this.audio)this.audio.playbackRate=rate;this._change();return resume?this.play():Promise.resolve({status:'applied'});}
   _range(){return this.loopEnabled&&this.loopStart!==null&&this.loopEnd!==null?{start:this.info.frames[this.loopStart].time,end:this.info.frames[this.loopEnd].end}:null;}
   transportSnapshot(){const f=this.info?.frames,valid=this.loopStart!==null&&this.loopEnd!==null&&this.loopStart<this.loopEnd;return {rate:this.playbackRate,loop:{enabled:this.loopEnabled,valid,startId:f?.[this.loopStart]?.id??null,endId:f?.[this.loopEnd]?.id??null,startOrdinal:this.loopStart,endOrdinal:this.loopEnd,startTime:f?.[this.loopStart]?.time??null,endTime:f?.[this.loopEnd]?.time??null,endBoundary:valid?f?.[this.loopEnd]?.end:null}};}
@@ -168,11 +198,12 @@
    return {frameId:this.info.frames[n].id};}
   primeRecords(order){const ordinals=Array.isArray(order)?order:[...(order?.visible||[]),...(order?.all||[])];for(const n of ordinals)if(this.info?.frames[n]&&!this.thumbCache.has(n)&&!this.thumbQueue.includes(n))this.thumbQueue.push(n);this.thumbQueue=this.thumbQueue.slice(0,96);this._drainThumbnails();}
   async _drainThumbnails(){if(this.thumbRunning||this.disposed||this.state!=='paused'||this.pendingTargets||this.readerBusy)return;this.thumbRunning=true;
-   try{while(this.thumbQueue.length&&!this.disposed&&this.state==='paused'&&!this.pendingTargets){const n=this.thumbQueue.shift();let e=this.cache.get(n);if(!e){const version=this.serial,lease=this._beginRead(this.reader),r=await this.reader.request(n);this._endRead(lease);if(this.disposed||version!==this.serial||this.state!=='paused')break;if(r.status!=='exact')continue;e=this._entry(n,r);}this._thumbnail(n,e,document.createElement('canvas'));this._change();await new Promise(r=>setTimeout(r,0));}}
-   finally{this.thumbRunning=false;}
+   try{while(this.thumbQueue.length&&!this.disposed&&this.state==='paused'&&!this.pendingTargets){const n=this.thumbQueue.shift();let e=this.cache.get(n);if(!e){const version=this.serial,reader=this.reader,lease=this._beginRead(reader);let r;try{r=await reader.request(n);}finally{this._endRead(lease);}if(this.disposed||version!==this.serial||this.state!=='paused')break;if(r.status!=='exact')continue;e=this._entry(n,r);}this._thumbnail(n,e,document.createElement('canvas'));this._change();await new Promise(r=>setTimeout(r,0));}}
+   catch(e){if(!this.disposed)this.forwardIssue=e.message;}
+   finally{this.thumbRunning=false;this._scheduleFill();}
   }
-  dispose(){if(this.disposeTask)return this.disposeTask;this.disposed=true;this.serial++;this.pause(false);this.state='disposed';this.unsub?.();if(this.audio){this.audio.pause();this.audio.removeAttribute('src');this.audio.load();this.audio=null;}
-   this.disposeTask=(async()=>{await this.runtime.cancelReaders?.();if(this.candidateReader)await this.runtime.closeReader(this.candidateReader);if(this.reader)await this.runtime.closeReader(this.reader);await this.switchTask?.catch(()=>{});for(const lease of [...this.leases])lease.release();for(const e of this.cache.values())this.budget.release(e.token);this.cache.clear();for(const e of this.thumbCache.values())this.budget.release(e.token);this.thumbCache.clear();this.renderer?.dispose();this.budget.release(this.renderToken);this.budget.release(this.nativeToken);})();return this.disposeTask;
+  dispose(){if(this.disposeTask)return this.disposeTask;this.disposed=true;this.serial++;clearTimeout(this.fillTimer);this.fillTimer=undefined;this.pause(false);this.state='disposed';this.unsub?.();if(this.audio){this.audio.pause();this.audio.removeAttribute('src');this.audio.load();this.audio=null;}
+   this.disposeTask=(async()=>{await this.runtime.cancelReaders?.();if(this.candidateReader)await this.runtime.closeReader(this.candidateReader);if(this.reader)await this.runtime.closeReader(this.reader);await this.switchTask?.catch(()=>{});await this.fillTask;for(const lease of [...this.leases])lease.release();for(const e of this.cache.values())this.budget.release(e.token);this.cache.clear();for(const e of this.thumbCache.values())this.budget.release(e.token);this.thumbCache.clear();this.renderer?.dispose();this.budget.release(this.renderToken);this.budget.release(this.nativeToken);})();return this.disposeTask;
   }
  }
  root.EVANativePlayer={Player};if(typeof module==='object')module.exports={Player};

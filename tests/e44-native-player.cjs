@@ -29,7 +29,8 @@ async function fixture(options={}){
   subscribeProxy(fn){listener=fn;return()=>{listener=null;};},proxyAsset(){return asset;},
   publish(){asset={filePath:'verified-proxy.mp4'};listener?.();}
  };
- const frames=index.buildIndex([100,117,150,200].map((pts,id)=>({id:pts,ptsTicks:String(pts),file:'frame-'+id,bytes:1})),{timeBase:[1,1000],lastFrameEndTicks:'250'});
+ const points=options.frameCount?Array.from({length:options.frameCount},(_,n)=>100+n):[100,117,150,200];
+ const frames=index.buildIndex(points.map((pts,id)=>({id:pts,ptsTicks:String(pts),file:'frame-'+id,bytes:1})),{timeBase:[1,1000],lastFrameEndTicks:options.frameCount?String(100+options.frameCount):'250'});
  const info={width:1,height:1,duration:frames.videoDuration,frames:frames.frames,source:{filePath:'D:/source.mp4'},metrics:{sourceVideoOrigin:.1}};
  const audio={paused:true,ended:false,currentTime:0,playbackRate:1,playCount:0,pause(){this.paused=true;},async play(){this.playCount++;this.paused=false;},removeAttribute(){},load(){}};
  if(options.eventAudio){
@@ -44,7 +45,7 @@ async function fixture(options={}){
    return new Promise(resolve=>audio.playGates.push(()=>{audio.paused=false;resolve();}));};
  }
  if(options.audio)info.audio={file:'audio',bytes:1,start:0,duration:info.duration,channels:2,sampleRate:48000};
- const p=new Player({nativeRuntime:runtime,frameIndex:index,canvas:view,ramBytes:64*1024,createAudio:()=>audio,
+ const p=new Player({nativeRuntime:runtime,frameIndex:index,canvas:view,ramBytes:options.ramBytes||64*1024,createAudio:()=>audio,
   onChange:s=>changes.push(s),env:{now:()=>now,raf:fn=>{const n=++next;callbacks.set(n,fn);return n;},caf:n=>callbacks.delete(n)}});
  const loading=p.load(info);await turn();assert.equal(primary.requests.length,1);if(!options.holdInitial){primary.complete(0);await loading;}
  return {p,primary,proxies,runtime,view,closed,changes,audio,info,loading,
@@ -316,5 +317,79 @@ test('E47 misses retain immediate held-frame protection; a synchronous newer int
  const h=await fixture();try{let armed=true;h.p.o.onChange=s=>{h.changes.push(s);if(armed&&s.state==='seeking'){armed=false;h.p.seek(0,{kind:'rapid'});}};
   const before=h.primary.requests.length;assert.equal((await h.p.seek(.05,{kind:'rapid'})).status,'superseded');
   const held=h.changes.find(s=>s.state==='seeking');assert(held);assert.equal(held.frameHeld,true);assert.equal(held.pendingTargets,1);assert.equal(h.primary.requests.length,before);assert.equal(h.p.snapshot().frameOrdinal,0);assert.equal(h.p.snapshot().frameHeld,false);
+ }finally{await h.cleanup();}
+});
+
+// Explicitly advance idle boundaries; these are ownership/budget models, not
+// measurements of native decoder throughput or Eagle presentation latency.
+function stopFillTimer(p){clearTimeout(p.fillTimer);p.fillTimer=undefined;}
+function beginFill(h){stopFillTimer(h.p);h.p._fillAround();}
+async function completeFill(h,r=h.primary){const task=h.p.fillTask;r.complete();await task;stopFillTimer(h.p);}
+test('E48 paused native inspection fills a finite source-time window and stops',async()=>{
+ const h=await fixture();try{h.p.setForwardPredecode(true);stopFillTimer(h.p);const draws=h.p.drawCount;
+  for(let i=0;i<3;i++){beginFill(h);await Promise.resolve();await completeFill(h);}
+  assert.equal(h.p.cache.size,4);assert.equal(h.p.drawCount,draws);assert.equal(h.p.snapshot().frameOrdinal,0);
+  const requests=h.primary.requests.length;beginFill(h);await Promise.resolve();assert.equal(h.primary.requests.length,requests);assert.equal(h.p.fillStatus,'ready');assert.equal(h.p.fillTimer,undefined);
+  assert(h.p.budget.peak<=h.p.budget.limit);
+ }finally{await h.cleanup();}
+});
+test('E48 continuous native RAM hits do not cancel useful single-reader fill',async()=>{
+ const h=await fixture();try{h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();const cancels=h.primary.cancels,request=h.primary.requests.at(-1),draws=h.p.drawCount;
+  assert.equal(request.ordinal,1);for(let i=0;i<30;i++)assert.equal((await h.p.seek(0,{kind:'rapid'})).status,'reused');
+  assert.equal(h.primary.cancels,cancels);await completeFill(h);assert(h.p.cache.has(1));assert.equal(h.p.drawCount,draws);assert.equal(h.p.snapshot().frameOrdinal,0);
+ }finally{await h.cleanup();}
+});
+test('E48 a cold native target immediately preempts idle fill and cannot be overwritten',async()=>{
+ const h=await fixture();try{h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();const fill=h.p.fillTask,cancels=h.primary.cancels,background=h.primary.requests.length-1;
+  const seeking=h.p.seek(.05,{kind:'rapid'});assert.equal(h.primary.cancels,cancels+1);assert.equal(h.primary.requests.at(-1).ordinal,2);
+  h.primary.complete(background);await fill;assert(!h.p.cache.has(1));assert.equal(h.p.snapshot().activeImageTasks,1);assert.equal(h.p.snapshot().frameHeld,true);
+  h.primary.complete();await seeking;stopFillTimer(h.p);assert.equal(h.p.snapshot().frameOrdinal,2);assert.equal(h.p.snapshot().frameHeld,false);
+ }finally{await h.cleanup();}
+});
+test('E48 native fill respects loop boundaries, tiny budgets and stationary convergence',async()=>{
+ const h=await fixture({frameCount:40,ramBytes:6000});try{h.p.setForwardPredecode(true);stopFillTimer(h.p);
+  for(let i=0;i<5;i++){beginFill(h);await Promise.resolve();if(h.p.fillTask)await completeFill(h);}
+  assert.equal(h.p.cache.size,3);const warm=h.primary.requests.length;
+  for(let i=0;i<8;i++){beginFill(h);await Promise.resolve();}assert.equal(h.primary.requests.length,warm);
+  h.p.loopStart=20;h.p.loopEnd=22;h.p.loopEnabled=true;const locating=h.p.seek(h.info.frames[21].time,{index:21,final:true});h.primary.complete();await locating;stopFillTimer(h.p);
+  const first=h.primary.requests.length;for(let i=0;i<5;i++){beginFill(h);await Promise.resolve();if(h.p.fillTask)await completeFill(h);}
+  assert(h.primary.requests.slice(first).every(q=>q.ordinal>=20&&q.ordinal<=22));assert(h.p.cache.has(20)&&h.p.cache.has(21)&&h.p.cache.has(22));
+  const settled=h.primary.requests.length;for(let i=0;i<8;i++){beginFill(h);await Promise.resolve();}assert.equal(h.primary.requests.length,settled);assert(h.p.budget.peak<=6000);
+ }finally{await h.cleanup();}
+});
+test('E48 failed native fill is skipped without repeated requests or a foreground error',async()=>{
+ const h=await fixture();try{h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();const task=h.p.fillTask,q=h.primary.requests.at(-1);q.done=true;q.reject(Error('background failure'));await task;stopFillTimer(h.p);
+  assert.equal(h.p.snapshot().lastIssue,null);assert.equal(h.p.snapshot().forwardIssue,'background failure');
+  for(let i=0;i<3;i++){beginFill(h);await Promise.resolve();if(h.p.fillTask)await completeFill(h);}
+  assert.equal(h.primary.requests.filter(r=>r.ordinal===1).length,1);assert.equal(h.p.fillTimer,undefined);
+ }finally{await h.cleanup();}
+});
+test('E48 closing during native fill releases its reservation and never draws the result',async()=>{
+ const h=await fixture();h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();const draws=h.p.drawCount;assert(h.p.budget.snapshot().kinds['native-fill-pending']>0);
+ await promptly(h.cleanup());assert.equal(h.p.budget.used,0);assert.equal(h.p.drawCount,draws);assert.equal(h.p.fillTimer,undefined);
+});
+test('E48 foreground preemption before idle dispatch cannot be superseded by the queued fill',async()=>{
+ const h=await fixture();try{h.p.setForwardPredecode(true);beginFill(h);const fill=h.p.fillTask;
+  const seeking=h.p.seek(.05,{kind:'rapid'});await Promise.resolve();assert.equal(h.primary.requests.length,2);assert.equal(h.primary.requests.at(-1).ordinal,2);
+  h.primary.complete();await seeking;await fill;stopFillTimer(h.p);assert.equal(h.p.snapshot().frameOrdinal,2);assert.equal(h.p.snapshot().activeImageTasks,0);
+ }finally{await h.cleanup();}
+});
+test('E48 verified proxy takeover invalidates old fill and only fills the new reader afterward',async()=>{
+ const h=await fixture();try{h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();const fill=h.p.fillTask,old=h.primary.requests.at(-1);
+  h.runtime.publish();await turn();h.proxies[0].complete();await h.p.switchTask;await fill;stopFillTimer(h.p);
+  assert.equal(h.p.proxyActive,true);assert.equal(h.primary.closed,1);assert(!h.p.cache.has(old.ordinal));assert.equal(h.p.snapshot().frameOrdinal,0);
+  beginFill(h);await Promise.resolve();assert.equal(h.proxies[0].requests.at(-1).ordinal,1);await completeFill(h,h.proxies[0]);assert(h.p.cache.has(1));assert.equal(h.p.snapshot().frameOrdinal,0);
+ }finally{await h.cleanup();}
+});
+test('E48 record requests take the next idle slot ahead of surrounding fill',async()=>{
+ const h=await fixture();try{h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();assert.equal(h.primary.requests.at(-1).ordinal,1);
+  const requests=h.primary.requests.length;h.p.primeRecords([3]);assert.equal(h.primary.requests.length,requests);await completeFill(h);
+  assert.equal(h.primary.requests.at(-1).ordinal,3);assert.equal(h.p.readOwner.kind,'foreground');h.primary.complete();await turn();stopFillTimer(h.p);assert(h.p.thumbCache.has(3));
+ }finally{await h.cleanup();}
+});
+test('E48 a synchronous record-reader failure releases ownership so idle fill can continue',async()=>{
+ const h=await fixture();try{const request=h.primary.request;h.primary.request=()=>{throw Error('record synchronous failure');};h.p.primeRecords([3]);await turn();
+  assert.equal(h.p.readerBusy,false);assert.equal(h.p.thumbRunning,false);assert.equal(h.p.forwardIssue,'record synchronous failure');
+  h.primary.request=request;h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();assert.equal(h.primary.requests.at(-1).ordinal,1);await completeFill(h);assert(h.p.cache.has(1));
  }finally{await h.cleanup();}
 });

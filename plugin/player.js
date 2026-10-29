@@ -17,11 +17,11 @@
     if (!validRate(rate) || ![-1, 0, 1].includes(direction) || !RATE_STEPS.includes(step)) throw new Error('播放速度或调整步长无效。');
     return Math.max(100, Math.min(4000, Math.round(rate * 1000) + direction * Math.round(step * 1000))) / 1000;
   }
-  function preparationWindow(frames, center, capacity) {
-    const count = Math.max(1, Math.min(frames.length, capacity)), order = [center], time = frames[center].time;
+  function preparationWindow(frames, center, capacity, first = 0, last = frames.length - 1) {
+    const count = Math.max(1, Math.min(last - first + 1, capacity)), order = [center], time = frames[center].time;
     let left = center - 1, right = center + 1;
     while (order.length < count) {
-      if (right >= frames.length || left >= 0 && time - frames[left].time < frames[right].time - time) order.push(left--);
+      if (right > last || left >= first && time - frames[left].time < frames[right].time - time) order.push(left--);
       else order.push(right++);
     }
     return { center, capacity: count, start: left + 1, end: right - 1, order };
@@ -1136,7 +1136,7 @@
         return;
       }
       if (!this.forwardPredecode || this.forwardIssue || !this.info || this.disposed || !['paused', 'playing'].includes(this.state) || this.tasks.size ||
-          this.target && (this.target.resolve || !this.target.final && ['drag', 'rapid'].includes(this.target.kind) && this.env.now() - this.target.inputAt < 80)) return;
+          this.target && (this.target.resolve || this.target.cacheStateAtInput !== 'decoded' && !this.target.final && ['drag', 'rapid'].includes(this.target.kind) && this.env.now() - this.target.inputAt < 80)) return;
       const info = this.info;
       if (!this.warmPlan) this.warmPlan = this.experimentMode === 'compressed-ram' ? this._planCompressed(info) :
         { ordinals: [], batching: false, batchBytes: 1024 ** 2, transient: 0, largest: info.frames.reduce((n, f) => Math.max(n, f.bytes), 0) };
