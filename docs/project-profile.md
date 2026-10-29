@@ -1,5 +1,7 @@
 # 项目说明
 
+当前：E-49 已修独立原声与续播启动：避免取声时恢复原4K视频，原声无损复制到有界RAM；本地/真实音频浏览器检查通过，Eagle手感待验。代理保持现状。见[记录](experiments/E49/report.md)。E48及更早为历史。
+
 当前：E-48 已补齐热拖动/暂停提前解压并统一清缓存按钮；本地回归及真实解码联通检查通过，Eagle手感待验。代理暂不调整；已撤下时间轴聚焦蓝框。见[本轮记录](experiments/E48/report.md)。E47及更早为历史。
 
 当前：E-47 排查RAM命中拖动卡顿，调整按帧拖动速度，撤下JPEG重复应用提示；适用本地检查通过，初始间歇卡顿未稳定复现。见[计划](experiments/E47/plan.md)。E46及更早为历史。
@@ -12,7 +14,7 @@
 
 ## 当前模块与资源边界
 
-原片/完整代理统一FilmCraft原生读者，异步packet源索引/整数PTS，后台独立整片H.264全I生成，完成验证才同帧接管。前台不运行旧分段/稀疏预览；JPEG独立旧整片准备。native-backend/reader/wire管理媒体与进程，native-player/renderer管理源音频时钟、RAM、YUV/WebGL及CPU回退，whole-proxy管理完整生产/发布/取消；proxy-storage管理代理额度及读者租约；live-resources和performance-runtime管理即时监测。设置与现有UI沿原session接线。E46新增统一GPU加速；代理自动生成与提前解压固定开启；其它缓存维护走后台，提示统一左下。E47减少热帧/账本/布局冗余，横拖按短长范围一次计算灵敏度，JPEG应用时仅显示实际进度。E48在目标已就绪时补原生单读者邻域填充，JPEG热拖动豁免静默期；冷目标前台优先，清缓存按钮与应用统一。
+原片/完整代理统一FilmCraft原生读者，异步packet源索引/整数PTS，后台独立整片H.264全I生成，完成验证才同帧接管。前台不运行旧分段/稀疏预览；JPEG独立旧整片准备。native-backend/reader/wire管理媒体与进程，native-player/renderer管理源音频时钟、RAM、YUV/WebGL及CPU回退，whole-proxy管理完整生产/发布/取消；proxy-storage管理代理额度及读者租约；live-resources和performance-runtime管理即时监测。设置与现有UI沿原session接线。E46新增统一GPU加速；代理自动生成与提前解压固定开启；其它缓存维护走后台，提示统一左下。E49以native-audio无损复制压缩音轨到有界内存，避免取声路径同时恢复原4K视频；Player管理Blob/预算和音频时钟，代理保持不变。E47减少热帧/账本/布局冗余，横拖按短长范围一次计算灵敏度，JPEG应用时仅显示实际进度。E48在目标已就绪时补原生单读者邻域填充，JPEG热拖动豁免静默期；冷目标前台优先，清缓存按钮与应用统一。
 
 原生GOP单读者128～192MiB，接管另预留第二读者；YUV/RGBA、缩略图与表面纳入管理额度，非整个OS/驱动硬上限。E45整片代理额度默认5GiB、可选1～100GiB，按最近使用时间自动淘汰未占用的旧源代理；JPEG保留5GiB。身份不明/当前源/活动读者保护，单片超过额度继续原片。完整代理只在完整核验后接管，代理条已删除。等待保留上帧并用frameHeld保护标注；核验按阶段帧数/字节显示，硬解关闭时不用GPU核验。工具8GiB/验证2GiB/单轮10分钟不扩大。
 
@@ -86,6 +88,7 @@ A/B的check.cjs、check-b.cjs、assess-b.cjs --verify-only及S1的check-local/ch
 | plugin/manifest.json、index.html | Eagle Window 与页面入口 |
 | native/filmcraft/、plugin/bin/ | 固定FilmCraft来源/补丁/许可与本机原生运行EXE；开发源码不成为日常依赖 |
 | plugin/native-backend.cjs、native-reader.cjs、native-wire.cjs | 原片异步索引/身份、常驻原生解码进程、有界协议、实际PTS与关闭回执 |
+| plugin/native-audio.cjs | 有界压缩音轨复制、逐包内容/时序核对、源身份及取消，无磁盘缓存 |
 | plugin/native-player.js、native-renderer.js | 原生播放/音频时钟、最新目标/缓存/闲时邻域/缩略图、YUV准确GPU绘制及CPU回退 |
 | plugin/whole-proxy.cjs | 独立整片生产、完整校验/原子发布、取消/复用/容量及死owner恢复 |
 | plugin/app.js | 宿主生命周期、依赖装配和事件接线，不承载媒体、缓存、标注业务 |

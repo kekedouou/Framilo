@@ -8,7 +8,7 @@
    this.cache=new Map();this.revision=0;this.state='empty';this.currentIndex=null;this.time=0;this.targetTime=0;this.pendingTargets=0;this.frameHeld=true;this.serial=0;this.epoch=1;this.drawCount=0;
    this.playbackRate=1;this.loopStart=null;this.loopEnd=null;this.loopEnabled=false;this.forwardPredecode=!!o.forwardPredecode;this.disposed=false;this.lastIssue=null;this.lastErrorCode=null;
    this.now=o.env?.now||(()=>performance.now());this.raf=o.env?.raf||(fn=>requestAnimationFrame(fn));this.caf=o.env?.caf||(id=>cancelAnimationFrame(id));
-   this.audio=null;this.audioResume=null;this.reader=null;this.readerBusy=false;this.playToken=0;this.playIntent=0;this.thumbQueue=[];this.thumbCache=new Map();this.thumbBytes=0;this.playReadMs=20;this.playRequest=0;this.switchTask=null;this.leases=new Set();this.canvasLeases=new WeakMap();
+   this.audio=null;this.audioResume=null;this.audioStartToken=null;this.reader=null;this.readerBusy=false;this.playToken=0;this.playIntent=0;this.thumbQueue=[];this.thumbCache=new Map();this.thumbBytes=0;this.playReadMs=20;this.playRequest=0;this.switchTask=null;this.leases=new Set();this.canvasLeases=new WeakMap();
    this.fillFailures=new Set();this.fillStatus='idle';this.forwardIssue=null;
   }
   _emit(type,extra={}){try{this.o.emit?.({type,at:this.now(),epoch:this.epoch,...extra});}catch(_){} }
@@ -18,7 +18,7 @@
   snapshot(){return {state:this.state,time:this.time,frameId:this.info?.frames[this.currentIndex]?.id??null,frameOrdinal:this.currentIndex,frameCount:this.info?.frames.length||0,targetTime:this.targetTime,pendingTargets:this.pendingTargets,frameHeld:this.frameHeld||this.pendingTargets>0,
    budget:this.budget.snapshot(),cacheBytes:this.budget.used,cachePeakBytes:this.budget.peak,activeImageTasks:this.readerBusy?1:0,drawCount:this.drawCount,epoch:this.epoch,
    audioAvailable:!!this.audio,playbackRate:this.playbackRate,transport:this.transportSnapshot(),lastIssue:this.lastIssue,lastErrorCode:this.lastErrorCode,
-   frameDecoder:this.reader?.snapshot(),native:true,proxyActive:!!this.proxyActive,forwardPredecode:this.forwardPredecode,forwardStatus:this.readerBusy?'preparing':this.fillStatus,forwardIssue:this.forwardIssue,memoryScope:'managed YUV/RGBA frames, thumbnails, render-surface allowance and native GOP reservation; OS audio and decoder/driver internal buffers excluded'};}
+   frameDecoder:this.reader?.snapshot(),native:true,proxyActive:!!this.proxyActive,audioSource:this.audioSourceKind||'original',audioSourceIssue:this.audioSourceIssue||null,forwardPredecode:this.forwardPredecode,forwardStatus:this.readerBusy?'preparing':this.fillStatus,forwardIssue:this.forwardIssue,memoryScope:'managed YUV/RGBA frames, thumbnails, compressed audio source, render-surface allowance and native GOP reservation; OS audio and decoder/driver internal buffers excluded'};}
   auxiliaryBudget(){return {budget:this.budget,evict:()=>this._evict()};}
   _evict(){for(const [n,e] of this.cache){if(n===this.currentIndex)continue;this.cache.delete(n);this.budget.release(e.token);this.revision++;return true;}return false;}
   _entry(n,r,reserved){if(this.cache.has(n)){if(reserved)this.budget.release(reserved);return this.cache.get(n);}const bytes=r.pixels.byteLength;
@@ -34,9 +34,21 @@
   async load(info){this.canvas.style.visibility='hidden';this.frameHeld=true;this.info=info;this.index.validateIndex(info);this.state='loading';this._change();
    if(root.EVANativeRenderer){this.renderToken=this.budget.reserve(info.width*info.height*20,'video-render-surfaces');this.renderer=root.EVANativeRenderer.create({document:root.document,width:info.width,height:info.height,enabled:this.o.gpuDrawing!==false});}
    this.reader=await this.runtime.createReader();if(this.disposed){await this.runtime.closeReader(this.reader);return;}
-   if(info.audio){const a=this.o.createAudio?.()||document.createElement('audio');a.preload='auto';a.src=require('url').pathToFileURL(info.source.filePath).href;a.playbackRate=this.playbackRate;this.audio=a;}
+   if(info.audio){this.audioTask=this._prepareAudioURL();const src=await this.audioTask;if(this.disposed)return;const a=this.o.createAudio?.()||document.createElement('audio');a.preload='auto';a.src=src;a.playbackRate=this.playbackRate;this.audio=a;}
    this.unsub=this.runtime.subscribeProxy(()=>{this._takeProxy().catch(e=>{this.lastIssue='代理接管失败，继续原片：'+e.message;this._change();});});
    this.state='paused';await this.seek(0,{final:true,kind:'initial'});if(this.runtime.proxyAsset())await this._takeProxy();return this.snapshot();
+  }
+  async _prepareAudioURL(){let token;
+   try{if(!this.runtime.audioTrack||!root.Blob||!root.URL?.createObjectURL)return require('url').pathToFileURL(this.info.source.filePath).href;
+    if((this.info.metrics.sourceVideoOrigin||0)!==0||this.info.audio.start!==0)throw Error('非零原声起点暂未验证，保留原片音轨。');
+    const maximum=Math.min(32*1024**2,Math.floor((this.budget.limit-this.budget.used)/3));if(maximum<64*1024)throw Error('独立原声的RAM余量不足。');
+    token=this.budget.reserve(maximum*3,'audio-source-inflight');const track=await this.runtime.audioTrack(maximum);if(this.disposed)return null;
+    if(!track?.bytes?.byteLength||track.bytes.byteLength>maximum||track.mime!=='audio/mp4')throw Error('独立原声数据无效。');
+    if(track.verification?.stream?.start_pts!=='0')throw Error('独立原声起点暂未验证，保留原片音轨。');
+    this.audioURL=root.URL.createObjectURL(new root.Blob([track.bytes],{type:track.mime}));this.budget.shrink(token,track.bytes.byteLength*2,'audio-source');this.audioSourceToken=token;token=null;this.audioSourceKind='audio-only-copy';return this.audioURL;
+   }catch(e){if(this.disposed)return null;if(['AUDIO_SOURCE_CHANGED','AUDIO_CANCELLED','MEDIA_CANCELLED'].includes(e.code)||e.name==='AbortError')throw e;
+    this.audioSourceIssue=e.message;this.audioSourceKind='original';return require('url').pathToFileURL(this.info.source.filePath).href;
+   }finally{if(token)this.budget.release(token);}
   }
   async _takeProxy(){if(this.disposed||this.frameHeld||this.pendingTargets||this.proxyActive||this.switchTask)return this.switchTask;
    let retry=false;
@@ -79,7 +91,7 @@
    return {status:'drawn',frameId:this.info.frames[n].id,actualPtsTicks:this.info.frames[n].ptsTicks};
   }
   step(delta){const start=this.pendingTargets?this.index.frameAt(this.info.frames,this.targetTime):this.currentIndex??0;const n=Math.max(0,Math.min(this.info.frames.length-1,start+delta));return this.seek(this.info.frames[n].time,{index:n,kind:'step',final:true});}
-  pause(notify=true,keepIntent=false){if(!keepIntent)this.playIntent++;this.playToken++;this.audioSeekCancel?.();if(this.rafId!==undefined)this.caf(this.rafId);this.rafId=undefined;
+  pause(notify=true,keepIntent=false){if(!keepIntent)this.playIntent++;this.playToken++;this.audioStartToken=null;this.audioSeekCancel?.();if(this.rafId!==undefined)this.caf(this.rafId);this.rafId=undefined;
    const wasPlaying=this.state==='playing';this.audio?.pause();
    if(wasPlaying){this.audioResume=this.audio&&!this.audio.seeking&&!this.audio.ended?{ordinal:this.currentIndex,time:this.audio.currentTime}:null;this.reader?.cancel();this.readOwner=null;this.readerBusy=false;}
    this.anchor=null;if(!this.disposed&&this.info&&wasPlaying)this.state='paused';if(notify)this._change();this._scheduleFill();return Promise.resolve({status:'paused'});}
@@ -88,20 +100,28 @@
    this.serial++;this.reader.cancel();this.readOwner=null;this.readerBusy=false;
    if(this.currentIndex===this.info.frames.length-1&&!this.loopEnabled){const r=await this.seek(0,{final:true,keepPlayIntent:true});if(!['drawn','reused'].includes(r.status)||this.disposed||intent!==this.playIntent)return {status:'superseded'};}
    const token=++this.playToken,audio=this.audio,resume=this.audioResume;
-   const resumeTime=audio&&resume&&resume.ordinal===this.currentIndex&&!audio.seeking&&!audio.ended&&Math.abs(audio.currentTime-resume.time)<.001?resume.time:null;
+   // Browser audio may finish settling its paused cursor after pause() returns.
+   // Every explicit seek clears audioResume, so an unchanged picture owns the
+   // current paused audio cursor without an unnecessary sub-millisecond rewind.
+   const resumeTime=audio&&resume&&resume.ordinal===this.currentIndex&&!audio.seeking&&!audio.ended?audio.currentTime:null;
    const media=resumeTime===null?this.time:Math.max(0,resumeTime-(this.info.metrics.sourceVideoOrigin||0));
    this.anchor={at:this.now(),time:media};
    // A play intent is immediately pausable. Decoder lookahead belongs to _tick,
    // never to a serial four-frame gate before starting audio/video.
    this.state='playing';this._change();
    if(audio){try{if(resumeTime===null)await this._audioSeek(Math.max(0,media+(this.info.metrics.sourceVideoOrigin||0)));if(this.disposed||token!==this.playToken||this.audio!==audio)return {status:'superseded'};audio.playbackRate=this.playbackRate;
-    await audio.play();if(this.disposed||token!==this.playToken||this.audio!==audio){
+    this.audioStartToken=token;const starting=audio.play();
+    // A media play promise can settle after its clock has already advanced.
+    // Keep pictures attached to that clock now, rather than gating the first
+    // rAF on promise settlement. A still-paused clock remains stationary.
+    this._tick(token);
+    await starting;if(this.disposed||token!==this.playToken||this.audio!==audio){
      // A delayed play() promise can resolve after the user paused/closed. Stop
      // only that obsolete playback; never pause a newer play of the same audio.
      if(this.disposed||this.audio!==audio||this.state!=='playing')audio.pause();return {status:'superseded'};
-    }}catch(e){if(this.disposed||token!==this.playToken)return {status:'superseded'};this.state='paused';this.lastIssue='声音未能启动：'+e.message;this._change();return {status:'error'};}}
+    }}catch(e){if(this.disposed||token!==this.playToken)return {status:'superseded'};this.pause(false,true);this.audioResume=null;this.lastIssue='声音未能启动：'+e.message;this._change();return {status:'error'};}}
    if(this.disposed||token!==this.playToken)return {status:'superseded'};
-   this.anchor={at:this.now(),time:media};this.audioResume=null;this._tick(token);return {status:'playing'};
+   this.audioStartToken=null;this.anchor={at:this.now(),time:audio?Math.max(0,audio.currentTime-(this.info.metrics.sourceVideoOrigin||0)):media};this.audioResume=null;if(!audio)this._tick(token);return {status:'playing'};
   }
   _primeAudio(time){const a=this.audio;if(!a)return;const target=Math.max(0,time+(this.info.metrics.sourceVideoOrigin||0));
    // Exact final seeks prepare the paused audio alongside picture decoding. Do
@@ -113,7 +133,7 @@
    if(typeof a.addEventListener!=='function'){a.currentTime=time;resolve();return;}if(Math.abs(a.currentTime-time)<.0001&&!a.seeking){resolve();return;}
    this.audioSeekCancel=cancel;a.addEventListener('seeked',done,{once:true});a.addEventListener('error',bad,{once:true});timer=setTimeout(bad,3000);try{if(Math.abs(a.currentTime-time)>=.0001)a.currentTime=time;}catch(e){clean();reject(e);}
   });}
-  _clock(){if(this.audio&&!this.audio.paused&&!this.audio.ended)return Math.max(0,this.audio.currentTime-(this.info.metrics.sourceVideoOrigin||0));return this.anchor?this.anchor.time+(this.now()-this.anchor.at)/1000*this.playbackRate:this.time;}
+  _clock(){if(this.audio&&!this.audio.ended&&(!this.audio.paused||this.audioStartToken===this.playToken))return Math.max(0,this.audio.currentTime-(this.info.metrics.sourceVideoOrigin||0));return this.anchor?this.anchor.time+(this.now()-this.anchor.at)/1000*this.playbackRate:this.time;}
   _tick(token){if(this.disposed||token!==this.playToken||this.state!=='playing')return;
    let t=this._clock();const loop=this._range();
    if(loop&&t>=loop.end){const intent=this.playIntent;this.pause(false,true);const located=this.seek(loop.start,{index:this.loopStart,kind:'loop-wrap',final:true,keepPlayIntent:true}),version=this.serial;
@@ -202,8 +222,8 @@
    catch(e){if(!this.disposed)this.forwardIssue=e.message;}
    finally{this.thumbRunning=false;this._scheduleFill();}
   }
-  dispose(){if(this.disposeTask)return this.disposeTask;this.disposed=true;this.serial++;clearTimeout(this.fillTimer);this.fillTimer=undefined;this.pause(false);this.state='disposed';this.unsub?.();if(this.audio){this.audio.pause();this.audio.removeAttribute('src');this.audio.load();this.audio=null;}
-   this.disposeTask=(async()=>{await this.runtime.cancelReaders?.();if(this.candidateReader)await this.runtime.closeReader(this.candidateReader);if(this.reader)await this.runtime.closeReader(this.reader);await this.switchTask?.catch(()=>{});await this.fillTask;for(const lease of [...this.leases])lease.release();for(const e of this.cache.values())this.budget.release(e.token);this.cache.clear();for(const e of this.thumbCache.values())this.budget.release(e.token);this.thumbCache.clear();this.renderer?.dispose();this.budget.release(this.renderToken);this.budget.release(this.nativeToken);})();return this.disposeTask;
+  dispose(){if(this.disposeTask)return this.disposeTask;this.disposed=true;this.serial++;clearTimeout(this.fillTimer);this.fillTimer=undefined;this.pause(false);this.runtime.cancelAudio?.();this.state='disposed';this.unsub?.();if(this.audio){this.audio.pause();this.audio.removeAttribute('src');this.audio.load();this.audio=null;}if(this.audioURL){root.URL.revokeObjectURL(this.audioURL);this.audioURL=null;}
+   this.disposeTask=(async()=>{await this.audioTask?.catch(()=>{});this.budget.release(this.audioSourceToken);await this.runtime.cancelReaders?.();if(this.candidateReader)await this.runtime.closeReader(this.candidateReader);if(this.reader)await this.runtime.closeReader(this.reader);await this.switchTask?.catch(()=>{});await this.fillTask;for(const lease of [...this.leases])lease.release();for(const e of this.cache.values())this.budget.release(e.token);this.cache.clear();for(const e of this.thumbCache.values())this.budget.release(e.token);this.thumbCache.clear();this.renderer?.dispose();this.budget.release(this.renderToken);this.budget.release(this.nativeToken);})();return this.disposeTask;
   }
  }
  root.EVANativePlayer={Player};if(typeof module==='object')module.exports={Player};

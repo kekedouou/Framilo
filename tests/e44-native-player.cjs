@@ -29,12 +29,13 @@ async function fixture(options={}){
   subscribeProxy(fn){listener=fn;return()=>{listener=null;};},proxyAsset(){return asset;},
   publish(){asset={filePath:'verified-proxy.mp4'};listener?.();}
  };
+ if(options.audioTrack){runtime.audioTrack=options.audioTrack;runtime.cancelAudio=options.cancelAudio||(()=>{});}
  const points=options.frameCount?Array.from({length:options.frameCount},(_,n)=>100+n):[100,117,150,200];
  const frames=index.buildIndex(points.map((pts,id)=>({id:pts,ptsTicks:String(pts),file:'frame-'+id,bytes:1})),{timeBase:[1,1000],lastFrameEndTicks:options.frameCount?String(100+options.frameCount):'250'});
- const info={width:1,height:1,duration:frames.videoDuration,frames:frames.frames,source:{filePath:'D:/source.mp4'},metrics:{sourceVideoOrigin:.1}};
+ const info={width:1,height:1,duration:frames.videoDuration,frames:frames.frames,source:{filePath:'D:/source.mp4'},metrics:{sourceVideoOrigin:options.origin??.1}};
  const audio={paused:true,ended:false,currentTime:0,playbackRate:1,playCount:0,pause(){this.paused=true;},async play(){this.playCount++;this.paused=false;},removeAttribute(){},load(){}};
  if(options.eventAudio){
-  let time=0;const listeners=new Map();audio.seeking=false;audio.pauseCount=0;audio.playGates=[];
+  let time=0;const listeners=new Map();audio.seeking=false;audio.pauseCount=0;audio.playGates=[];audio.playRejects=[];
   Object.defineProperty(audio,'currentTime',{get:()=>time,set:value=>{if(Math.abs(value-time)>.000001){time=value;audio.seeking=true;}}});
   audio.addEventListener=(name,fn)=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(fn);};
   audio.removeEventListener=(name,fn)=>listeners.get(name)?.delete(fn);
@@ -42,14 +43,16 @@ async function fixture(options={}){
   audio.completeSeek=()=>{audio.seeking=false;for(const fn of [...(listeners.get('seeked')||[])])fn();};
   audio.pause=()=>{audio.pauseCount++;audio.paused=true;};
   audio.play=()=>{audio.playCount++;if(!options.deferredPlay){audio.paused=false;return Promise.resolve();}
-   return new Promise(resolve=>audio.playGates.push(()=>{audio.paused=false;resolve();}));};
+   return new Promise((resolve,reject)=>{audio.playGates.push(()=>{audio.paused=false;resolve();});audio.playRejects.push(reject);});};
  }
  if(options.audio)info.audio={file:'audio',bytes:1,start:0,duration:info.duration,channels:2,sampleRate:48000};
  const p=new Player({nativeRuntime:runtime,frameIndex:index,canvas:view,ramBytes:options.ramBytes||64*1024,createAudio:()=>audio,
   onChange:s=>changes.push(s),env:{now:()=>now,raf:fn=>{const n=++next;callbacks.set(n,fn);return n;},caf:n=>callbacks.delete(n)}});
- const loading=p.load(info);await turn();assert.equal(primary.requests.length,1);if(!options.holdInitial){primary.complete(0);await loading;}
+ const loading=p.load(info);await turn();if(!options.holdAudio){assert.equal(primary.requests.length,1);if(!options.holdInitial){primary.complete(0);await loading;}}
  return {p,primary,proxies,runtime,view,closed,changes,audio,info,loading,
   advance(seconds){now+=seconds*1000;audio.currentTime=.1+seconds;const pending=[...callbacks.values()];callbacks.clear();for(const fn of pending)fn(now);},
+  advanceSilent(seconds){now+=seconds*1000;const pending=[...callbacks.values()];callbacks.clear();for(const fn of pending)fn(now);},
+  rafPending:()=>callbacks.size,
   async cleanup(){await p.dispose();await turn();}};
 }
 test('late seek result cannot replace the newest target or picture',{timeout:2000},async()=>{
@@ -279,6 +282,22 @@ test('pause and resume reuse a valid audio cursor without rewinding it to the pr
  }finally{await h.cleanup();}
 });
 
+test('E49 paused audio cursor settling never forces a new source seek on unchanged-picture resume',{timeout:2000},async()=>{
+ const h=await fixture({audio:true,eventAudio:true});try{
+  h.audio.completeSeek();await h.p.play();h.advance(.011);h.audio.completeSeek();await h.p.pause();
+  h.audio.currentTime=.116;h.audio.completeSeek();const cursor=h.audio.currentTime;
+  assert.equal((await promptly(h.p.play())).status,'playing');assert.equal(h.audio.currentTime,cursor);assert.equal(h.audio.seeking,false);assert.equal(h.audio.listenerCount(),0);
+ }finally{await h.cleanup();}
+});
+
+test('E49 audio completion anchors the silent tail at its current cursor instead of the original play input',{timeout:2000},async()=>{
+ const h=await fixture({audio:true,eventAudio:true,deferredPlay:true});try{
+  for(let n=1;n<h.info.frames.length;n++)h.p._entry(n,{pixels:Buffer.from([n,0,0,255]),metrics:{width:1,height:1}});
+  h.audio.completeSeek();const starting=h.p.play();await turn();h.audio.paused=false;h.advance(.06);h.audio.completeSeek();h.audio.playGates[0]();await starting;
+  assert(Math.abs(h.p.anchor.time-.06)<1e-9);h.audio.ended=true;h.advanceSilent(.01);assert(Math.abs(h.p._clock()-.07)<1e-9);
+ }finally{await h.cleanup();}
+});
+
 test('final seeks preposition paused audio alongside picture decoding and invalidate the old resume cursor',{timeout:2000},async()=>{
  const h=await fixture({audio:true,eventAudio:true});try{
   h.audio.completeSeek();await h.p.play();h.advance(.011);h.audio.completeSeek();await h.p.pause();
@@ -295,6 +314,43 @@ test('a delayed audio play completion after pause is stopped and cannot restart 
   await h.p.pause();const pauses=h.audio.pauseCount;h.audio.playGates[0]();assert.equal((await promptly(starting)).status,'superseded');
   assert.equal(h.audio.paused,true);assert.equal(h.audio.pauseCount,pauses+1);assert.equal(h.p.snapshot().state,'paused');
  }finally{await h.cleanup();}
+});
+
+test('E49 verified proxy and resident pictures follow an advancing audio clock before play promise settles',async()=>{
+ const h=await fixture({audio:true,eventAudio:true,deferredPlay:true});try{
+  h.audio.completeSeek();for(let n=1;n<h.info.frames.length;n++)h.p._entry(n,{pixels:Buffer.from([n,0,0,255]),metrics:{width:1,height:1}});
+  h.runtime.publish();await turn();h.proxies[0].complete();await h.p.switchTask;assert.equal(h.p.proxyActive,true);
+  let settled=false;const starting=h.p.play().then(r=>{settled=true;return r;});await turn();assert.equal(settled,false);assert.equal(h.rafPending(),1);
+  const requests=h.proxies[0].requests.length;h.advance(.017);assert.equal(h.p.snapshot().frameOrdinal,1);assert.equal(settled,false);assert.equal(h.proxies[0].requests.length,requests);
+  h.audio.playGates[0]();assert.equal((await starting).status,'playing');assert.equal(h.rafPending(),1,'Promise settlement must not start a second animation chain');
+ }finally{await h.cleanup();}
+});
+test('E49 a pending paused audio clock never lets cached video run ahead on the free clock',async()=>{
+ const h=await fixture({audio:true,eventAudio:true,deferredPlay:true});try{
+  h.audio.completeSeek();for(let n=1;n<h.info.frames.length;n++)h.p._entry(n,{pixels:Buffer.from([n,0,0,255]),metrics:{width:1,height:1}});
+  const starting=h.p.play();await turn();assert.equal(h.audio.paused,true);const draws=h.p.drawCount;
+  h.advanceSilent(.08);assert.equal(h.p.snapshot().frameOrdinal,0);assert.equal(h.p.drawCount,draws);assert.equal(h.rafPending(),1);
+  h.audio.playGates[0]();await starting;assert.equal(h.rafPending(),1);
+ }finally{await h.cleanup();}
+});
+test('E49 audio start rejection stops the active picture loop and invalidates late decoded pictures',async()=>{
+ const h=await fixture({audio:true,eventAudio:true,deferredPlay:true});try{
+  h.audio.completeSeek();const starting=h.p.play();await turn();assert.equal(h.rafPending(),1);h.advance(.017);const request=h.primary.requests.length-1,draws=h.p.drawCount;assert.equal(h.primary.requests[request].ordinal,1);
+  h.audio.playRejects[0](Error('play denied'));assert.equal((await starting).status,'error');assert.equal(h.p.snapshot().state,'paused');assert.match(h.p.lastIssue,/play denied/);
+  assert.equal(h.audio.paused,true);assert.equal(h.rafPending(),0);assert.equal(h.p.snapshot().activeImageTasks,0);assert.equal(h.p.audioStartToken,null);
+  h.primary.complete(request);await turn();assert.equal(h.p.drawCount,draws);assert.equal(h.rafPending(),0);
+ }finally{await h.cleanup();}
+});
+test('E49 an older rejected audio start cannot stop a newer playing clock or its rAF chain',async()=>{
+ const h=await fixture({audio:true,eventAudio:true,deferredPlay:true});try{
+  h.audio.completeSeek();const first=h.p.play();await turn();const second=h.p.play();await turn();h.audio.playGates[1]();assert.equal((await second).status,'playing');const pauses=h.audio.pauseCount;
+  h.audio.playRejects[0](Error('obsolete rejection'));assert.equal((await first).status,'superseded');assert.equal(h.audio.pauseCount,pauses);assert.equal(h.p.state,'playing');assert.equal(h.rafPending(),1);
+ }finally{await h.cleanup();}
+});
+test('E49 closing a pending audio start clears its picture loop and late completion cannot revive it',async()=>{
+ const h=await fixture({audio:true,eventAudio:true,deferredPlay:true});
+ h.audio.completeSeek();const starting=h.p.play();await turn();assert.equal(h.rafPending(),1);const draws=h.p.drawCount;await h.cleanup();
+ assert.equal(h.rafPending(),0);assert.equal(h.p.budget.used,0);h.audio.playGates[0]();assert.equal((await starting).status,'superseded');assert.equal(h.audio.paused,true);assert.equal(h.p.drawCount,draws);
 });
 
 
@@ -391,5 +447,31 @@ test('E48 a synchronous record-reader failure releases ownership so idle fill ca
  const h=await fixture();try{const request=h.primary.request;h.primary.request=()=>{throw Error('record synchronous failure');};h.p.primeRecords([3]);await turn();
   assert.equal(h.p.readerBusy,false);assert.equal(h.p.thumbRunning,false);assert.equal(h.p.forwardIssue,'record synchronous failure');
   h.primary.request=request;h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();assert.equal(h.primary.requests.at(-1).ordinal,1);await completeFill(h);assert(h.p.cache.has(1));
+ }finally{await h.cleanup();}
+});
+
+test('E49 audio-only Blob is budgeted, used without the original video and revoked on close',async()=>{
+ const saved={URL:global.URL,Blob:global.Blob},revoked=[];global.Blob=class{constructor(parts,options){this.parts=parts;this.type=options.type;}};global.URL={createObjectURL(blob){assert.equal(blob.type,'audio/mp4');return 'blob:audio-unit';},revokeObjectURL:url=>revoked.push(url)};
+ let h;try{h=await fixture({audio:true,origin:0,ramBytes:512*1024,audioTrack:async max=>{assert(max>=64*1024);return{bytes:Buffer.alloc(1234),mime:'audio/mp4',verification:{stream:{start_pts:'0'}}};}});
+  assert.equal(h.audio.src,'blob:audio-unit');assert.equal(h.p.snapshot().audioSource,'audio-only-copy');assert.equal(h.p.budget.snapshot().kinds['audio-source'],2468);
+  await h.cleanup();assert.equal(h.p.budget.used,0);assert.deepEqual(revoked,['blob:audio-unit']);
+ }finally{await h?.cleanup();global.URL=saved.URL;global.Blob=saved.Blob;}
+});
+
+test('E49 unsupported independent audio safely retains original sound and releases its reservation',async()=>{
+ const h=await fixture({audio:true,origin:0,ramBytes:512*1024,audioTrack:async()=>{throw Error('unsupported audio copy');}});try{
+  assert.equal(h.p.snapshot().audioSource,'original');assert.match(h.audio.src,/source\.mp4/);assert.match(h.p.snapshot().audioSourceIssue,/unsupported/);
+  assert.equal(h.p.budget.snapshot().kinds['audio-source-inflight'],undefined);assert.equal((await h.p.play()).status,'playing');
+ }finally{await h.cleanup();}
+});
+
+test('E49 closing during independent audio preparation cancels it before Blob creation or initial draw',async()=>{
+ let reject,cancelled=0;const waiting=new Promise((resolve,fail)=>{reject=fail;});const h=await fixture({audio:true,origin:0,ramBytes:512*1024,holdAudio:true,audioTrack:()=>waiting,cancelAudio(){cancelled++;reject(Object.assign(Error('cancelled'),{name:'AbortError'}));}});
+ assert.equal(h.primary.requests.length,0);await h.cleanup();await h.loading;assert.equal(cancelled,1);assert.equal(h.p.budget.used,0);assert.equal(h.p.drawCount,0);assert.equal(h.p.audio,null);
+});
+
+test('E49 unverified nonzero media origins retain original audio without remuxing',async()=>{
+ let copies=0;const h=await fixture({audio:true,ramBytes:512*1024,audioTrack:async()=>{copies++;throw Error('must not copy');}});try{
+  assert.equal(copies,0);assert.equal(h.p.snapshot().audioSource,'original');assert.match(h.p.snapshot().audioSourceIssue,/非零/);assert.match(h.audio.src,/source\.mp4/);
  }finally{await h.cleanup();}
 });

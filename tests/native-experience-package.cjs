@@ -27,7 +27,7 @@ files['bin/filmcraft-media.build.json'] = Buffer.from(JSON.stringify(metadata));
 const copy = () => Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, Buffer.from(bytes)]));
 const validate = f => pack.validateRuntime(f, { profile: 'native-experience' });
 test('model native artifact closes all relative and HTML dependencies', () => assert(validate(copy()).dependenciesChecked));
-for (const name of ['native-backend.cjs', 'native-player.js', 'native-reader.cjs', 'native-renderer.js', 'native-wire.cjs', 'whole-proxy.cjs',
+for (const name of ['native-backend.cjs', 'native-audio.cjs', 'native-player.js', 'native-reader.cjs', 'native-renderer.js', 'native-wire.cjs', 'whole-proxy.cjs',
   'bin/filmcraft-media.exe', 'bin/filmcraft-media.build.json', 'bin/FilmCraft-LICENSE-MIT', 'bin/FilmCraft-LICENSE-APACHE',
   'bin/FilmCraft-NOTICE', 'bin/filmcraft-third-party.json', 'bin/filmcraft-third-party.txt']) {
   test('missing ' + name + ' is refused', () => { const f = copy(); delete f[name]; assert.throws(() => validate(f)); });

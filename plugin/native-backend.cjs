@@ -5,6 +5,7 @@ const frameIndex=require('./frame-index.cjs'),preview=require('./preview-profile
 const {FilmcraftClient}=require('./native-reader.cjs');
 const {createWholeProxy}=require('./whole-proxy.cjs');
 const {createTaskClient}=require('./task-client.cjs');
+const {createAudioTrack}=require('./native-audio.cjs');
 function aborted(){return Object.assign(Error('视频准备已取消。'),{name:'AbortError',code:'MEDIA_CANCELLED'});}
 function check(signal){if(signal?.aborted)throw aborted();}
 function regular(file){const s=fs.lstatSync(file);if(!s.isFile()||s.isSymbolicLink()||path.resolve(fs.realpathSync(file)).toLowerCase()!==path.resolve(file).toLowerCase())throw Error('源文件或工具路径不是可确认的普通文件。');return s;}
@@ -36,7 +37,7 @@ async function inspect(source,tools,quality,signal,onProgress=()=>{}){
  onProgress({stage:"source-hash",message:"校验源视频身份"});
  const sha256=await hash(source.filePath,signal);check(signal);
  if(sourceStamp(sourceBefore)!==sourceStamp(regular(source.filePath)))throw Error('源视频在建立帧索引期间发生变化，已停止准备。');
- return {schema:1,owner:'e44-native',source:{...source,sha256,codec:video.codec_name,width:video.width,height:video.height,hasAudioStream:!!audio},
+ return {schema:1,owner:'e44-native',source:{...source,sha256,nativeStamp:sourceStamp(sourceBefore),codec:video.codec_name,width:video.width,height:video.height,hasAudioStream:!!audio},
  width:geometry.width,height:geometry.height,duration:Math.max(indexed.videoDuration,audio?audio.start+audio.duration:0),frames:indexed.frames,audio,preview:geometry,sourceVideo:video,videoEncoding:'filmcraft-native',metrics:{reused:false,sourceVideoOrigin:origin}};
 }
 function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024**3,decoderPreference='prefer-hardware',proxyEncoder='cpu',automaticProxy=true,gpuDrawing=true,cacheRoot,limitBytes=5*1024**3}){
@@ -48,9 +49,12 @@ function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024
   const controller=new AbortController(),relay=()=>controller.abort();settings.signal?.addEventListener('abort',relay,{once:true});
   const promise=inspect({...selected,filePath:path.resolve(selected.filePath)},tools,settings.previewQuality||'720p',controller.signal,settings.onProgress),pending={controller,promise};preparing.add(pending);
   let info;try{info=await promise;check(settings.signal);if(closing)throw aborted();}finally{preparing.delete(pending);settings.signal?.removeEventListener('abort',relay);}
-  frameIndex.validateIndex(info);const readers=new Set(),listeners=new Set();let released=false,asset=null,job=null,releasing=null;
+  frameIndex.validateIndex(info);const readers=new Set(),listeners=new Set(),audioJobs=new Set();let released=false,asset=null,job=null,releasing=null;
   const nativeBytes=Math.max(128*1024**2,Math.min(192*1024**2,Math.floor(ramBytes/4)));
-  const runtime={nativeBytes,async createReader({proxy=false}={}){
+  const runtime={nativeBytes,async audioTrack(maxBytes){
+    if(released||closing)throw aborted();const task=createAudioTrack({source:info.source,tools,maxBytes,expectedStamp:info.source.nativeStamp});audioJobs.add(task);
+    try{const result=await task.promise;if(released||closing)throw aborted();return result;}finally{audioJobs.delete(task);}
+   },cancelAudio(){for(const task of audioJobs)task.cancel();},async createReader({proxy=false}={}){
     if(released||closing)throw aborted();const file=proxy?asset?.filePath:info.source.filePath;if(!file)throw Error('完整代理尚未就绪。');
     const frames=proxy?info.frames.map((f,n)=>({...f,ptsTicks:asset.proxyPts[n],timeBase:asset.proxyTimeBase})):info.frames;
     const reader=new FilmcraftClient({exe,source:file,frames,software:(settings.decoderPreference||decoderPreference)==='prefer-software',height:parseInt(info.preview.quality),width:info.width,outputHeight:info.height,gpuDrawing,cacheBytes:nativeBytes});
@@ -59,7 +63,7 @@ function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024
     catch(failure){await reader.close();readers.delete(reader);throw failure;}
    },async closeReader(r){readers.delete(r);return r.close();},async cancelReaders(){await Promise.allSettled([...readers].map(r=>r.close()));},proxyAsset:()=>asset,
    subscribeProxy(fn){listeners.add(fn);return()=>listeners.delete(fn);},
-   resourcePids:()=>[...readers].map(r=>r.proc?.pid).concat(producer.pids()).filter(Number.isSafeInteger),
+   resourcePids:()=>[...readers].map(r=>r.proc?.pid).concat(producer.pids(),...[...audioJobs].map(t=>t.pids())).filter(Number.isSafeInteger),
    diskUsage:async()=>{const proxy=await producer.measure(info.source.sha256);return {...proxy,scope:'proxy'};},
    status(){return job?.snapshot()||{stage:'idle',status:'idle',ready:0,total:info.frames.length,readyRanges:[]};},
    startProxy(){if(released)return null;if(job&&['queued','checking','encoding','validating','ready'].includes(job.snapshot().status))return job;
@@ -67,7 +71,7 @@ function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024
     catch(failure){const state={status:'failed',stage:'error',ready:0,total:info.frames.length,readyRanges:[],message:failure.message,error:{code:failure.code||'WHOLE_START',message:failure.message}};job={ready:Promise.resolve(null),snapshot:()=>state,cancel:async()=>null};try{onBackground();}catch(_){}return job;}
     job.ready.then(value=>{if(!value||released||closing)return;asset=value;try{onBackground();}catch(_){}for(const fn of listeners)try{fn(value);}catch(_){}}).catch(()=>{});try{onBackground();}catch(_){}return job;},
    async cancelProxy(){if(job)await job.cancel();try{onBackground();}catch(_){}return runtime.status();},
-   release(){if(releasing)return releasing;released=true;ownerSources.delete(runtime);listeners.clear();releasing=(async()=>{await job?.cancel();await Promise.allSettled([...readers].map(r=>r.close()));readers.clear();await job?.release?.();owners.delete(runtime);})();return releasing;}
+   release(){if(releasing)return releasing;released=true;runtime.cancelAudio();ownerSources.delete(runtime);listeners.clear();releasing=(async()=>{await Promise.allSettled([...audioJobs].map(t=>t.promise));await job?.cancel();await Promise.allSettled([...readers].map(r=>r.close()));readers.clear();await job?.release?.();owners.delete(runtime);})();return releasing;}
   };info.nativeRuntime=runtime;owners.add(runtime);ownerSources.set(runtime,info.source.sha256);if(automaticProxy)runtime.startProxy();return info;
  }
  function clearOther(settings={}){

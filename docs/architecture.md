@@ -1,5 +1,13 @@
 # 技术架构与模块边界
 
+## E49 原声与原片视频解码分离
+
+当前Lightning的独立Chrome Media证据表明，HTMLAudio直接加载原MP4仍实例化4K AV1视频解码器，长暂停恢复时音频已缓冲足够仍等视频。修正不改变代理：native-audio.cjs仅用FFmpeg复制原压缩音轨到有界stdout Buffer，以流式ffprobe逐包/编码/时序指纹验证，无音频重编码、磁盘缓存或Worker。元数据/单行/总时长有上限，源压缩包累计已超额度时早停；源与拷贝都只有可核实的音轨。
+
+native-backend保留inspect已核验的运行时source.nativeStamp，创建音轨任务前后强制同身份，不以新文件自认领；该字段不写入代理manifest或偏好。后台管进程、PID、取消/等待close，释放后不准再创建任务。native-player管实际RAM峰值预留、Blob URL与音频对象，关闭先取消准备、卸载音频再撤销URL/预算。返回音轨的包时间基准不变，继续用既有sourceVideoOrigin；当前仅启用已验证的零起点形态，其它回原声，不猜映射。
+
+原生play接上音频时钟后即安排画面循环，Promise只处理成功/失败/过期，不能再阻挡已在前进的时钟，也不能创建双rAF。启动中的静止音频时钟保持静止；成功锚点取当时实际音频位置，防止尾段倒退。暂停游标由已确认操作归属，而非1ms数值相等判定；任何显式seek均清除旧续播归属。JPEG、代理存储/生产、核心原生解码和标注格式均未改变。
+
 ## E48 闲时前读补齐
 
 JPEG沿用现有准备窗口、预算与单次forward-fill；仅已完成且cacheStateAtInput为decoded的目标豁免80ms连续拖动静默期。未完成/冷拖动仍保留保护，旧分段实验分支不复活。

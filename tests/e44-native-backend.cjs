@@ -5,26 +5,35 @@ async function fixture(t,options={}){
  const root=path.resolve(__dirname,'../verification-runs/e44/native-backend-unit');await fs.promises.mkdir(root,{recursive:true});const dir=await fs.promises.mkdtemp(path.join(root,'case-'));
  t.after(()=>fs.promises.rm(dir,{recursive:true,force:true}));const pluginRoot=path.join(dir,'plugin');await fs.promises.mkdir(path.join(pluginRoot,'bin'),{recursive:true});await fs.promises.writeFile(path.join(pluginRoot,'bin/filmcraft-media.exe'),'fixture');
  const source=path.join(dir,'source.mp4');await fs.promises.writeFile(source,'readonly source fixture');
- const readers=[],jobs=[],factoryOptions=[],maintenanceOptions=[],clearCalls=[];let sourceProbes=0;
+ const readers=[],jobs=[],audioJobs=[],factoryOptions=[],maintenanceOptions=[],clearCalls=[];let sourceProbes=0;
  class FakeReader{
   constructor(opts){this.options=opts;this.closed=0;readers.push(this);this.ready=options.holdOpen?new Promise((resolve,reject)=>{this.rejectOpen=reject;}):Promise.resolve(this);}
   async close(){if(this.closing)return this.closing;this.closed++;this.rejectOpen?.(Error('closed before ready'));this.closing=(async()=>{if(options.closeWait)await options.closeWait;return{exit:{code:0}};})();return this.closing;}
  }
- function producer(config){factoryOptions.push(config);return{start(spec){if(options.throwProxy)throw Error('proxy unsupported');let resolve;const job={spec,state:{status:'encoding',stage:'preparing'},ready:new Promise(r=>{resolve=r;}),snapshot(){return this.state;},async cancel(){this.state={status:'cancelled',stage:'cancelled'};resolve(null);return this.ready;},complete(value){this.state={status:'ready',stage:'complete'};resolve(value);}};jobs.push(job);return job;},async close(){await Promise.all(jobs.map(j=>j.cancel()));}};}
+ function producer(config){factoryOptions.push(config);return{pids:()=>[],start(spec){if(options.throwProxy)throw Error('proxy unsupported');let resolve;const job={spec,state:{status:'encoding',stage:'preparing'},ready:new Promise(r=>{resolve=r;}),snapshot(){return this.state;},async cancel(){this.state={status:'cancelled',stage:'cancelled'};resolve(null);return this.ready;},complete(value){this.state={status:'ready',stage:'complete'};resolve(value);}};jobs.push(job);return job;},async close(){await Promise.all(jobs.map(j=>j.cancel()));}};}
  function spawn(exe,args){const c=new EventEmitter();c.stdout=new PassThrough();c.stderr=new PassThrough();c.kill=()=>{c.emit('close',null);};if(options.holdProbe)return c;setImmediate(()=>{
   const audio=args.includes('a:0');let data;
-  if(audio){data={streams:[]};if(options.mutateDuringProbe)fs.writeFileSync(source,'changed source contents while probing');}
+  if(audio){data={streams:options.audio?[{codec_type:'audio',duration:'0.05',start_time:'0',channels:2,sample_rate:'48000'}]:[]};if(options.mutateDuringProbe)fs.writeFileSync(source,'changed source contents while probing');}
   else{sourceProbes++;data={streams:[{codec_type:'video',codec_name:'h264',width:options.videoWidth||1920,height:options.videoHeight||1080,time_base:'1/1000',duration_ts:50,start_pts:0,sample_aspect_ratio:'1:1',color_transfer:options.hdr?'smpte2084':'bt709'}],packets:[{pts:0,duration:17},{pts:33,duration:17},{pts:17,duration:16}]};}
   c.stdout.end(JSON.stringify(data));c.emit('close',0);
  });return c;}
  const filename=path.resolve(__dirname,'../plugin/native-backend.cjs'),realRequire=createRequire(filename),module={exports:{}};
- const requireStub=name=>name==='child_process'?{spawn}:name==='./native-reader.cjs'?{FilmcraftClient:FakeReader}:name==='./whole-proxy.cjs'?{createWholeProxy:producer}:name==='./task-client.cjs'?{createTaskClient(config){maintenanceOptions.push(config);return{cache:{async clearOther(settings){clearCalls.push(settings);if(options.clearWait)await options.clearWait;if(options.clearError)throw options.clearError;return{cleared:2,freedBytes:1024**2,occupiedProtected:1};}},async close(){}};}}:realRequire(name);
+ const requireStub=name=>name==='child_process'?{spawn}:name==='./native-audio.cjs'?{createAudioTrack(config){let resolve,reject;const task={config,promise:new Promise((a,b)=>{resolve=a;reject=b;}),pids:()=>[9191],cancel(){task.cancelled=true;reject(Object.assign(Error('cancelled'),{code:'AUDIO_CANCELLED'}));},complete:value=>resolve(value)};audioJobs.push(task);return task;}}:name==='./native-reader.cjs'?{FilmcraftClient:FakeReader}:name==='./whole-proxy.cjs'?{createWholeProxy:producer}:name==='./task-client.cjs'?{createTaskClient(config){maintenanceOptions.push(config);return{cache:{async clearOther(settings){clearCalls.push(settings);if(options.clearWait)await options.clearWait;if(options.clearError)throw options.clearError;return{cleared:2,freedBytes:1024**2,occupiedProtected:1};}},async close(){}};}}:realRequire(name);
  vm.runInNewContext(fs.readFileSync(filename,'utf8'),{require:requireStub,module,exports:module.exports,Buffer,console,setTimeout,clearTimeout,process,AbortController},{filename});
  const backend=module.exports.createNativeBackend({pluginRoot,tools:{ffmpeg:path.join(dir,'ffmpeg'),ffprobe:path.join(dir,'ffprobe')},automaticProxy:false,ramBytes:1024**3,...options.backend});t.after(()=>backend.close());
- return{dir,pluginRoot,source,backend,readers,jobs,factoryOptions,maintenanceOptions,clearCalls,sourceProbes:()=>sourceProbes};
+ return{dir,pluginRoot,source,backend,readers,jobs,audioJobs,factoryOptions,maintenanceOptions,clearCalls,sourceProbes:()=>sourceProbes};
 }
 test('source identity spans frame/audio probe and hash',async t=>{
  const f=await fixture(t,{mutateDuringProbe:true});await assert.rejects(f.backend.media.prepare({id:'unit',filePath:f.source}),/建立帧索引期间发生变化/);assert.equal(f.readers.length,0);
+});
+test('independent audio uses source ownership and caller RAM cap without starting a proxy',async t=>{
+ const f=await fixture(t,{audio:true}),info=await f.backend.media.prepare({id:'audio-unit',filePath:f.source}),runtime=info.nativeRuntime,waiting=runtime.audioTrack(123456);
+ assert.equal(f.audioJobs.length,1);assert.equal(f.jobs.length,0);assert.equal(f.audioJobs[0].config.source.sha256,info.source.sha256);assert.equal(f.audioJobs[0].config.expectedStamp,info.source.nativeStamp);assert.equal(f.audioJobs[0].config.maxBytes,123456);assert(runtime.resourcePids().includes(9191));
+ const track={bytes:Buffer.alloc(8),mime:'audio/mp4'};f.audioJobs[0].complete(track);assert.equal(await waiting,track);assert(!runtime.resourcePids().includes(9191));await runtime.release();await assert.rejects(runtime.audioTrack(123456),e=>e.code==='MEDIA_CANCELLED');
+});
+test('release cancels an owned independent audio process and waits for its settlement',async t=>{
+ const f=await fixture(t,{audio:true}),info=await f.backend.media.prepare({id:'cancel-audio',filePath:f.source}),waiting=info.nativeRuntime.audioTrack(123456),outcome=assert.rejects(waiting,e=>e.code==='AUDIO_CANCELLED');
+ await info.nativeRuntime.release();await outcome;assert.equal(f.audioJobs[0].cancelled,true);assert.equal(info.nativeRuntime.resourcePids().length,0);assert.equal(await fs.promises.readFile(f.source,'utf8'),'readonly source fixture');
 });
 test('proxy binds original ordinal to actual proxy PTS and preserves frame geometry',async t=>{
  const f=await fixture(t),info=await f.backend.media.prepare({id:'unit',filePath:f.source});assert.equal(info.width,1280);assert.equal(info.height,720);assert.equal(info.frames[1].ptsTicks,'17');

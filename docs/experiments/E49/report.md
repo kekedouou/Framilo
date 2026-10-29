@@ -1,0 +1,41 @@
+# E49 调查与修复记录
+
+2026-10-29，基于401994a。[范围](plan.md)。已修原声路径恢复原片视频解码的额外负担，适用本地检查和真实音频浏览器验证通过，Eagle实际续播/物理声画同步未最终验收。代理保持不变。
+
+## 问题与证据链
+
+只读Eagle查询确认源ID MVOKJHHTD4ULJ、MP4、3840×2160、89,484,130B、5763帧/96.081秒；源SHA为2bee22e4445975202a8cb8c4c3959c2a27227f0e3ce6f00436bb78fa57d9f696。真实视频编码AV1，音轨Opus/48kHz/双声道，早期口头称AAC已纠正。素材及标注未写入。
+
+用户补充触发是原地暂停后继续，不能拿拖后播放代替。冻结401994a，独立Chrome156、真实本地MP4音频和全热1×1像素模型初测：10次短暂停续播0.2～0.5ms；拖后启动102～541ms主要在音频seek，虽真实但不是本次用户触发。进一步在0/8/16/60/90秒分别暂停0.1/1/5/15秒：短暂停首音频推进通常≤11ms，15秒后个别位置需约0.4～0.8秒。
+
+前台、禁后台节流及轮询/RAF间隙排除观察回调迟到；元素volume=1并用Chrome静音仍复现。Media trace证实HTMLAudio直接加载原MP4仍实例化D3D11VideoDecoder及4K AV1视频轨，长暂停后kSuspending/kResuming；音轨约47ms已buffer足够，视频约668ms才足够，整条媒体时钟等待原视频。这解释了为何完整代理和热像素不能绕过该路径，尚不能直接宣布Eagle108完全同根因。
+
+既存同源JPEG WAV只读对照没有视频解码器，8/16秒两处15秒暂停的首音频推进94/102ms；原MP4同条件406/682ms。再用原压缩Opus无损转封装到内存Blob为92/86ms，证明不必采用更大PCM或常驻保活。Chrome未暴露audioTracks/videoTracks，不能简单JS禁原MP4视频轨。
+
+真实1440p YUV与正式renderer/UI/Player另测：只读已有代理41帧（约216MiB）驻RAM，RTX3060 WebGL无回退；每版本16次短暂停，UI通知中位0.2ms/最大2.4ms，真正越过输入音频位置的新帧推进基线最大1.8ms/当前最大7.8ms，未复现明显UI阻塞。不把首次补暂停前旧帧当续播推进；早期判据不足样本保留，不当优化成绩。此组未覆盖15秒挂起、实时IPC/后台填充或Eagle。
+
+## 实施
+
+- 新native-audio.cjs复制原压缩音轨，无音频重编码、视频解码、Worker或持久缓存。流式ffprobe比较全部包SHA、PTS/DTS、可推导边界、skip/padding及编码初始化数据；输出必须只有一条音轨。32MiB调用上限（模块硬顶64MiB）、元数据/单行/30秒任务上限，源payload已超额度提前停止，取消终止自有进程并等待close。
+- native-backend保存inspect已验证的运行时source.nativeStamp，helper开始前和全部成功/失败收尾强制相同；源被稳定替换、中途改变或失去身份均fatal，不回退到未确认的新源。该字段不写偏好或代理manifest。后台管任务、PID和关闭；准备失败/不支持/超额可保留原声，可能保留原等待，原因在audioSourceIssue。
+- native-player先按maxBytes×3预留收集/合并/Blob峰值，完成按实际字节×2计费；关闭先卸载音频再撤销Blob、释放预算。仅启用已验证的零起点形态，非零媒体/音轨起点保守回原声，不猜edit-list映射。
+- 画面循环不再等audio.play Promise结束，仍跟随音频时钟，声音时钟未动不自由抢跑；Promise错误/晚到不能复活旧播放。原地续播使用实际已暂停游标，避免1ms相等条件引发无谓重seek；Promise期间已走过的时间纳入成功锚点，尾段不回到旧起点。
+
+代理配方/生产/存储、JPEG、画质、标注和数据格式未改，无新增设置或常驻资源。独立音轨准备是一次开片成本，不在每次暂停续播重新做；长片扫描时间不是固定值，仍需后续实际核实。
+
+## 最终验证与代价
+
+- 正式helper当前源完整准备约242～325ms（仅复制约75.9ms）；音轨1,480,787B，4804包指纹/时序一致，重新解码的整段PCM摘要也完全相同。初版直接比较fragmented MP4缺省packet.duration字段失败，保留失败；改为相邻PTS/显式末尾边界推导后严格验证通过，没有忽略真实差异。
+- 正式backend.inspect→runtime.audioTrack只读联通：Node24及Eagle自带Node16.17.1通过，后者inspect约449ms、音轨准备约293ms、无残留PID；automaticProxy=false、隔离空缓存根，没有生成代理。Node16不代表Eagle Chromium108媒体或UI验收。
+- 当前正式Player自建Blob的浏览器集成：audioSource=audio-only-copy、无回退，仅OpusAudioDecoder、无视频轨/视频解码器。10次短暂停首音频推进最大5.4ms；8次定位后播放完成最大2.4ms/首音频推进最大24ms；15秒原地暂停8/16秒处94/143ms，首像素110/150ms，仍有约0.1～0.15秒恢复，不能承诺零延迟。首冷播放单样本257ms单列，不能用它声称前后改善。
+- 四个分散位置源ordinal正确，Chrome媒体时钟误差约0.67μs；不是物理音画同步计量。正式Blob创建0.2ms，audio-source预算2,961,574B，关闭预算归零，创建/撤销各一次且撤销后不可fetch。最终零起点守卫又做26场景短连接确认，长暂停数据记录各自源码SHA，没有伪称同一个快照。
+- 默认`node scripts/check.cjs --without-prepared-host`通过，154文档/973链接及现行功能/语法/模块边界/manifest；原生57项、backend15项、音轨helper24项及原有JPEG回归通过。旧5套用户标测/report/代理条测试继续不执行。
+- `node scripts/package-release.cjs native-experience`验证新增音轨模块已进正式清单、原生二进制/许可证身份保持；未创建ZIP或改冻结Beta。
+
+开发证据均在verification-runs/e49：audio-media-comparison、formal-audio-summary、实际backend/node16、full-ui及原始失败/诊断。独立Chrome是静音输出、真实源音频配合小热像素或单独1440p像素检查，不能代替Eagle真实音量/全部输入/长稳和用户体验。非零起点、其它codec/长片、Eagle108 Blob seek及物理音画同步仍待实际验收。
+
+## 文档、版本与整理
+
+同步README、profile模块表及产品/架构/开发计划/路线/验证/进度正文；性能工作流和历史阶段无制度变化，未伪改旧结果。源码/提交清单与收尾回执保存在本轮目录；3个旧暂存探针和40个退休未跟踪文件保持归属，不混提交、不推送。浏览器和自有子进程已退出，scratch按身份清理；隔离音轨1,480,787B在全部比对完成后按SHA定点删除，保留包/PCM验证、音轨身份和复现脚本，回执audio-cleanup.json。
+
+复盘：初期“audio.play Promise挡画面”是可修的独立缺口，但不足以解释用户原地暂停；先澄清触发，再增加长暂停和Media轨迹，才定位到取声路径仍带视频。没有用GPU格式替换或常驻保活掩盖问题；当前采用有界、无损的独立音轨，明确保留约0.1秒恢复和宿主未验边界。
