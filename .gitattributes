@@ -1,0 +1,5 @@
+# Native runtime provenance is byte-addressed; preserve build and license hashes.
+/plugin/bin/** -text
+/native/filmcraft/bridge.rs -text
+/native/filmcraft/patch-upstream.cjs -text
+/native/filmcraft/licenses/** -text

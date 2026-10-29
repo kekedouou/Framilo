@@ -42,3 +42,5 @@ patch-upstream.cjs校验原文件SHA后重建两处集成补丁：按返回Arc�
 build.ps1只编译平台crate的eagle_media例子，使用Rust 1.95 GNU和自带rust-lld；无需编译完整FilmCraft。生成SHA构建清单、FilmCraft许可及132个正常Windows依赖的合并许可/来源。Symphonia的crate包省略工作区根LICENSE，licenses/Symphonia-MPL-2.0.txt取自其锁定包VCS revision 6d533f26150953a882a6a111ebd13f0abf7129d5的原文。第三方MPL组件未修改，notices明确提供对应源码入口。
 
 E45已执行10项纯缩放/平面/黑白边界测试，构建日志/二进制哈希见本机回执。新的真实媒体、Eagle及体验结果由E44交付记录承载，不能沿用旧二进制成绩。
+
+Git保真：运行目录、桥源码、上游补丁与许可文本的字节参与构建/许可校验，.gitattributes对这些路径禁用换行转换；检出时不能用CRLF/LF自动转换改变指纹。它不修改运行代码、编码配方或许可原文。
