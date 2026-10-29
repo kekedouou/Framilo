@@ -53,9 +53,17 @@
   async seek(time,settings={}){
    if(this.disposed||!this.info)return {status:'superseded'};
    this.pause(false,!!settings.keepPlayIntent);this.audioResume=null;const version=++this.serial,n=settings.index??this.index.frameAt(this.info.frames,Math.max(0,Math.min(this.info.duration,time)));
-   if(!this.info.frames[n])throw Error('源帧编号无效。');this.targetTime=Math.max(0,Math.min(this.info.duration,time));this.pendingTargets=1;this.frameHeld=true;this.state='seeking';this._change();
-   const began=settings.inputAt??this.now(),cached=this.cache.get(n),frame=this.info.frames[n];if(settings.final)this._primeAudio(frame.time);this._emit('request',{phase:'input',requestId:version,kind:settings.kind||'seek',frameId:frame.id,frameOrdinal:n,ptsTicks:frame.ptsTicks,timeBase:frame.timeBase,sourceTime:frame.time,targetTime:this.targetTime,inputAt:began,final:!!settings.final,cacheStateAtInput:cached?'decoded':'miss'});
-   if(cached){this.reader.cancel();const submit=this.now();this._draw(n,cached);this.pendingTargets=0;this.state='paused';this._change();this._emit('reused',{requestId:version,inputAt:began,frameId:frame.id,time:frame.time,readyAt:began,submitStartedAt:submit,drawAt:this.now()});if(this.runtime.proxyAsset())this._takeProxy().catch(()=>{});return {status:'reused',frameId:frame.id};}
+   if(!this.info.frames[n])throw Error('源帧编号无效。');const cached=this.cache.get(n);this.targetTime=Math.max(0,Math.min(this.info.duration,time));this.pendingTargets=1;this.frameHeld=true;this.state='seeking';
+   // A resident native frame is committed synchronously below. Publishing a
+   // transient held/seeking state first needlessly rebuilds overlays and layout.
+   // Misses still publish the pending state before any asynchronous work.
+   if(!cached)this._change();
+   if(this.disposed||version!==this.serial)return {status:'superseded'};
+   const began=settings.inputAt??this.now(),frame=this.info.frames[n];if(settings.final)this._primeAudio(frame.time);this._emit('request',{phase:'input',requestId:version,kind:settings.kind||'seek',frameId:frame.id,frameOrdinal:n,ptsTicks:frame.ptsTicks,timeBase:frame.timeBase,sourceTime:frame.time,targetTime:this.targetTime,inputAt:began,final:!!settings.final,cacheStateAtInput:cached?'decoded':'miss'});
+   if(this.disposed||version!==this.serial)return {status:'superseded'};
+   if(cached){if(this.readerBusy){this.reader.cancel();this.readOwner=null;this.readerBusy=false;}const submit=this.now(),repeated=n===this.currentIndex;
+    if(!repeated)this._draw(n,cached);else{this.frameHeld=false;this.lastIssue=null;this.lastErrorCode=null;}
+    this.pendingTargets=0;this.state='paused';this._change();this._emit('reused',{requestId:version,inputAt:began,frameId:frame.id,time:frame.time,readyAt:began,submitStartedAt:submit,drawAt:repeated?null:this.now(),repeatedFrame:repeated});if(this.runtime.proxyAsset())this._takeProxy().catch(()=>{});return {status:'reused',frameId:frame.id};}
    // Keep the last confirmed pixels while the new intent is pending. Its source
    // identity stays unchanged and frameHeld prevents treating it as the target.
    if(this.currentIndex===null)this.canvas.style.visibility='hidden';

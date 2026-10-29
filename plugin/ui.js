@@ -153,6 +153,8 @@
       coverageKey = 'empty'; coverageText = ''; updateCoverageStatus();
     }
     function refreshCoverage() {
+      // Hidden diagnostics must not enumerate/sort the RAM cache every 50ms.
+      if(state.interactionSettings?.showCacheStrip===false){clearCoverage();return;}
       const value = session && typeof session.cacheCoverageSnapshot === 'function' ? session.cacheCoverageSnapshot() : null;
       if (!value || value.sessionEpoch !== state.epoch || !(value.duration > 0) || !['paused', 'playing', 'seeking'].includes(state.state)) { clearCoverage(); return; }
       const text = value.issue ? '后台准备暂停，请重开视频重试' : value.decodedFrames === value.totalFrames ? '整段已解压' :
@@ -272,7 +274,7 @@
     on(el.memoryApply, 'click', async () => {
       if (el.memoryApply.disabled || !session || typeof session.setPlaybackSettings !== 'function' && typeof session.setMemoryMiB !== 'function') return;
       const active = session, applySerial = ++memoryApplySerial, ramMiB = Number(el.memoryMiB.value);
-      memoryBusy = true; settingsMessage(el.memoryStatus, '正在应用，完成后保持暂停…'); updateMemorySettings();
+      memoryBusy = true; settingsMessage(el.memoryStatus, ''); updateMemorySettings();
       try { const result = typeof active.setPlaybackSettings === 'function'
           ? await active.setPlaybackSettings({ ramMiB, previewQuality: el.qualitySelect.value, forwardPredecode: true,
             proxyDiskGiB: Number(doc.getElementById('proxyDiskGiB')?.value||state.proxyDiskGiB||5),wheelFrames: Number(el.wheelFrames.value), showCacheStrip: !!el.showCacheStrip.checked, showProxyStrip: el.showProxyStrip ? !!el.showProxyStrip.checked : !!state.interactionSettings?.showProxyStrip, rateStep: Number(el.rateStep.value), drawingFadeSeconds: Number(el.drawingFadeSeconds.value),

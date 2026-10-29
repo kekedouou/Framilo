@@ -25,7 +25,7 @@
     pointer('pointerdown',200,250);pointer('pointermove',250,250,{shiftKey:true});await settle();
     check(Math.abs(seeks.at(-1).time-start-Math.trunc(100/8)/30)<.0001,'Shift doubles horizontal sensitivity');
     pointer('pointermove',300,250,{ctrlKey:true});await settle();
-    check(Math.abs(seeks.at(-1).time-start-Math.trunc(125/8)/30)<.0001,'Ctrl halves the next movement without jumping the previous target');
+    check(Math.abs(seeks.at(-1).time-start-Math.trunc(112.5/8)/30)<.0001,'Ctrl uses one-quarter horizontal sensitivity without jumping the previous target');
     pointer('pointerup',300,250);await sleep(10);
     const previousSeeks=seeks.length,rateBefore=state.playback.transport.rate;
     pointer('pointerdown',400,300);pointer('pointermove',400,270);await settle();

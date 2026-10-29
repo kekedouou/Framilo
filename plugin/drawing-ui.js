@@ -27,8 +27,9 @@
     const objects = () => work || committed;
     const current = () => textDraft?.object || objects().find(o => o.id === selected);
     function hideLayer(hidden) {
-      el.drawingLayer.hidden = hidden;
-      if (hidden) el.drawingLayer.setAttribute('hidden', ''); else el.drawingLayer.removeAttribute?.('hidden');
+      set(el.drawingLayer,'hidden',hidden);
+      const marked=el.drawingLayer.hasAttribute?.('hidden');
+      if(hidden){if(marked!==true)el.drawingLayer.setAttribute('hidden','');}else if(marked!==false)el.drawingLayer.removeAttribute?.('hidden');
     }
     function node(tag, attrs = {}) {
       const n = doc.createElementNS ? doc.createElementNS('http://www.w3.org/2000/svg', tag) : doc.createElement(tag);
@@ -411,13 +412,13 @@
         el.drawingText.hidden = true; el.drawingLayer.replaceChildren(); closeProperties();
       } else if (d && !editor && d.status !== 'pausing') { editor = model.createEditor(d.objects); committed = editor.snapshot(); }
       const active = !!d;
-      el.drawingPanel.hidden = !active || !value.interactionSettings?.drawingToolbar && d.kind !== 'delete'; el.drawingMessage.hidden = !active; el.showDrawings.checked = state?.visible !== false;
-      el.showDrawings.disabled = active || !session(); el.drawingNew.disabled = !canBegin() || state?.status !== 'ready';
-      el.drawingStatus.textContent = state?.message || '';
+      set(el.drawingPanel,'hidden',!active || !value.interactionSettings?.drawingToolbar && d.kind !== 'delete');set(el.drawingMessage,'hidden',!active);set(el.showDrawings,'checked',state?.visible !== false);
+      set(el.showDrawings,'disabled',active || !session());set(el.drawingNew,'disabled',!canBegin() || state?.status !== 'ready');
+      set(el.drawingStatus,'textContent',state?.message || '');
       const shown = active ? temporaryVisible : state?.visible !== false;
       if (active && (!shown || d.kind === 'delete')) closeProperties();
-      el.drawingText.hidden = !textDraft || !shown; el.drawingTextDelete.hidden = el.drawingText.hidden;
-      el.drawingLayer.style.pointerEvents = active && shown && d.kind !== 'delete' ? 'auto' : 'none';
+      set(el.drawingText,'hidden',!textDraft || !shown);set(el.drawingTextDelete,'hidden',el.drawingText.hidden);
+      set(el.drawingLayer.style,'pointerEvents',active && shown && d.kind !== 'delete' ? 'auto' : 'none');
       const valueObjects = active ? objects() : normalObjects();
       hideLayer(!shown || !active && !valueObjects.length || !['paused', 'playing', 'seeking'].includes(value.state));
       if (active) {

@@ -66,10 +66,10 @@ async function cursorCases() {
   h.ui.destroy(); console.log('ok E36 UI: 240 latest-intent inputs, 1500ms virtual frame delay, physical release and stale outcomes remain independent from actual frame readouts');
 
   const screen = uiHarness(); screen.el('screen').fire('pointerdown'); screen.win.fire('pointermove', { clientX: 160 }); screen.flushFrames();
-  const requested = screen.calls.at(-1).time; assert.equal(parseFloat(screen.el('thumb').style.left), requested * 10);
+  const requested = screen.calls.at(-1).time; assert.equal(requested,127/60);assert.equal(screen.calls.at(-1).index,127); assert.equal(parseFloat(screen.el('thumb').style.left), requested * 10);
   screen.win.fire('pointerup', { clientX: 180, buttons: 0 }); assert(screen.calls.at(-1).final);
   const last = screen.calls.at(-1).time; screen.ui.update({ ...screen.state, state: 'seeking', playback: { ...screen.state.playback, pendingTargets: 1 } });
-  assert.equal(parseFloat(screen.el('thumb').style.left), last * 10);
+  assert(Math.abs(parseFloat(screen.el('thumb').style.left)-last*10)<1e-8);
   screen.ui.update({ ...screen.state, epoch: 2, playback: { time: 3, frameId: 180 } });
   screen.pending.at(-1).resolve({ status: 'drawn' }); await microtasks(); assert.equal(screen.el('thumb').style.left, '30%'); screen.ui.destroy();
   console.log('ok E36 UI: screen gesture seek shares intent ownership and a prior source completion cannot move the new source cursor');

@@ -1,5 +1,11 @@
 # 技术架构与模块边界
 
+## E47 热路径小范围优化
+
+Budget以kind增量统计reserve/shrink/release，snapshot只复制类别汇总而不遍历每个缓存token；返回值可修改但不影响内部账本。native-player同步热帧不再先发seeking通知，仅提交一次，重复源帧不上传/绘制，非空闲读取才发取消；未命中与JPEG异步路径仍及时公开未就绪状态。
+
+timeline-strip宽度与screen-gesture-ui同手势几何缓存，仅resize/scroll/布局及范围变化失效，零宽隐藏可恢复；drawing-ui只写变化DOM属性，保留淡入淡出与工具行为。UI在绿条关闭时不再50ms读取全缓存覆盖，设置应用清空旧提示而不添加“正在应用”。screen-gestures在begin按时长一次计算轻量灵敏度，后续仍按准确源帧累计，不增加解码/调度架构。
+
 ## E46 模块变更
 
 native-player移除阻塞启动的4张前读，最终定位并行预定位音频，暂停同步取消读者；JPEG Player只等待当前帧，暂停立即进入paused，后台对齐保持代次保护。screen-gestures累计像素对应源帧，screen-gesture-ui及ui完整透传ordinal，由session.loopFrameAt完成准确时间映射。

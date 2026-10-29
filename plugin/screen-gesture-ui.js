@@ -6,7 +6,9 @@
     if(!screen||!ring||!toast)throw Error('画面手势提示元素缺失。');
     const listeners=[],on=(n,t,f,o)=>{n.addEventListener(t,f,o);listeners.push([n,t,f,o]);};
     const later=(fn,ms)=>(win.setTimeout||setTimeout).call(win,fn,ms),clear=id=>(win.clearTimeout||clearTimeout).call(win,id);
-    let holdTimer=null,hideTimer=null,frame=null,queued=null,epoch=null,destroyed=false,origin=null,hintEpoch=null;
+    let holdTimer=null,hideTimer=null,frame=null,queued=null,epoch=null,destroyed=false,origin=null,hintEpoch=null,geometry=null,lastDirection='',hintPlacement='keyboard';
+    const attributes=new WeakMap(),set=(n,k,v)=>{if(n[k]!==v)n[k]=v;},attr=(n,k,v)=>{let values=attributes.get(n);if(!values){values=new Map();attributes.set(n,values);}if(values.get(k)!==v){values.set(k,v);n.setAttribute(k,v);}};
+    const rect=()=>geometry||(geometry=screen.getBoundingClientRect());
     const event=e=>({id:e.pointerId,x:e.clientX,y:e.clientY,at:now(),button:e.button,shiftKey:!!e.shiftKey,ctrlKey:!!e.ctrlKey});
     function cancelTimer(){if(holdTimer!==null)clear(holdTimer);holdTimer=null;}
     function flush(final=false){
@@ -15,31 +17,33 @@
     }
     function release(old=machine.snapshot()){machine.cancel();cancelTimer();queued=null;
       if(frame!==null){(win.cancelAnimationFrame||clearTimeout).call(win,frame);frame=null;}
-      ring.setAttribute('data-open','false');ring.setAttribute('aria-hidden','true');
+      attr(ring,'data-open','false');attr(ring,'aria-hidden','true');
       if(old)try{if(screen.hasPointerCapture?.(old.id))screen.releasePointerCapture(old.id);}catch(_){}
-      origin=null;
+      origin=null;geometry=null;lastDirection='';
       released();
     }
     function show(direction){
       const value=machine.snapshot();if(!value||!origin)return;
-      const r=screen.getBoundingClientRect();
-      ring.style.left=Math.max(58,Math.min(Math.max(58,r.width-58),origin.x-r.left))+'px';
-      ring.style.top=Math.max(58,Math.min(Math.max(58,r.height-58),origin.y-r.top))+'px';
-      ring.setAttribute('data-open','true');ring.setAttribute('aria-hidden','false');
-      ring.setAttribute('data-direction',direction||'');ring.setAttribute('data-held',String(value.held));
-      ring.setAttribute('data-selection',String(value.horizontalOnly));
+      const r=rect();lastDirection=direction||'';
+      set(ring.style,'left',Math.max(58,Math.min(Math.max(58,r.width-58),origin.x-r.left))+'px');
+      set(ring.style,'top',Math.max(58,Math.min(Math.max(58,r.height-58),origin.y-r.top))+'px');
+      attr(ring,'data-open','true');attr(ring,'aria-hidden','false');
+      attr(ring,'data-direction',lastDirection);attr(ring,'data-held',String(value.held));
+      attr(ring,'data-selection',String(value.horizontalOnly));
     }
     function hideHint(){
       if(hideTimer!==null)clear(hideTimer);
-      hideTimer=null;hintEpoch=null;toast.setAttribute('data-open','false');
+      hideTimer=null;hintEpoch=null;attr(toast,'data-open','false');
+    }
+    function positionHint(placement){
+      if(placement==='keyboard'){set(toast.style,'left','18px');set(toast.style,'top','16px');}
+      else if(origin){const r=rect(),offset=placement==='up'?-82:placement==='down'?82:0;
+        set(toast.style,'left',Math.max(45,Math.min(r.width-45,(parseFloat(ring.style.left)||origin.x-r.left)))+'px');
+        set(toast.style,'top',Math.max(24,Math.min(r.height-24,(parseFloat(ring.style.top)||origin.y-r.top)+offset))+'px');}
     }
     function hint(value,placement='keyboard') {
-      hintEpoch=getContext().epoch;toast.textContent=Number(value.toFixed(3))+'×';toast.setAttribute('data-placement',placement);
-      if(placement==='keyboard'){toast.style.left='18px';toast.style.top='16px';}
-      else if(origin){const r=screen.getBoundingClientRect(),offset=placement==='up'?-82:placement==='down'?82:0;
-        toast.style.left=Math.max(45,Math.min(r.width-45,(parseFloat(ring.style.left)||origin.x-r.left)))+'px';
-        toast.style.top=Math.max(24,Math.min(r.height-24,(parseFloat(ring.style.top)||origin.y-r.top)+offset))+'px';}
-      toast.setAttribute('data-open','true');if(hideTimer!==null)clear(hideTimer);
+      hintEpoch=getContext().epoch;hintPlacement=placement;set(toast,'textContent',Number(value.toFixed(3))+'×');attr(toast,'data-placement',placement);positionHint(placement);
+      attr(toast,'data-open','true');if(hideTimer!==null)clear(hideTimer);
       hideTimer=later(hideHint,800);
     }
     function apply(action){
@@ -63,7 +67,7 @@
       if(!machine.down(event(e),context))return;
       start();
       hideHint();
-      e.preventDefault();screen.tabIndex=-1;screen.focus?.({preventScroll:true});epoch=context.epoch;origin={x:e.clientX,y:e.clientY};
+      e.preventDefault();screen.tabIndex=-1;screen.focus?.({preventScroll:true});epoch=context.epoch;origin={x:e.clientX,y:e.clientY};geometry=null;
       try{screen.setPointerCapture?.(e.pointerId);}catch(_){}
       holdTimer=later(()=>{holdTimer=null;if(machine.hold())show();},420);
     });
@@ -89,9 +93,12 @@
     on(win,'blur',()=>end());
     on(win,'keydown',e=>{if(machine.snapshot()&&e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation?.();end();}},true);
     on(screen,'wheel',e=>{if(machine.snapshot())e.preventDefault();},{capture:true,passive:false});
+    function geometryChanged(){geometry=null;if(origin&&machine.snapshot()){show(lastDirection);if(hintEpoch!==null)positionHint(hintPlacement);}}
+    on(win,'resize',geometryChanged);on(win,'scroll',geometryChanged,true);
+    const observer=win.ResizeObserver?new win.ResizeObserver(geometryChanged):null;observer?.observe(screen);
     function reset(){release();hideHint();}
     return {hint,finish:()=>end(),active:()=>!!machine.snapshot(),update(){if(machine.snapshot()&&(!getContext().enabled||getContext().epoch!==epoch||machine.snapshot().horizontalOnly!==!!getContext().horizontalOnly)||hintEpoch!==null&&getContext().epoch!==hintEpoch)reset();},
-      reset,destroy(){destroyed=true;release();hideHint();listeners.forEach(([n,t,f,o])=>n.removeEventListener(t,f,o));}};
+      reset,destroy(){destroyed=true;release();hideHint();observer?.disconnect();listeners.forEach(([n,t,f,o])=>n.removeEventListener(t,f,o));}};
   }
   return {createScreenGestureUI};
 });

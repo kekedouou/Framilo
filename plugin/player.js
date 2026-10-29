@@ -68,21 +68,24 @@
   class Budget {
     constructor(limit) {
       if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error('RAM预算必须是有效的正整数字节数。');
-      this.limit = limit; this.used = 0; this.peak = 0; this.tokens = new Set();
+      this.limit = limit; this.used = 0; this.peak = 0; this.tokens = new Set();this.kindTotals=new Map();
     }
     reserve(bytes, kind, evict) {
       if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.limit) throw new Error('单次缓存预留超过RAM预算或字节无效。');
       while (this.used + bytes > this.limit && evict && evict()) { /* finite cache */ }
       if (this.used + bytes > this.limit) throw new Error('RAM预算不足，固定资源或在途任务不能提前释放。');
-      const token = { bytes, kind }; this.tokens.add(token); this.used += bytes; this.peak = Math.max(this.peak, this.used); return token;
+      const token = { bytes, kind }; this.tokens.add(token); this.used += bytes; this.peak = Math.max(this.peak, this.used);this._kind(token.kind,bytes,1); return token;
     }
     shrink(token, bytes, kind) {
       if (!this.tokens.has(token) || !Number.isSafeInteger(bytes) || bytes < 0 || bytes > token.bytes) throw new Error('无效的预算转移。');
-      this.used -= token.bytes - bytes; token.bytes = bytes; token.kind = kind;
+      this._kind(token.kind,-token.bytes,-1);this._kind(kind,bytes,1);this.used -= token.bytes - bytes; token.bytes = bytes; token.kind = kind;
     }
-    release(token) { if (token && this.tokens.delete(token)) { this.used -= token.bytes; token.bytes = 0; } }
+    release(token) { if (token && this.tokens.delete(token)) { this._kind(token.kind,-token.bytes,-1);this.used -= token.bytes; token.bytes = 0; } }
+    _kind(kind,bytes,count){const key=typeof kind==='symbol'?kind:String(kind),old=this.kindTotals.get(key)||{bytes:0,count:0};const next={bytes:old.bytes+bytes,count:old.count+count};if(next.count)this.kindTotals.set(key,next);else this.kindTotals.delete(key);}
     snapshot() {
-      const kinds = {}; this.tokens.forEach(token => { kinds[token.kind] = (kinds[token.kind] || 0) + token.bytes; });
+      // Totals change only with reservations. Reading UI snapshots must not
+      // rescan tens of thousands of resident compressed-image tokens.
+      const kinds=Object.fromEntries([...this.kindTotals].map(([kind,row])=>[kind,row.bytes]));
       return { used: this.used, peak: this.peak, limit: this.limit, kinds };
     }
   }

@@ -2,8 +2,11 @@
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;if(typeof window==='object')window.EVAScreenGestures=api;})(typeof globalThis==='object'?globalThis:this,function(){
   'use strict';
   const multiplier = e => e.shiftKey === e.ctrlKey ? 1 : e.shiftKey ? 2 : .5;
-  const PIXELS_PER_FRAME=8;
+  // Horizontal Ctrl is one quarter of the chosen frame speed. Vertical rate
+  // adjustment retains its existing half-step precision.
+  const frameMultiplier=e=>e.shiftKey===e.ctrlKey?1:e.shiftKey?2:.25;
   const clamp = (n,a,b) => Math.max(a,Math.min(b,n));
+  const pixelsPerFrame=seconds=>clamp(240/seconds,2,8);
   function createGesture(){
     let value=null;
     function down(e,context){
@@ -15,8 +18,8 @@
       const frame=typeof frameAt==='function'?frameAt(context.time,bounds):null;
       const mapped=first&&last&&frame&&[first.ordinal,last.ordinal,frame.ordinal].every(Number.isSafeInteger);
       value={id:e.id,epoch:context.epoch,x:e.x,y:e.y,lastX:e.x,lastY:e.y,lastAt:e.at,at:e.at,axis:null,held:false,moved:false,sustained:false,
-        range:{...context.range},width:context.width,time:mapped?frame.time:context.time,ordinal:mapped?frame.ordinal:null,
-        minOrdinal:mapped?first.ordinal:null,maxOrdinal:mapped?last.ordinal:null,frameAt,frameOrigin:mapped?frame.ordinal:null,frameOffset:0,
+        range:{...context.range},pixelsPerFrame:pixelsPerFrame(context.range.end-context.range.start),width:context.width,time:mapped?frame.time:context.time,ordinal:mapped?frame.ordinal:null,
+        minOrdinal:mapped?first.ordinal:null,maxOrdinal:mapped?last.ordinal:null,frameAt,frameOrigin:mapped?frame.ordinal:null,pixelOffset:0,
         rate:context.rate,step:context.step,carry:0,axisAt:null,travel:0,horizontalOnly:!!context.horizontalOnly};
       return true;
     }
@@ -38,8 +41,11 @@
       if(v.axis==='x'){
         const direction=mx<0?'left':'right';
         if(v.ordinal===null)return {kind:'direction',direction};
-        v.frameOffset=clamp(v.frameOffset+mx/PIXELS_PER_FRAME*factor,v.minOrdinal-v.frameOrigin,v.maxOrdinal-v.frameOrigin);
-        const next=v.frameOrigin+Math.trunc(v.frameOffset);
+        // Integrate weighted pixels first: dividing each event separately can
+        // make a return drag disagree by one frame at fractional scales.
+        v.pixelOffset=clamp(v.pixelOffset+mx*frameMultiplier(e),(v.minOrdinal-v.frameOrigin)*v.pixelsPerFrame,(v.maxOrdinal-v.frameOrigin)*v.pixelsPerFrame);
+        const delta=v.pixelOffset/v.pixelsPerFrame;
+        const next=clamp(v.frameOrigin+Math.trunc(delta+Math.sign(delta)*1e-9),v.minOrdinal,v.maxOrdinal);
         const frame=v.frameAt(v.time,{ordinal:next,minOrdinal:v.minOrdinal,maxOrdinal:v.maxOrdinal});
         if(!frame||frame.ordinal!==next||!Number.isFinite(frame.time))return {kind:'direction',direction};
         v.ordinal=next;v.time=frame.time;
@@ -64,5 +70,5 @@
     function end(id){if(!value||id!==undefined&&id!==value.id)return null;const old=value;value=null;return old.axis==='x'?(old.ordinal===null?null:{kind:'seek',time:old.time,ordinal:old.ordinal,final:true}):!old.moved&&!old.held?{kind:'toggle'}:null;}
     return {down,hold,move,end,cancel:()=>{value=null;},snapshot:()=>value?{...value,range:{...value.range}}:null};
   }
-  return {createGesture,multiplier,PIXELS_PER_FRAME};
+  return {createGesture,multiplier,frameMultiplier,pixelsPerFrame};
 });

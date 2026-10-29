@@ -81,4 +81,18 @@ test('A pending locate may accept horizontal replacement without falsely display
 test('Coalescing and final release preserve the exact source ordinal alongside its timestamp',()=>{
  const h=harness();h.down();h.move(116,100);h.move(124,100);h.flush();assert.equal(h.calls.at(-1).ordinal,63);assert.equal(h.calls.at(-1).seek,63/30);h.win.emit('pointerup',{clientX:132,buttons:0});assert.equal(h.calls.at(-1).ordinal,64);assert.equal(h.calls.at(-1).seek,64/30);assert(h.calls.at(-1).final);h.api.destroy();
 });
+test('A fixed gesture origin reads layout once; resize and scroll refresh only its geometry',()=>{
+ const h=harness();let reads=0,rect={left:0,top:0,width:1000,height:600};h.screen.getBoundingClientRect=()=>{reads++;return rect;};
+ h.down();for(let n=0;n<80;n++)h.move(120+n,100);assert.equal(reads,1);const ring=h.doc.getElementById('screenGestureRing');assert.equal(ring.style.left,'100px');
+ rect={left:20,top:10,width:800,height:500};h.win.emit('resize');assert.equal(reads,2);assert.equal(ring.style.left,'80px');assert.equal(ring.style.top,'90px');
+ for(let n=0;n<10;n++)h.move(220+n,100);assert.equal(reads,2);rect={...rect,left:40};h.win.emit('scroll');assert.equal(reads,3);assert.equal(ring.style.left,'60px');
+ h.api.destroy();assert.equal(h.win.listenerCount()+h.screen.listenerCount(),0);
+});
+test('ResizeObserver refreshes the ring when its screen changes size, then disconnects',()=>{
+ const h=harness();h.api.destroy();let notify,observed,disconnected=false,reads=0;
+ h.win.ResizeObserver=class{constructor(fn){notify=fn;}observe(n){observed=n;}disconnect(){disconnected=true;}};
+ const screen=h.screen,original=screen.getBoundingClientRect;screen.getBoundingClientRect=()=>{reads++;return original.call(screen);};
+ const {createScreenGestureUI}=require('../plugin/screen-gesture-ui.js');const api=createScreenGestureUI({document:h.doc,window:h.win,getContext:()=>h.ctx,seek(){},rate(){},now:()=>0});
+ screen.emit('pointerdown',{target:screen});h.win.emit('pointermove',{clientX:160,clientY:100});assert.equal(reads,1);assert.strictEqual(observed,screen);notify();assert.equal(reads,2);api.destroy();assert(disconnected);
+});
 console.log('Screen gesture controller: '+count+' ownership/cancellation checks; not real Eagle.');

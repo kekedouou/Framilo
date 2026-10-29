@@ -1,6 +1,8 @@
 # 项目说明
 
-当前：E-46 按九项反馈修复播放响应、代理尺寸、逐帧拖动及设置/提示；适用本地检查及实际源几何/PTS检查通过，Eagle手感待验。见[本轮计划](experiments/E46/plan.md)。E45及更早为历史。
+当前：E-47 排查RAM命中拖动卡顿，调整按帧拖动速度，撤下JPEG重复应用提示；适用本地检查通过，初始间歇卡顿未稳定复现。见[计划](experiments/E47/plan.md)。E46及更早为历史。
+
+历史E-46： 按九项反馈修复播放响应、代理尺寸、逐帧拖动及设置/提示；适用本地检查及实际源几何/PTS检查通过，Eagle手感待验。见[本轮计划](experiments/E46/plan.md)。E45及更早为历史。
 
 历史E-45： 已实现高画质原片取帧修复、代理磁盘额度和旧代理淘汰、即时监测与资源读数；记录/标测/代理条撤下。适用本地检查通过，真实Eagle高画质体验未验；旧文件清理因工具策略拒绝尚未执行。见[本轮记录](experiments/E45/report.md)。E44及更早段落为历史，冲突项以E45为准。
 
@@ -8,7 +10,7 @@
 
 ## 当前模块与资源边界
 
-原片/完整代理统一FilmCraft原生读者，异步packet源索引/整数PTS，后台独立整片H.264全I生成，完成验证才同帧接管。前台不运行旧分段/稀疏预览；JPEG独立旧整片准备。native-backend/reader/wire管理媒体与进程，native-player/renderer管理源音频时钟、RAM、YUV/WebGL及CPU回退，whole-proxy管理完整生产/发布/取消；proxy-storage管理代理额度及读者租约；live-resources和performance-runtime管理即时监测。设置与现有UI沿原session接线。E46新增统一GPU加速；代理自动生成与提前解压固定开启；其它缓存维护走后台，提示统一左下。
+原片/完整代理统一FilmCraft原生读者，异步packet源索引/整数PTS，后台独立整片H.264全I生成，完成验证才同帧接管。前台不运行旧分段/稀疏预览；JPEG独立旧整片准备。native-backend/reader/wire管理媒体与进程，native-player/renderer管理源音频时钟、RAM、YUV/WebGL及CPU回退，whole-proxy管理完整生产/发布/取消；proxy-storage管理代理额度及读者租约；live-resources和performance-runtime管理即时监测。设置与现有UI沿原session接线。E46新增统一GPU加速；代理自动生成与提前解压固定开启；其它缓存维护走后台，提示统一左下。E47减少热帧/账本/布局冗余，横拖按短长范围一次计算灵敏度，JPEG应用时仅显示实际进度。
 
 原生GOP单读者128～192MiB，接管另预留第二读者；YUV/RGBA、缩略图与表面纳入管理额度，非整个OS/驱动硬上限。E45整片代理额度默认5GiB、可选1～100GiB，按最近使用时间自动淘汰未占用的旧源代理；JPEG保留5GiB。身份不明/当前源/活动读者保护，单片超过额度继续原片。完整代理只在完整核验后接管，代理条已删除。等待保留上帧并用frameHeld保护标注；核验按阶段帧数/字节显示，硬解关闭时不用GPU核验。工具8GiB/验证2GiB/单轮10分钟不扩大。
 

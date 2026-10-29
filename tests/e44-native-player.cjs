@@ -295,3 +295,26 @@ test('a delayed audio play completion after pause is stopped and cannot restart 
   assert.equal(h.audio.paused,true);assert.equal(h.audio.pauseCount,pauses+1);assert.equal(h.p.snapshot().state,'paused');
  }finally{await h.cleanup();}
 });
+
+
+test('E47 resident native frames publish one atomic ready notification and do not cancel an idle decoder',async()=>{
+ const h=await fixture();try{
+  const preparing=h.p.seek(.017);h.primary.complete();await preparing;
+  h.changes.length=0;const cancels=h.primary.cancels,requests=h.primary.requests.length;
+  assert.equal((await h.p.seek(0,{kind:'rapid',final:false})).status,'reused');
+  assert.equal(h.changes.length,1);assert.equal(h.changes[0].state,'paused');assert.equal(h.changes[0].frameHeld,false);assert.equal(h.changes[0].pendingTargets,0);assert.equal(h.changes[0].frameOrdinal,0);
+  assert.equal(h.primary.cancels,cancels);assert.equal(h.primary.requests.length,requests);
+ }finally{await h.cleanup();}
+});
+test('E47 repeated native RAM target settles without uploading or repainting the same picture',async()=>{
+ const h=await fixture();try{const draws=h.p.drawCount,cancels=h.primary.cancels;h.changes.length=0;
+  for(let n=0;n<40;n++)assert.equal((await h.p.seek(.001,{kind:'rapid',final:false})).status,'reused');
+  assert.equal(h.p.drawCount,draws);assert.equal(h.primary.cancels,cancels);assert.equal(h.changes.length,40);assert.equal(h.p.snapshot().targetTime,.001);assert.equal(h.p.snapshot().frameHeld,false);
+ }finally{await h.cleanup();}
+});
+test('E47 misses retain immediate held-frame protection; a synchronous newer intent prevents stale native work',async()=>{
+ const h=await fixture();try{let armed=true;h.p.o.onChange=s=>{h.changes.push(s);if(armed&&s.state==='seeking'){armed=false;h.p.seek(0,{kind:'rapid'});}};
+  const before=h.primary.requests.length;assert.equal((await h.p.seek(.05,{kind:'rapid'})).status,'superseded');
+  const held=h.changes.find(s=>s.state==='seeking');assert(held);assert.equal(held.frameHeld,true);assert.equal(held.pendingTargets,1);assert.equal(h.primary.requests.length,before);assert.equal(h.p.snapshot().frameOrdinal,0);assert.equal(h.p.snapshot().frameHeld,false);
+ }finally{await h.cleanup();}
+});

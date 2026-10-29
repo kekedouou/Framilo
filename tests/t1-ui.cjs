@@ -364,17 +364,17 @@ test('Wheel steps on screen/track with applied sensitivity; sidebar, editing foc
   h.ui.destroy();const before=h.calls.length;h.el('screen').fire('wheel',{deltaY:100});assert.equal(h.calls.length,before);
 });
 test('Wheel/strip settings stay pending until apply; hidden green cache stops painting and returns at current revision',()=>{
-  const h=harness(),timers=new Map();let applied=null,revision=1;
+  const h=harness(),timers=new Map();let applied=null,revision=1,scans=0,lastReadRevision=null;
   h.win.setInterval=(fn,ms)=>{timers.set(ms,fn);return ms;};h.win.clearInterval=id=>timers.delete(id);
-  h.ui.bindSession({setPlaybackSettings(v){applied=v;return Promise.resolve({status:'applied'});},cacheCoverageSnapshot:()=>({sessionEpoch:1,epoch:1,revision,duration:10,
-    decodedFrames:2,totalFrames:10,ranges:[{start:0,end:2}],enabled:true,phase:'preparing'})});
+  h.ui.bindSession({setPlaybackSettings(v){applied=v;return Promise.resolve({status:'applied'});},cacheCoverageSnapshot:()=>{scans++;lastReadRevision=revision;return {sessionEpoch:1,epoch:1,revision,duration:10,
+    decodedFrames:2,totalFrames:10,ranges:[{start:0,end:2}],enabled:true,phase:'preparing'};}});
   const state={...h.state,memorySettings:{ramMiB:1024,ramBytes:1024**3},previewQuality:'720p',forwardPredecode:true,interactionSettings:{wheelFrames:1,showCacheStrip:true}};
   h.ui.update(state);h.el('wheelFrames').value='5';h.el('showCacheStrip').checked=false;h.el('showProxyStrip').checked=true;h.ui.update({...state,playback:{time:3}});
   assert.equal(h.el('wheelFrames').value,'5');assert.equal(h.el('showCacheStrip').checked,false);assert.equal(h.el('showProxyStrip').checked,true);assert.equal(h.el('decodedCache').hidden,false);
   h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:true,proxyDiskGiB:5,wheelFrames:5,showCacheStrip:false,showProxyStrip:true,rateStep:.1,drawingFadeSeconds:.25});
-  h.ui.update({...state,interactionSettings:{wheelFrames:5,showCacheStrip:false}});const before=h.el('decodedCache').paints.length;
-  revision++;timers.get(50)();assert.equal(h.el('decodedCache').paints.length,before);assert(h.el('cacheStatus').textContent.includes('2 / 10'));
-  h.ui.update({...state,interactionSettings:{wheelFrames:5,showCacheStrip:true}});timers.get(50)();assert(h.el('decodedCache').paints.length>before);assert(!h.el('decodedCache').hidden);h.ui.destroy();
+  h.ui.update({...state,interactionSettings:{wheelFrames:5,showCacheStrip:false}});const hiddenScans=scans;timers.get(50)();assert.equal(scans,hiddenScans);const before=h.el('decodedCache').paints.length,beforeScans=scans;
+  revision++;for(let n=0;n<20;n++)timers.get(50)();assert.equal(scans,beforeScans,'A hidden cache strip must not traverse RAM residency');assert.equal(h.el('decodedCache').paints.length,before);
+  h.ui.update({...state,interactionSettings:{wheelFrames:5,showCacheStrip:true}});timers.get(50)();assert(scans>beforeScans);assert.equal(lastReadRevision,revision);assert(h.el('decodedCache').paints.length>before);assert(!h.el('decodedCache').hidden);h.ui.destroy();
 });
 test('2K profile label and fade controls remain pending until apply',()=>{
  const h=harness();let applied=null;
@@ -397,5 +397,12 @@ test('E46 the real GPU checkbox keeps edits pending and submits one unified acce
   const base={...h.state,memorySettings:{ramMiB:1024,ramBytes:1024**3},gpuAcceleration:!enabled};h.ui.update(base);assert.equal(h.el('gpuAcceleration').checked,!enabled);h.el('gpuAcceleration').checked=enabled;h.el('gpuAcceleration').fire('change');h.ui.update({...base,playback:{...base.playback,time:3}});assert.equal(applied,null);assert.equal(h.el('gpuAcceleration').checked,enabled);
   h.el('memoryApply').fire('click');assert.equal(applied.gpuAcceleration,enabled);assert.equal(applied.forwardPredecode,true);for(const id of ['gpuDrawing','decoderPreference','proxyEncoder','autoProxy'])assert.equal(Object.hasOwn(applied,id),false);h.ui.destroy();
  }
+});
+
+test('E47 applying JPEG settings leaves progress unobscured by a duplicate application message',()=>{
+ const h=harness();let apply,resolve;h.ui.bindSession({setPlaybackSettings(value){apply=value;return new Promise(r=>{resolve=r;});}});
+ const state={...h.state,playbackBackend:'jpeg',memorySettings:{ramMiB:1024,ramBytes:1024**3},previewQuality:'720p',forwardPredecode:true};h.ui.update(state);h.el('memoryApply').fire('click');assert(apply);assert.equal(h.el('memoryStatus').textContent,'');
+ h.ui.update({...state,state:'preparing',playback:null,progress:{stage:'decode',frames:41}});assert.equal(h.el('memoryStatus').textContent,'');assert.equal(h.el('proxyState').hidden,false);assert.match(h.el('proxyState').textContent,/41/);assert(!h.el('proxyState').textContent.includes('正在应用'));
+ h.ui.destroy();resolve({status:'applied'});
 });
 console.log('T1 UI: ' + checks + ' in-memory checks passed; real layout/input experience not tested.');
