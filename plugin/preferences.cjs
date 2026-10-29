@@ -2,22 +2,26 @@
 // Local playback preferences. No Eagle/library access or media/cache deletion.
 const fs = require('fs'), path = require('path'), os = require('os');
 const { quality } = require('./preview-profile.cjs');
+const proxyEncoding = require('./proxy-encoding.cjs');
 const OWNER = 'eva-memory-preference-v1', DEFAULT_BYTES = 1024 ** 3, MAX_FILE = 4096;
 const OPTIONS = Object.freeze([512, ...Array.from({ length: 10 }, (_, i) => (i + 1) * 1024)]);
+const DISK_OPTIONS=Object.freeze([1,2,5,10,20,50,100]);
+function diskValue(v=5){if(!DISK_OPTIONS.includes(v))throw Error('请选择有效的代理磁盘额度。');return v;}
 const WHEEL_OPTIONS = Object.freeze([1, 2, 5, 10]);
 const RATE_STEP_OPTIONS = Object.freeze([.1, .2, .25, .5]);
-const DEFAULT_INTERACTION = Object.freeze({ wheelFrames: 1, showCacheStrip: false, rateStep: .1, drawingFadeSeconds: .25, drawingToolbar: false });
+const DEFAULT_INTERACTION = Object.freeze({ wheelFrames: 1, showCacheStrip: false, rateStep: .1, drawingFadeSeconds: .25, drawingToolbar: false, showProxyStrip: false });
 function backendValue(value = 'proxy') {
-  if (!['proxy', 'jpeg'].includes(value)) throw new Error('播放方式只支持帧内代理或JPEG序列。');
+  if (!['proxy', 'jpeg'].includes(value)) throw new Error('播放方式只支持代理或JPEG序列。');
   return value;
 }
-function interactionValue(wheelFrames = 1, showCacheStrip = false, rateStep = .1, drawingFadeSeconds = .25, drawingToolbar = false) {
+function interactionValue(wheelFrames = 1, showCacheStrip = false, rateStep = .1, drawingFadeSeconds = .25, drawingToolbar = false, showProxyStrip = false) {
   if (!WHEEL_OPTIONS.includes(wheelFrames)) throw new Error('滚轮灵敏度请选择1、2、5或10帧。');
   if (typeof showCacheStrip !== 'boolean') throw new Error('缓存绿条显示设置必须为开或关。');
   if (!RATE_STEP_OPTIONS.includes(rateStep)) throw new Error('倍速步长请选择0.1、0.2、0.25或0.5。');
   if (!Number.isFinite(drawingFadeSeconds) || drawingFadeSeconds < 0 || drawingFadeSeconds > 1) throw new Error('标注淡入淡出时长须为0至1秒。');
   if (typeof drawingToolbar !== 'boolean') throw new Error('圈画工具条显示设置必须为开或关。');
-  return Object.freeze({ wheelFrames, showCacheStrip, rateStep, drawingFadeSeconds, drawingToolbar });
+  if (typeof showProxyStrip !== 'boolean') throw new Error('代理帧条显示设置必须为开或关。');
+  return Object.freeze({ wheelFrames, showCacheStrip, rateStep, drawingFadeSeconds, drawingToolbar, showProxyStrip });
 }
 function memoryValue(total, ramMiB, persisted = false) {
   if (!Number.isSafeInteger(total) || total <= 0 || !OPTIONS.includes(ramMiB))
@@ -29,7 +33,9 @@ function memoryValue(total, ramMiB, persisted = false) {
 function createMemoryPreferences(options) {
   let selectedQuality = '720p';
   let selectedPredecode = true;
-  let selectedBackend = 'proxy';
+  let selectedBackend = 'proxy', selectedEncoder = 'nvidia', selectedDecoder = 'prefer-hardware';
+  let selectedAutoProxy = true, selectedDiskGiB=5;
+  let selectedGpuDrawing = true, selectedGpuAcceleration=true;
   let selectedInteraction = DEFAULT_INTERACTION;
   const io = options.io || fs, root = path.resolve(options.pluginRoot), total = options.totalRamBytes === undefined ? os.totalmem() : options.totalRamBytes;
   const same = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
@@ -59,24 +65,38 @@ function createMemoryPreferences(options) {
       const tier = candidates.reduce((a, b) => Math.abs(b - oldMiB) < Math.abs(a - oldMiB) ? b : a, candidates[0]);
       return Object.freeze({ ...memoryValue(total, tier, true), legacyConverted: true });
     }
-    const keys = Object.keys(value).filter(key => !['wheelFrames', 'showCacheStrip', 'rateStep', 'drawingFadeSeconds', 'drawingToolbar', 'playbackBackend'].includes(key)).sort().join(',');
+    const keys = Object.keys(value).filter(key => !['wheelFrames', 'showCacheStrip', 'showProxyStrip', 'rateStep', 'drawingFadeSeconds', 'drawingToolbar', 'playbackBackend', 'proxyEncoder', 'decoderPreference', 'autoProxy', 'gpuDrawing','proxyDiskGiB','gpuAcceleration'].includes(key)).sort().join(',');
     if (!['owner,ramMiB', 'owner,previewQuality,ramMiB', 'forwardPredecode,owner,previewQuality,ramMiB'].includes(keys)) throw new Error('播放器设置格式无法识别；原件已保留。');
     if (value.forwardPredecode !== undefined && typeof value.forwardPredecode !== 'boolean') throw new Error('提前解压设置必须为开或关。');
+    if (value.autoProxy !== undefined && typeof value.autoProxy !== 'boolean') throw new Error('自动代理设置必须为开或关。');
+    if (value.gpuDrawing !== undefined && typeof value.gpuDrawing !== 'boolean') throw new Error('GPU视频绘制必须为开或关。');
+    if(value.gpuAcceleration!==undefined&&typeof value.gpuAcceleration!=='boolean')throw Error('GPU加速必须为开或关。');
+    selectedGpuAcceleration=value.gpuAcceleration??(value.decoderPreference!=='prefer-software'&&value.gpuDrawing!==false);
     const backend = backendValue(value.playbackBackend);
-    const interaction = interactionValue(value.wheelFrames, value.showCacheStrip, value.rateStep, value.drawingFadeSeconds, value.drawingToolbar), selected = quality(value.previewQuality), memory = memoryValue(total, value.ramMiB, true);
-    selectedPredecode = value.forwardPredecode === undefined ? true : value.forwardPredecode;
-    selectedQuality = selected; selectedInteraction = interaction; selectedBackend = backend;
+    const interaction = interactionValue(value.wheelFrames, value.showCacheStrip, value.rateStep, value.drawingFadeSeconds, value.drawingToolbar, value.showProxyStrip), selected = quality(value.previewQuality), memory = memoryValue(total, value.ramMiB, true);
+    selectedPredecode = true;
+    selectedQuality = selected; selectedInteraction = interaction; selectedBackend = backend; selectedEncoder = proxyEncoding.encoder(value.proxyEncoder); selectedDecoder = proxyEncoding.decoder(value.decoderPreference);
+    selectedDiskGiB=diskValue(value.proxyDiskGiB);
+    selectedAutoProxy = true;
+    selectedGpuDrawing=selectedGpuAcceleration;selectedEncoder=selectedGpuAcceleration?'nvidia':'cpu';selectedDecoder=selectedGpuAcceleration?'prefer-hardware':'prefer-software';
     return memory;
   }
   let current = read() || memoryValue(total, DEFAULT_BYTES / 1024 ** 2);
-  return Object.freeze({ snapshot: () => current, quality: () => selectedQuality, forwardPredecode: () => selectedPredecode, interaction: () => selectedInteraction, backend: () => selectedBackend,
-    preview: ramMiB => memoryValue(total, ramMiB), save(ramMiB, previewQuality = selectedQuality, forwardPredecode = selectedPredecode, interaction = selectedInteraction, playbackBackend = selectedBackend) {
+  return Object.freeze({ snapshot: () => current, gpuAcceleration:()=>selectedGpuAcceleration, quality: () => selectedQuality, forwardPredecode: () => selectedPredecode, interaction: () => selectedInteraction, backend: () => selectedBackend, proxyEncoder: () => selectedEncoder, decoderPreference: () => selectedDecoder, automaticProxy: () => selectedAutoProxy, gpuDrawing: () => selectedGpuDrawing,proxyDiskGiB:()=>selectedDiskGiB,
+    preview: ramMiB => memoryValue(total, ramMiB), save(ramMiB, previewQuality = selectedQuality, forwardPredecode = selectedPredecode, interaction = selectedInteraction, playbackBackend = selectedBackend, proxyEncoder = selectedEncoder, decoderPreference = selectedDecoder, autoProxy = selectedAutoProxy, gpuDrawing = selectedGpuDrawing,proxyDiskGiB=selectedDiskGiB,gpuAcceleration) {
+    diskValue(proxyDiskGiB);
     quality(previewQuality);
-    backendValue(playbackBackend);
+    backendValue(playbackBackend); proxyEncoding.encoder(proxyEncoder); proxyEncoding.decoder(decoderPreference);
     if (typeof forwardPredecode !== 'boolean') throw new Error('提前解压设置必须为开或关。');
-    const nextInteraction = interactionValue(interaction.wheelFrames, interaction.showCacheStrip, interaction.rateStep, interaction.drawingFadeSeconds, interaction.drawingToolbar);
+    if (typeof autoProxy !== 'boolean') throw new Error('自动代理设置必须为开或关。');
+    if (typeof gpuDrawing !== 'boolean') throw new Error('GPU视频绘制必须为开或关。');
+    if(gpuAcceleration!==undefined&&typeof gpuAcceleration!=='boolean')throw Error('GPU加速必须为开或关。');
+    const acceleration=gpuAcceleration??selectedGpuAcceleration;
+    proxyEncoder=acceleration?'nvidia':'cpu';decoderPreference=acceleration?'prefer-hardware':'prefer-software';gpuDrawing=acceleration;
+    forwardPredecode=true;autoProxy=true;
+    const nextInteraction = interactionValue(interaction.wheelFrames, interaction.showCacheStrip, interaction.rateStep, interaction.drawingFadeSeconds, interaction.drawingToolbar, interaction.showProxyStrip);
     const next = memoryValue(total, ramMiB, true); checkRoot(); read(); const before = identity(stat(file));
-    const bytes = Buffer.from(JSON.stringify({ owner: OWNER, ramMiB, previewQuality, forwardPredecode, ...nextInteraction, playbackBackend }, null, 2));
+    const bytes = Buffer.from(JSON.stringify({ owner: OWNER, ramMiB, previewQuality, forwardPredecode, ...nextInteraction, playbackBackend, proxyEncoder, decoderPreference, autoProxy, gpuDrawing,proxyDiskGiB,gpuAcceleration:acceleration }, null, 2));
     let fd = null, owned = null;
     try {
       fd = io.openSync(temp, 'wx'); owned = io.fstatSync(fd);
@@ -85,11 +105,11 @@ function createMemoryPreferences(options) {
       if (identity(stat(file)) !== before || !io.readFileSync(temp).equals(bytes)) throw new Error('内存设置保存期间改变，未覆盖原件。');
       const s = stat(temp);
       if (!s || s.dev !== owned.dev || s.ino !== owned.ino) throw new Error('内存设置临时文件身份改变。');
-      io.renameSync(temp, file); owned = null; current = next; selectedQuality = previewQuality; selectedPredecode = forwardPredecode; selectedInteraction = nextInteraction; selectedBackend = playbackBackend; return current;
+      io.renameSync(temp, file); owned = null; current = next; selectedQuality = previewQuality; selectedPredecode = forwardPredecode; selectedInteraction = nextInteraction; selectedBackend = playbackBackend; selectedEncoder = proxyEncoder; selectedDecoder = decoderPreference; selectedAutoProxy = autoProxy; selectedGpuDrawing = gpuDrawing;selectedDiskGiB=proxyDiskGiB;selectedGpuAcceleration=acceleration; return current;
     } finally {
       if (fd !== null) io.closeSync(fd);
       if (owned) { const s = stat(temp); if (s && s.dev === owned.dev && s.ino === owned.ino) io.unlinkSync(temp); }
     }
   } });
 }
-module.exports = { createMemoryPreferences, memoryValue, interactionValue, DEFAULT_INTERACTION, WHEEL_OPTIONS, RATE_STEP_OPTIONS, OWNER, DEFAULT_BYTES, OPTIONS };
+module.exports = { createMemoryPreferences, memoryValue, interactionValue, DEFAULT_INTERACTION, WHEEL_OPTIONS, RATE_STEP_OPTIONS, OWNER, DEFAULT_BYTES, OPTIONS,DISK_OPTIONS,diskValue };

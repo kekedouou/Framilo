@@ -1,0 +1,297 @@
+'use strict';
+// Interaction/ownership model only. Timing numbers here are not performance evidence.
+const assert=require('node:assert/strict'),{test}=require('node:test');
+const index=require('../plugin/frame-index.cjs');
+global.EVAPlayer=require('../plugin/player.js');
+global.ImageData=class ImageData{constructor(data,width,height){if(data.length!==width*height*4)throw Error('bad fake image');Object.assign(this,{data,width,height});}};
+function canvas(){
+ const c={width:1,height:1,style:{},draws:[],visibilityWrites:[]};let visibility;
+ Object.defineProperty(c.style,'visibility',{get:()=>visibility,set:value=>{visibility=value;c.visibilityWrites.push(value);}});
+ const ctx={image:null,putImageData(im){this.image=im;c.draws.push(im.data[0]);},drawImage(source){this.image=source.getContext().image;},getImageData(x,y,w,h){return new ImageData(new Uint8ClampedArray(w*h*4).fill(this.image?.data[0]||0),w,h);}};
+ c.getContext=()=>ctx;return c;
+}
+global.document={createElement(type){if(type!=='canvas')throw Error('Unexpected DOM element '+type);return canvas();}};
+const {Player}=require('../plugin/native-player.js');
+const turn=()=>new Promise(r=>setImmediate(r));
+function reader(name){
+ const r={name,requests:[],cancels:0,closed:0,
+  request(ordinal){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});this.requests.push({ordinal,resolve,reject,promise});return promise;},
+  complete(at=this.requests.length-1){const q=this.requests[at];if(!q||q.done)throw Error('No pending fake request');q.done=true;q.resolve({status:'exact',pixels:Buffer.from([q.ordinal,0,0,255]),metrics:{width:1,height:1}});},
+  cancel(){this.cancels++;},snapshot(){return {closed:!!this.closed};}
+ };return r;
+}
+async function fixture(options={}){
+ let now=0,next=0;const callbacks=new Map(),primary=reader('source'),proxies=[],closed=[],view=options.canvas||canvas(),changes=[];
+ let listener=null,asset=null;
+ const runtime={nativeBytes:4096,
+  async createReader({proxy=false}={}){if(!proxy)return primary;const r=reader('proxy-'+proxies.length);proxies.push(r);return r;},
+  async closeReader(r){r.closed++;closed.push(r.name);for(const q of r.requests)if(!q.done){q.done=true;q.resolve({status:'closed'});}return {ack:{cacheBytes:0,liveDecoders:0}};},
+  subscribeProxy(fn){listener=fn;return()=>{listener=null;};},proxyAsset(){return asset;},
+  publish(){asset={filePath:'verified-proxy.mp4'};listener?.();}
+ };
+ const frames=index.buildIndex([100,117,150,200].map((pts,id)=>({id:pts,ptsTicks:String(pts),file:'frame-'+id,bytes:1})),{timeBase:[1,1000],lastFrameEndTicks:'250'});
+ const info={width:1,height:1,duration:frames.videoDuration,frames:frames.frames,source:{filePath:'D:/source.mp4'},metrics:{sourceVideoOrigin:.1}};
+ const audio={paused:true,ended:false,currentTime:0,playbackRate:1,playCount:0,pause(){this.paused=true;},async play(){this.playCount++;this.paused=false;},removeAttribute(){},load(){}};
+ if(options.eventAudio){
+  let time=0;const listeners=new Map();audio.seeking=false;audio.pauseCount=0;audio.playGates=[];
+  Object.defineProperty(audio,'currentTime',{get:()=>time,set:value=>{if(Math.abs(value-time)>.000001){time=value;audio.seeking=true;}}});
+  audio.addEventListener=(name,fn)=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(fn);};
+  audio.removeEventListener=(name,fn)=>listeners.get(name)?.delete(fn);
+  audio.listenerCount=()=>[...listeners.values()].reduce((sum,items)=>sum+items.size,0);
+  audio.completeSeek=()=>{audio.seeking=false;for(const fn of [...(listeners.get('seeked')||[])])fn();};
+  audio.pause=()=>{audio.pauseCount++;audio.paused=true;};
+  audio.play=()=>{audio.playCount++;if(!options.deferredPlay){audio.paused=false;return Promise.resolve();}
+   return new Promise(resolve=>audio.playGates.push(()=>{audio.paused=false;resolve();}));};
+ }
+ if(options.audio)info.audio={file:'audio',bytes:1,start:0,duration:info.duration,channels:2,sampleRate:48000};
+ const p=new Player({nativeRuntime:runtime,frameIndex:index,canvas:view,ramBytes:64*1024,createAudio:()=>audio,
+  onChange:s=>changes.push(s),env:{now:()=>now,raf:fn=>{const n=++next;callbacks.set(n,fn);return n;},caf:n=>callbacks.delete(n)}});
+ const loading=p.load(info);await turn();assert.equal(primary.requests.length,1);if(!options.holdInitial){primary.complete(0);await loading;}
+ return {p,primary,proxies,runtime,view,closed,changes,audio,info,loading,
+  advance(seconds){now+=seconds*1000;audio.currentTime=.1+seconds;const pending=[...callbacks.values()];callbacks.clear();for(const fn of pending)fn(now);},
+  async cleanup(){await p.dispose();await turn();}};
+}
+test('late seek result cannot replace the newest target or picture',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  const a=h.p.seek(.017),b=h.p.seek(.05);assert.equal(h.p.snapshot().targetTime,.05);assert.equal(h.view.style.visibility,'visible');assert.equal(h.p.snapshot().frameHeld,true);
+  h.primary.complete(1);assert.equal((await a).status,'superseded');assert.equal(h.p.snapshot().targetTime,.05);assert.equal(h.p.snapshot().frameId,100);
+  h.primary.complete(2);assert.equal((await b).status,'drawn');assert.equal(h.p.snapshot().frameId,150);assert.equal(h.view.draws.at(-1),2);
+ }finally{await h.cleanup();}
+});
+test('RAM hit cancels old native work and late completion cannot repaint',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  const old=h.p.seek(.05),before=h.primary.cancels,r=await h.p.seek(0);assert.equal(r.status,'reused');assert.equal(h.primary.cancels,before+1);
+  h.primary.complete(1);assert.equal((await old).status,'superseded');assert.equal(h.p.snapshot().frameId,100);assert.equal(h.view.draws.at(-1),0);
+ }finally{await h.cleanup();}
+});
+test('record completion cannot release the foreground decoder ownership',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  h.p.primeRecords([3]);await turn();assert.equal(h.primary.requests[1].ordinal,3);
+  const foreground=h.p.seek(.05);assert.equal(h.p.snapshot().activeImageTasks,1);
+  h.primary.complete(1);await turn();assert.equal(h.p.snapshot().activeImageTasks,1);assert.equal(h.p.snapshot().frameId,100);
+  h.primary.complete(2);await foreground;assert.equal(h.p.snapshot().frameId,150);assert(!h.view.draws.includes(3));
+ }finally{await h.cleanup();}
+});
+test('playback takes priority over a waiting record and uses the original audio clock',{timeout:2000},async()=>{
+ const h=await fixture({audio:true});try{
+  h.p.primeRecords([3]);await turn();const before=h.primary.cancels;
+  assert.equal((await h.p.play()).status,'playing');assert(h.primary.cancels>before);assert.equal(h.audio.playCount,1);assert.equal(h.audio.currentTime,.1);
+  h.advance(.05);assert.equal(h.primary.requests[2].ordinal,2);
+  h.primary.complete(1);await turn();assert.equal(h.p.snapshot().activeImageTasks,1);
+  h.primary.complete(2);await turn();assert.equal(h.p.snapshot().frameId,150);assert.equal(h.p.snapshot().state,'playing');
+ }finally{await h.cleanup();}
+});
+test('proxy old-frame completion cannot jump back after a new target',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  h.runtime.publish();await turn();assert.equal(h.proxies.length,1);assert.equal(h.proxies[0].requests[0].ordinal,0);
+  const newer=h.p.seek(.05);h.primary.complete(1);await newer;h.proxies[0].complete(0);await turn();
+  assert.equal(h.p.snapshot().frameId,150);assert.equal(h.p.snapshot().targetTime,.05);assert(!h.view.draws.slice(1).includes(0));
+ }finally{await h.cleanup();}
+});
+test('dispose closes pending work and releases all managed reservations',{timeout:2000},async()=>{
+ const h=await fixture();const pending=h.p.seek(.05),draws=h.view.draws.length;
+ await h.p.dispose();assert.equal((await pending).status,'superseded');assert.equal(h.p.snapshot().state,'disposed');assert.equal(h.p.snapshot().budget.used,0);
+ assert.equal(h.primary.closed,1);assert.equal(h.view.draws.length,draws);
+});
+test('transport retains rate, loop validity and source frame identities',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  await h.p.setPlaybackRate(2.5);const applying=h.p.applyLoopRange({startOrdinal:1,endOrdinal:3});h.primary.complete(1);await applying;
+  const t=h.p.transportSnapshot();assert.equal(t.rate,2.5);assert.equal(t.loop.valid,true);assert.equal(t.loop.startId,117);assert.equal(t.loop.endId,200);
+  await h.p.restoreTransport({rate:.5,loop:{...t.loop,enabled:false}});assert.equal(h.p.transportSnapshot().rate,.5);assert.equal(h.p.transportSnapshot().loop.enabled,false);
+  await assert.rejects(async()=>h.p.restoreTransport({rate:1,loop:{...t.loop,startId:999}}),/源帧|身份|source/i);
+ }finally{await h.cleanup();}
+});
+async function promptly(promise){let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('operation stayed pending after cancellation')),150);})]);}finally{clearTimeout(timer);}}
+test('pause settles an event-driven pending audio seek immediately',{timeout:2000},async()=>{
+ const h=await fixture({audio:true,eventAudio:true});try{
+  const starting=h.p.play();await turn();assert.equal(h.audio.seeking,true);assert.equal(h.audio.listenerCount(),2);
+  await h.p.pause();assert.equal((await promptly(starting)).status,'superseded');assert.equal(h.audio.playCount,0);
+  assert.equal(h.audio.listenerCount(),0);assert.equal(h.p.snapshot().state,'paused');assert.equal(h.p.snapshot().lastIssue,null);
+ }finally{await h.cleanup();}
+});
+test('dispose settles a pending audio seek without waiting its error timeout',{timeout:2000},async()=>{
+ const h=await fixture({audio:true,eventAudio:true}),starting=h.p.play();await turn();assert.equal(h.audio.seeking,true);
+ await promptly(h.p.dispose());assert.equal((await promptly(starting)).status,'superseded');assert.equal(h.audio.playCount,0);
+ assert.equal(h.audio.listenerCount(),0);assert.equal(h.p.snapshot().budget.used,0);
+});
+test('an older delayed audio play cannot pause a newer successful play',{timeout:2000},async()=>{
+ const h=await fixture({audio:true,eventAudio:true,deferredPlay:true});try{
+  const first=h.p.play();await turn();h.audio.completeSeek();await turn();assert.equal(h.audio.playGates.length,1);
+  const second=h.p.play();await turn();assert.equal(h.audio.playGates.length,2);h.audio.playGates[1]();assert.equal((await promptly(second)).status,'playing');
+  const pauses=h.audio.pauseCount;h.audio.playGates[0]();assert.equal((await promptly(first)).status,'superseded');
+  assert.equal(h.audio.pauseCount,pauses);assert.equal(h.audio.paused,false);assert.equal(h.p.snapshot().state,'playing');
+ }finally{await h.cleanup();}
+});
+test('confirming a complete clip locates its source start and automatically plays',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  const confirming=h.p.applyLoopRange({startOrdinal:1,endOrdinal:3});h.primary.complete(1);
+  assert.equal((await confirming).status,'playing');const s=h.p.snapshot();assert.equal(s.state,'playing');assert.equal(s.frameId,117);
+  assert.equal(s.transport.loop.enabled,true);assert.equal(s.transport.loop.startId,117);assert.equal(s.transport.loop.endId,200);
+ }finally{await h.cleanup();}
+});
+test('pause during clip confirmation leaves the previous range and does not resume',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  const confirming=h.p.applyLoopRange({startOrdinal:1,endOrdinal:3});await h.p.pause();h.primary.complete(1);
+  assert.equal((await confirming).status,'superseded');assert.equal(h.p.snapshot().state,'paused');assert.equal(h.p.transportSnapshot().loop.enabled,false);assert.equal(h.p.transportSnapshot().loop.startId,null);
+ }finally{await h.cleanup();}
+});
+for(const playing of [false,true])test('enabling a clip outside its range locates the start and '+(playing?'resumes prior playback':'preserves pause'),{timeout:2000},async()=>{
+ const h=await fixture();try{
+  await h.p.restoreTransport({rate:1,loop:{startOrdinal:1,endOrdinal:3,startId:117,endId:200,enabled:false}});if(playing)await h.p.play();
+  const enabling=h.p.setLoopEnabled(true);await turn();assert.equal(h.primary.requests[1].ordinal,1);h.primary.complete(1);await enabling;
+  const s=h.p.snapshot();assert.equal(s.frameId,117);assert.equal(s.transport.loop.enabled,true);assert.equal(s.state,playing?'playing':'paused');
+ }finally{await h.cleanup();}
+});
+test('a newer seek supersedes a pending clip confirmation without auto playback',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  const confirming=h.p.applyLoopRange({startOrdinal:1,endOrdinal:3}),newer=h.p.seek(.05);h.primary.complete(1);assert.equal((await confirming).status,'superseded');
+  h.primary.complete(2);await newer;assert.equal(h.p.snapshot().frameId,150);assert.equal(h.p.snapshot().targetTime,.05);assert.equal(h.p.snapshot().state,'paused');assert.equal(h.p.transportSnapshot().loop.enabled,false);
+ }finally{await h.cleanup();}
+});
+async function reachPendingWrap(h){
+ await h.p.restoreTransport({rate:1,loop:{startOrdinal:1,endOrdinal:2,startId:117,endId:150,enabled:true}});
+ const atEnd=h.p.seek(.05);h.primary.complete(1);await atEnd;await h.p.play();h.advance(.06);await turn();
+ assert.equal(h.primary.requests[2].ordinal,1);assert.equal(h.p.snapshot().pendingTargets,1);
+}
+test('a completed loop wrap resumes playback at the exact start',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  await reachPendingWrap(h);h.primary.complete(2);await turn();assert.equal(h.p.snapshot().state,'playing');assert.equal(h.p.snapshot().frameId,117);
+ }finally{await h.cleanup();}
+});
+test('pause while a loop wrap is locating the start prevents late auto resume',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  await reachPendingWrap(h);await h.p.pause();h.primary.complete(2);await turn();assert.equal(h.p.snapshot().state,'paused');
+ }finally{await h.cleanup();}
+});
+test('a new seek during loop wrap keeps the newest target paused',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  await reachPendingWrap(h);assert.equal((await h.p.seek(0)).status,'reused');h.primary.complete(2);await turn();
+  assert.equal(h.p.snapshot().state,'paused');assert.equal(h.p.snapshot().frameId,100);assert.equal(h.p.snapshot().targetTime,0);
+ }finally{await h.cleanup();}
+});
+test('consecutive uncached seeks keep confirmed pixels visible and preserve actual identity',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  h.view.visibilityWrites.length=0;const a=h.p.seek(.017),b=h.p.seek(.05),c=h.p.seek(.1);
+  const pending=h.p.snapshot();assert.equal(pending.frameHeld,true);assert.equal(pending.frameId,100);assert.equal(pending.time,0);assert.equal(pending.targetTime,.1);
+  assert.equal(h.view.style.visibility,'visible');assert(!h.view.visibilityWrites.includes('hidden'));
+  h.primary.complete(3);await c;h.primary.complete(1);h.primary.complete(2);await Promise.all([a,b]);
+  assert.equal(h.p.snapshot().frameId,200);assert.equal(h.p.snapshot().frameHeld,false);assert(!h.view.visibilityWrites.includes('hidden'));
+ }finally{await h.cleanup();}
+});
+test('a RAM target clears held status without hiding or accepting an older completion',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  h.view.visibilityWrites.length=0;const old=h.p.seek(.05);assert.equal(h.p.snapshot().frameHeld,true);
+  await h.p.seek(0);assert.equal(h.p.snapshot().frameHeld,false);h.primary.complete(1);await old;
+  assert.equal(h.p.snapshot().frameId,100);assert.equal(h.p.snapshot().targetTime,0);assert.equal(h.p.snapshot().frameHeld,false);assert(!h.view.visibilityWrites.includes('hidden'));
+ }finally{await h.cleanup();}
+});
+for(const synchronous of [false,true])test((synchronous?'synchronous request throw':'rejected request')+' settles seeking while retaining held-frame protection',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  if(synchronous)h.primary.request=()=>{throw Error('reader sync failure');};
+  const seeking=h.p.seek(.05);if(!synchronous){h.primary.requests[1].done=true;h.primary.requests[1].reject(Error('reader async failure'));}
+  assert.equal((await seeking).status,'error');const s=h.p.snapshot();assert.equal(s.pendingTargets,0);assert.equal(s.activeImageTasks,0);assert.equal(s.state,'paused');
+  assert.equal(s.frameHeld,true);assert.equal(s.frameId,100);assert.equal(s.time,0);assert.equal(s.targetTime,.05);assert.equal(h.view.style.visibility,'visible');
+  h.runtime.publish();await turn();assert.equal(h.proxies.length,0,'proxy may not declare a failed target ready by resubmitting the old actual frame');
+  await h.p.seek(0);assert.equal(h.p.snapshot().frameHeld,false);assert.equal(h.p.snapshot().lastIssue,null);
+ }finally{await h.cleanup();}
+});
+test('an older response after the latest request failed cannot clear held-frame protection',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  const old=h.p.seek(.017),newer=h.p.seek(.05);h.primary.requests[2].done=true;h.primary.requests[2].reject(Error('latest target failed'));await newer;
+  h.primary.complete(1);assert.equal((await old).status,'superseded');const s=h.p.snapshot();assert.equal(s.frameHeld,true);assert.equal(s.frameId,100);assert.equal(s.targetTime,.05);assert.equal(s.lastIssue,'latest target failed');
+ }finally{await h.cleanup();}
+});
+test('a fresh source hides a shared previous-source canvas until its own first confirmed frame',{timeout:2000},async()=>{
+ const view=canvas();view.getContext().putImageData(new ImageData(new Uint8ClampedArray([99,0,0,255]),1,1));view.style.visibility='visible';
+ const h=await fixture({canvas:view,holdInitial:true});try{
+  assert.equal(view.style.visibility,'hidden');assert.equal(h.p.snapshot().frameId,null);assert.equal(h.p.snapshot().frameHeld,true);
+  h.primary.complete(0);await h.loading;assert.equal(view.style.visibility,'visible');assert.equal(view.draws.at(-1),0);assert.equal(h.p.snapshot().frameId,100);assert.equal(h.p.snapshot().frameHeld,false);
+ }finally{await h.cleanup();}
+});
+test('a cached confirmed target retries a ready proxy blocked during held failure',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  const failed=h.p.seek(.05);h.primary.requests[1].done=true;h.primary.requests[1].reject(Error('target failed'));await failed;
+  h.runtime.publish();await turn();assert.equal(h.proxies.length,0);assert.equal(h.p.snapshot().frameHeld,true);
+  assert.equal((await h.p.seek(0)).status,'reused');await turn();assert.equal(h.proxies.length,1);assert.equal(h.proxies[0].requests[0].ordinal,0);
+  h.runtime.publish();await turn();assert.equal(h.proxies.length,1,'completion notifications cannot start parallel candidates');
+  h.proxies[0].complete(0);await turn();assert.equal(h.p.snapshot().proxyActive,true);assert.equal(h.p.snapshot().frameId,100);assert.equal(h.p.snapshot().targetTime,0);assert.equal(h.p.snapshot().frameHeld,false);
+ }finally{await h.cleanup();}
+});
+test('a new cached intent replaces a proxy candidate without overlap or target rollback',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  const warm=h.p.seek(.017);h.primary.complete(1);await warm;
+  const failed=h.p.seek(.1);h.primary.requests[2].done=true;h.primary.requests[2].reject(Error('target failed'));await failed;h.runtime.publish();await turn();
+  await h.p.seek(0);await turn();assert.equal(h.proxies.length,1);assert.equal(h.proxies[0].requests[0].ordinal,0);
+  await h.p.seek(.017);const afterNew=h.view.draws.length;assert.equal(h.proxies.length,1);
+  h.proxies[0].complete(0);await turn();assert.equal(h.p.snapshot().frameId,117);assert.equal(h.p.snapshot().targetTime,.017);assert(!h.view.draws.slice(afterNew).includes(0));
+  assert.equal(h.proxies[0].closed,1);assert.equal(h.proxies.filter(r=>!r.closed).length,1);assert.equal(h.proxies[1].requests[0].ordinal,1);
+  h.proxies[1].complete(0);await turn();assert.equal(h.p.snapshot().proxyActive,true);assert.equal(h.p.snapshot().frameId,117);assert.equal(h.p.snapshot().targetTime,.017);
+ }finally{await h.cleanup();}
+});
+test('pending or failed held frames cannot be fixed as clip endpoints',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  assert.equal((await h.p.setLoopPoint('start')).status,'applied');assert.equal(h.p.transportSnapshot().loop.startId,100);
+  const waiting=h.p.seek(.05);assert.deepEqual(await h.p.setLoopPoint('end'),{status:'ignored',reason:'frame-not-ready'});assert.equal(h.p.transportSnapshot().loop.endId,null);
+  h.primary.requests[1].done=true;h.primary.requests[1].reject(Error('target failed'));await waiting;
+  assert.deepEqual(await h.p.setLoopPoint('end'),{status:'ignored',reason:'frame-not-ready'});assert.equal(h.p.transportSnapshot().loop.endId,null);
+  const retry=h.p.seek(.05);h.primary.complete(2);await retry;assert.equal((await h.p.setLoopPoint('end')).status,'applied');
+  assert.equal(h.p.transportSnapshot().loop.endId,150);assert.equal(h.p.transportSnapshot().loop.valid,true);
+ }finally{await h.cleanup();}
+});
+
+// The old exact-clock gate discarded every late image and visibly froze playback.
+test('continuous playback displays a late valid frame and never paints backwards',async()=>{
+ const h=await fixture({audio:true});try{await h.p.play();h.advance(.017);const q=h.primary.requests.length-1;assert.equal(h.primary.requests[q].ordinal,1);
+  h.advance(.05);h.primary.complete(q);await turn();assert.equal(h.p.snapshot().frameId,117);assert.equal(h.p.snapshot().state,'playing');
+  h.advance(.07);const next=h.primary.requests.length-1;await h.p.pause();h.primary.complete(next);await turn();assert.equal(h.p.snapshot().frameId,117);
+ }finally{await h.cleanup();}
+});
+
+
+// E46 transport responsiveness: decoder/audio gates are deliberately held, so
+// a fast return cannot merely be a lucky warm decoder completion.
+test('play starts while lookahead frames remain unready instead of waiting for four serial decodes',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  h.p.setForwardPredecode(true);const at=h.primary.requests.length;
+  assert.equal((await promptly(h.p.play())).status,'playing');assert.equal(h.p.snapshot().state,'playing');
+  assert.equal(h.primary.requests.length,at+1);assert.equal(h.primary.requests.at(-1).ordinal,1);
+  assert.equal(h.p.cache.has(1),false,'unready lookahead must not gate the play response');
+  await promptly(h.p.pause());assert.equal(h.p.snapshot().state,'paused');assert.equal(h.p.snapshot().activeImageTasks,0);
+  h.primary.complete(h.primary.requests.length-1);await turn();assert.equal(h.p.snapshot().frameOrdinal,0);
+ }finally{await h.cleanup();}
+});
+
+test('play intent is immediately pausable while native audio seek is pending',{timeout:2000},async()=>{
+ const h=await fixture({audio:true,eventAudio:true});try{
+  const starting=h.p.play();await turn();assert.equal(h.audio.seeking,true);assert.equal(h.p.snapshot().state,'playing');
+  await promptly(h.p.pause());assert.equal(h.p.snapshot().state,'paused');assert.equal((await promptly(starting)).status,'superseded');
+  assert.equal(h.audio.playCount,0);assert.equal(h.audio.listenerCount(),0);
+ }finally{await h.cleanup();}
+});
+
+test('pause and resume reuse a valid audio cursor without rewinding it to the previous picture',{timeout:2000},async()=>{
+ const h=await fixture({audio:true,eventAudio:true});try{
+  h.audio.completeSeek();assert.equal((await promptly(h.p.play())).status,'playing');
+  h.advance(.011);h.audio.completeSeek();assert.equal(h.p.snapshot().frameOrdinal,0);await h.p.pause();
+  assert.equal(h.audio.currentTime,.111);assert.equal((await promptly(h.p.play())).status,'playing');
+  assert.equal(h.audio.currentTime,.111);assert.equal(h.audio.listenerCount(),0);assert.equal(h.audio.playCount,2);
+ }finally{await h.cleanup();}
+});
+
+test('final seeks preposition paused audio alongside picture decoding and invalidate the old resume cursor',{timeout:2000},async()=>{
+ const h=await fixture({audio:true,eventAudio:true});try{
+  h.audio.completeSeek();await h.p.play();h.advance(.011);h.audio.completeSeek();await h.p.pause();
+  const locating=h.p.seek(.05,{final:true});assert(Math.abs(h.audio.currentTime-.15)<1e-9);assert.equal(h.audio.seeking,true);
+  h.audio.completeSeek();h.primary.complete(h.primary.requests.length-1);await locating;
+  assert.equal(h.p.snapshot().frameOrdinal,2);assert.equal((await promptly(h.p.play())).status,'playing');
+  assert(Math.abs(h.audio.currentTime-.15)<1e-9);assert.equal(h.audio.listenerCount(),0);
+ }finally{await h.cleanup();}
+});
+
+test('a delayed audio play completion after pause is stopped and cannot restart sound',{timeout:2000},async()=>{
+ const h=await fixture({audio:true,eventAudio:true,deferredPlay:true});try{
+  h.audio.completeSeek();const starting=h.p.play();await turn();assert.equal(h.audio.playGates.length,1);
+  await h.p.pause();const pauses=h.audio.pauseCount;h.audio.playGates[0]();assert.equal((await promptly(starting)).status,'superseded');
+  assert.equal(h.audio.paused,true);assert.equal(h.audio.pauseCount,pauses+1);assert.equal(h.p.snapshot().state,'paused');
+ }finally{await h.cleanup();}
+});

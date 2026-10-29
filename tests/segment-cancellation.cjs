@@ -61,6 +61,11 @@ async function main(){
  p.player.readAsset=(_,file)=>reader.frame(file);p.player.setMediaTarget=t=>reader.cancelExcept(t);p.player.cancelMediaReads=()=>reader.cancelAll();
  await p.load(data);reader.prefetch(0,null);reader.cancelExcept(0);assert(oldSignal.aborted);
  const play=p.player.play();await flush();rejectOld(cancelled());await p.settle(play);
+ assert.equal(p.player.snapshot().state,'playing');assert.equal(prepared.filter(n=>n===1).length,1,'starting playback must not wait for or demand unused lookahead');
+ // Playback now starts without priming future images. Advance the real Player
+ // clock/rAF into segment 1 so its cancelled page is genuinely demanded again.
+ await p.frame(60);await p.frame(0);
+ assert.equal(p.player.snapshot().frameOrdinal,2,'the retried segment must supply the due source frame');
  assert.equal(p.player.snapshot().state,'playing');assert(!p.events.some(e=>e.type==='error'));assert.equal(prepared.filter(n=>n===1).length,2);
  await p.close();await reader.close();
  console.log('ok segment cancellation: formal Player resumes without fatal cancelled page');

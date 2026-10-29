@@ -10,7 +10,22 @@ function createProxyBackground({ info, prepare, release, enqueue, idle, budget, 
   const records=new Map(),preparedRecords=new Set();let allRecords=[],visibleRecords=[],recordSegments=[],targetOrdinal=null,direction=1,recordClock=0;
   let visibleCursor=0,allCursor=0,recordSegmentCursor=0;
   const valid = ordinal => Number.isSafeInteger(ordinal) && ordinal >= 0 && ordinal < total;
-  const snapshot = () => ({ stage: state, ready: retained.size, total, ...(failure ? { error: failure } : {}) });
+  let coverageMemo = Object.freeze([]), coverageCount = -1;
+  function coverage() {
+    if (closed) return [];
+    if (coverageCount !== published.size) {
+      const ranges = [];
+      for (const ordinal of [...published].sort((a,b)=>a-b)) {
+        const segment = info.segments[ordinal], last = ranges[ranges.length-1];
+        if (last && segment.start <= last.end + 1e-7) last.end = Math.max(last.end, segment.end);
+        else ranges.push({ start: segment.start, end: segment.end });
+      }
+      coverageMemo = Object.freeze(ranges.map(Object.freeze)); coverageCount = published.size;
+    }
+    return coverageMemo;
+  }
+  // Only published leases are readable. Retained-but-unpublished/mark() are not coverage.
+  const snapshot = () => ({ stage: state, ready: retained.size, total, readyRanges: coverage(), ...(failure ? { error: failure } : {}) });
   const notify = () => emit(snapshot());
   const sameLease = (left, right) => left === right || left?.leaseId && left.leaseId === right?.leaseId;
   function finishState(next) {

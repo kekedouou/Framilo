@@ -2,6 +2,7 @@
 
 // Shared pure rules; no files, Eagle API or renderer access.
 const VERSION = 'fit-no-upscale-v1';
+const SCRUB_VERSION = 'scrub-fit-no-upscale-v1';
 const QUALITIES = Object.freeze(['720p', '1080p', '1440p']);
 function quality(value = '720p') {
   if (!QUALITIES.includes(value)) throw new Error('画质只支持720p、1080p或2K（1440p）。');
@@ -27,7 +28,7 @@ function dimensions(video, selected = '720p') {
     sampleAspectRatio: sar.length === 2 && sar.every(n => n > 0 && Number.isFinite(n)) ? sar.join(':') : '1:1' });
 }
 function validate(profile, source) {
-  if (!profile || profile.version !== VERSION) throw new Error('预览尺寸版本无效。');
+  if (!profile || ![VERSION,SCRUB_VERSION].includes(profile.version)) throw new Error('预览尺寸版本无效。');
   quality(profile.quality);
   const [long, short] = profile.quality === '1440p' ? [2560, 1440] : profile.quality === '1080p' ? [1920, 1080] : [1280, 720];
   if (![profile.width, profile.height].every(n => Number.isSafeInteger(n) && n > 0) ||
@@ -35,9 +36,14 @@ function validate(profile, source) {
       profile.sourceWidth !== source.width || profile.sourceHeight !== source.height ||
       typeof profile.originalResolution !== 'boolean') throw new Error('预览尺寸或源尺寸不符。');
   if (!Number.isFinite(profile.rotation) || typeof profile.sampleAspectRatio !== 'string') throw new Error('预览方向或像素比例无效。');
-  const expected = dimensions({ width: source.width, height: source.height,
+  const expected = (profile.version===SCRUB_VERSION?scrubDimensions:dimensions)({ width: source.width, height: source.height,
     sample_aspect_ratio: profile.sampleAspectRatio, side_data_list: [{ rotation: profile.rotation }] }, profile.quality);
   if (Object.keys(expected).some(key => expected[key] !== profile[key])) throw new Error('预览计算结果不符。');
   return profile;
 }
-module.exports = { VERSION, QUALITIES, quality, dimensions, validate };
+function scrubDimensions(video,selected='720p') {
+  const fitted=dimensions(video,selected),portrait=fitted.width<fitted.height;
+  const scale=Math.min(1,(portrait?270:480)/fitted.width,(portrait?480:270)/fitted.height);
+  return Object.freeze({...fitted,version:SCRUB_VERSION,width:Math.max(1,Math.floor(fitted.width*scale)),height:Math.max(1,Math.floor(fitted.height*scale)),originalResolution:fitted.originalResolution&&scale===1});
+}
+module.exports = { VERSION, SCRUB_VERSION, QUALITIES, quality, dimensions, scrubDimensions, validate };

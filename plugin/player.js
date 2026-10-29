@@ -421,9 +421,11 @@
       try { return await operation; } finally { this.loads.delete(operation); }
     }
     _request(time, options) {
+      const locateAt = this.observePerformance ? this.env.now() : null;
       const targetTime = Math.max(0, Math.min(this.info.duration, time));
       const ordinal = options.index === undefined ? this.index.frameAt(this.info.frames, targetTime) : options.index;
       const frame = this.info.frames[ordinal], epoch = this.epoch;
+      const locatedAt = this.observePerformance ? this.env.now() : null;
       if (this.info.streaming && this.setMediaTarget && !['play', 'buffer', 'pause', 'ended'].includes(options.kind)) this.setMediaTarget(frame.time);
       const previous = this.target; this.targetTime = targetTime; this.ended = options.kind === 'ended';
       if (this._tieredProxy() && previous && ordinal !== previous.index) this.proxyDirection = options.kind === 'play' ? 1 : Math.sign(ordinal - previous.index);
@@ -456,10 +458,16 @@
       if (!['load', 'play', 'ended'].includes(options.kind)) ++this.forwardToken;
       this.target = target;
       this._emit('request', { epoch, phase: 'input', requestId: target.requestId, kind: target.kind, frameId: frame.id,
-        frameOrdinal: ordinal, targetTime, inputAt: target.inputAt, final: target.final, cacheStateAtInput: target.cacheStateAtInput,
+        frameOrdinal: ordinal, sourceTime: frame.time, ptsTicks: frame.ptsTicks, timeBase: frame.timeBase,
+        targetTime, inputAt: target.inputAt, final: target.final, cacheStateAtInput: target.cacheStateAtInput,
         workReused: this.cache.has(ordinal) || this.tasks.has(epoch + ':' + ordinal) });
+      if (this.observePerformance) {
+        this._emit('stage', { epoch, requestId: target.requestId, phase: 'locate', startedAt: locateAt, at: locatedAt });
+        target.queueAt = this.env.now();
+        this._emit('stage-begin', { epoch, requestId: target.requestId, phase: 'queue', startedAt: target.queueAt });
+      }
       this._settle(previous, 'superseded', { reason: 'new-request' });
-      if (this._valid(epoch) && this.target === target && !options.preserveLoading && options.kind !== 'play') this._change('seeking');
+      if (this._valid(epoch) && this.target === target && !options.preserveLoading && !options.preservePaused && options.kind !== 'play') this._change('seeking');
       // Baseline drawing remains rAF-only. The explicitly approved experiment
       // can submit a still-current ready target under the same final guard.
       if (this._valid(epoch) && this.target === target) { this._startTargetWork(); this._startDragAheadWork(); this._tryReadySubmit(); }
@@ -538,8 +546,11 @@
     }
     async play() {
       if (this.disposed || !this.info || this.state !== 'paused') throw new Error('播放器未处于可播放的暂停状态。');
+      // A pending pause alignment is refinement of an already stopped picture.
+      // A new play intent owns the visible source frame and must supersede it.
+      if (this.target?.resolve && this.target.kind === 'pause') this._clearTarget('play-after-pause');
       const epoch = this.epoch, token = ++this.playToken, context = this.audioContext;
-      const resumed = context ? context.resume() : Promise.resolve(); this._change('seeking');
+      const resumed = context ? context.resume() : Promise.resolve(); this._change('playing');
       try {
         await resumed; if (!this._playValid(epoch, token)) return { status: 'superseded' };
         let ordinal = this.currentIndex === null ? 0 : this.currentIndex;
@@ -548,11 +559,11 @@
           const first = loop ? loop.first : 0;
           const result = await this._request(this.info.frames[first].time, { kind: 'restart', final: true, index: first, inputAt: this.env.now() });
           if (!['drawn', 'reused'].includes(result.status) || !this._playValid(epoch, token)) return { status: 'superseded' };
-          ordinal = first; this._change('seeking');
+          ordinal = first; this._change('playing');
         }
-        for (const next of [ordinal, ...this._playAheadOrdinals(this.info.frames[ordinal].time, ordinal, 3)]) {
-          await this._prime(next, epoch, token); if (!this._playValid(epoch, token)) return { status: 'superseded' };
-        }
+        // The displayed frame is already confirmed. Future images are prepared
+        // by _pump while the clock runs; three serial predecodes must not gate play.
+        await this._prime(ordinal, epoch, token); if (!this._playValid(epoch, token)) return { status: 'superseded' };
         const media = this.info.frames[ordinal].time;
         if (this.segmentAudio) { await this.segmentAudio.prime(media, loop); if (!this._playValid(epoch, token)) return { status: 'superseded' }; }
         const when = context ? context.currentTime + 0.02 : null;
@@ -642,7 +653,15 @@
     pause() {
       const wasPlaying = this.state === 'playing', buffering = !!this.recovery, media = this._halt(true);
       if (this.disposed || !this.info || this.state === 'loading' || this.state === 'error') return Promise.resolve({ status: 'ignored', reason: 'not-ready' });
-      if (wasPlaying || buffering) return this._request(buffering ? this.time : media, { final: true, kind: 'pause', inputAt: this.env.now() });
+      if (wasPlaying || buffering) {
+        const epoch=this.epoch,token=this.playToken;this._change('paused');
+        if(!this._playValid(epoch,token)||this.state!=='paused')return Promise.resolve({status:'superseded'});
+        const stopped=buffering?this.time:media;
+        if(this.index.frameAt(this.info.frames,stopped)===this.currentIndex){this.targetTime=stopped;this._clearTarget('paused-current-frame');if(!this._playValid(epoch,token))return Promise.resolve({status:'superseded'});this._change();return Promise.resolve({status:'paused'});}
+        // Sound and clock stop synchronously. Exact clock-frame alignment may
+        // finish later under the normal target/epoch guard, while state is paused.
+        return this._request(stopped, { final: true, kind: 'pause', preservePaused: true, inputAt: this.env.now() });
+      }
       if (this.state === 'seeking' && !(this.target && this.target.resolve)) this._change('paused');
       return Promise.resolve({ status: 'paused' });
     }
@@ -837,7 +856,18 @@
     _startTargetWork() {
       const target = this.target;
       if (!this.info || !target || !target.resolve || !this._valid(target.epoch) || this.state === 'error') return;
-      if (this.cache.has(target.index) || this.tasks.has(target.epoch + ':' + target.index) || this.tasks.size >= 2) return;
+      const entry = this.cache.get(target.index), existing = this.tasks.get(target.epoch + ':' + target.index);
+      if (entry || existing || this.tasks.size < 2) {
+        if (this.observePerformance && target.queueAt != null) {
+          this._emit('stage', { epoch: target.epoch, requestId: target.requestId, phase: 'queue', startedAt: target.queueAt }); target.queueAt = null;
+        }
+      }
+      if (existing && this.observePerformance && target.observedWork !== existing) {
+        target.observedWork = existing;
+        for (const span of existing.spans || []) this._emit('stage', { epoch: target.epoch, requestId: target.requestId, ...span });
+        for (const [phase, startedAt] of Object.entries(existing.activeSpans || {})) this._emit('stage-begin', { epoch: target.epoch, requestId: target.requestId, phase, startedAt });
+      }
+      if (entry || existing || this.tasks.size >= 2) return;
       // Finish an already started fast-play read even if its exact display
       // deadline moves on; otherwise slow I/O can discard every image forever.
       try { this._decode(target.index, target.kind === 'play' && this.state === 'playing' && this.playbackRate > 1 ? 'play-ahead' : 'target', target); } catch (error) { this._fail(error); }
@@ -861,7 +891,20 @@
       if (this.tasks.size >= 2) throw new Error('图像任务超过两个在途槽。');
       const frame = info.frames[ordinal], holder = { epoch, index: ordinal, role, forwardToken: this.forwardToken, playToken: this.playToken, fastPlayback: this.state === 'playing' && this.playbackRate > 1, promise: null };
       this.tasks.set(key, holder);
+      if (request) request.observedWork = holder;
+      const trace = this.observePerformance ? (phase, startedAt, at, begin = false) => {
+        if (!this.observePerformance) return;
+        holder.spans ||= []; holder.activeSpans ||= {};
+        if (begin) holder.activeSpans[phase] = startedAt;
+        else { delete holder.activeSpans[phase]; if (holder.spans.length < 24) holder.spans.push({phase, startedAt, at}); }
+        const current = this.target;
+        for (const t of new Set([request, current?.observedWork === holder ? current : null]))
+          if (t?.resolve) this._emit(begin ? 'stage-begin' : 'stage', {epoch, requestId:t.requestId, frameId:frame.id, phase, startedAt, ...(begin ? {} : {at})});
+      } : null;
+      const dispatchedAt = trace ? this.env.now() : null;
+      trace?.('queue', dispatchedAt, null, true);
       const task = Promise.resolve().then(async () => {
+        trace?.('queue', dispatchedAt, this.env.now());
         let reservation = null, bitmap = null, transferred = false;
         try {
           if (!this._valid(epoch)) return null;
@@ -871,10 +914,12 @@
           const rgba = info.width * info.height * 4;
           reservation = this.budget.reserve(rgba + frame.bytes * 2, 'frame-inflight', ['forward-fill','thumbnail'].includes(role) ? undefined : () => this._evict());
           const readStartedAt = this.env.now();
+          trace?.('asset', readStartedAt, null, true);
           const compressed = this.compressed.get(ordinal);
           if (compressed) { this.compressed.delete(ordinal); this.compressed.set(ordinal, compressed); }
-          const bytes = compressed ? compressed.bytes : await this.readAsset(info, frame.file);
+          const bytes = compressed ? compressed.bytes : await this.readAsset(info, frame.file, trace);
           const readEndedAt = this.env.now();
+          trace?.('asset', readStartedAt, readEndedAt);
           if (!bytes || (info.streaming ? bytes.byteLength <= 0 || bytes.byteLength > frame.bytes : bytes.byteLength !== frame.bytes)) throw new Error('JPEG资源长度与清单不符。');
           if (this._tieredProxy()) this._markProxySegment(ordinal);
           if (!this._valid(epoch)) return null;
@@ -894,8 +939,10 @@
           }
           if (role === 'forward-fill' && (!this.forwardPredecode || holder.forwardToken !== this.forwardToken) && (!this.target || this.target.index !== ordinal)) return null;
           const delay = this.decodeDelayMs, decodeStartedAt = this.env.now();
-          bitmap = this.frameDecoder ? await this.frameDecoder.decode(bytes, frame) : await this.env.decodeImage(bytes);
+          trace?.('decode', decodeStartedAt, null, true);
+          bitmap = this.frameDecoder ? await this.frameDecoder.decode(bytes, frame, {trace}) : await this.env.decodeImage(bytes);
           const decodeEndedAt = this.env.now();
+          trace?.('decode', decodeStartedAt, decodeEndedAt);
           // Test delay models service that has already entered the non-cancellable decoder.
           // An obsolete result can populate this material's bounded LRU, never its canvas.
           if (delay) await this.env.sleep(delay);
@@ -961,6 +1008,7 @@
         return;
       }
       if (this.experimentMode === 'ready-submit' && this.lastSubmissionRaf === this.rafCount) return;
+      const submitStartedAt = this.observePerformance ? this.env.now() : null;
       this.ctx.drawImage(entry.bitmap, 0, 0, this.info.width, this.info.height);
       const drawAt = this.env.now(), info = this.info, frame = info.frames[target.index], repeated = this.currentIndex === target.index;
       const gap = this.lastDrawAt === null ? null : drawAt - this.lastDrawAt;
@@ -979,7 +1027,7 @@
       const event = { epoch: target.epoch, requestId: target.requestId, kind: target.kind, frameId: frame.id, frameOrdinal: target.index,
         cacheStateAtInput: target.cacheStateAtInput, readyToSubmitMs: Math.max(0, drawAt - Math.max(target.inputAt, entry.readyAt)),
         time: frame.time, targetTime: target.targetTime, mediaTime: this.state === 'playing' ? this._clockTime() : frame.time,
-        inputAt: target.inputAt, readyAt: entry.readyAt, drawAt, responseMs: drawAt - target.inputAt,
+        inputAt: target.inputAt, readyAt: entry.readyAt, drawAt, submitStartedAt, responseMs: drawAt - target.inputAt,
         budgetBytes: this.budget.used, cachePeakBytes: this.budget.peak, rafOpportunity: this.rafCount, repeatedFrame: repeated,
         commitSource,
         sincePreviousDrawMs: gap, barcode, markerVerificationEnabled: this.verifyMarkers, markerReadbackCostIncludedAfterDraw: true,
@@ -1065,6 +1113,7 @@
       }
     }
     _startBackground() {
+      if (this.performanceIdleHold) return;
       if (this._tieredProxy()) { this._startProxyBackground(); return; }
       if (this.info && this.info.streaming) {
         if (this.forwardPredecode && !this.tasks.size && ['paused', 'playing'].includes(this.state) && this.currentIndex !== null) {

@@ -6,17 +6,15 @@
 const MAX_ACCESS_UNIT_BYTES = 8 * 1024 ** 2;
 const BOUNDARY_BYTES = 5; // Four-byte start code plus the next AUD header.
 const EMPTY = Buffer.alloc(0);
+const START_CODE = Buffer.from([0, 0, 1]);
 function invalid(message, code = 'AVC_ACCESS_UNIT_INVALID') {
   throw Object.assign(new Error(message), { code });
 }
 function startCode(bytes, from) {
-  for (let i = from; i + 2 < bytes.length; i++) {
-    if (bytes[i] !== 0 || bytes[i + 1] !== 0) continue;
-    if (bytes[i + 2] === 1) return { start: i, header: i + 3 };
-    if (bytes[i + 2] === 0 && i + 3 < bytes.length && bytes[i + 3] === 1)
-      return { start: i, header: i + 4 };
-  }
-  return null;
+  // Native buffer search avoids a JS iteration over every encoded byte.
+  // A four-byte prefix is the same match preceded by one zero within range.
+  const at = bytes.indexOf(START_CODE, from);
+  return at < 0 ? null : { start: at > from && bytes[at - 1] === 0 ? at - 1 : at, header: at + 3 };
 }
 function state() { return { aud: false, sps: false, pps: false, idr: false, codec: null }; }
 

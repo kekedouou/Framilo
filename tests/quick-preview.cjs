@@ -43,8 +43,8 @@ function fixture(options = {}) {
   canvas.ownerDocument = document;
   const budget = new Budget(options.limit || 128 * MiB);
   const preview = createQuickPreview({ canvas, info: { width: 1920, height: 1080, duration: 600, ...options.info }, sourceUrl: 'file:///own-synthetic-source.mp4',
-    budget, evict: options.evict ? () => options.evict(budget) : undefined, isCurrent: () => state.current,
-    onChange: value => changes.push(value), env: { document, ...(options.unsupported ? {} : { video }), overlay, now: () => time,
+    scrubSource:options.scrubSource, budget, evict: options.evict ? () => options.evict(budget) : undefined, isCurrent: () => state.current,
+    onChange: value => changes.push(value), env: { scrubApi:options.scrubApi, document, ...(options.unsupported ? {} : { video }), overlay, now: () => time,
       setTimeout(fn, ms) { const id = ++serial; timers.set(id, { fn, at: time + ms }); return id; }, clearTimeout: id => timers.delete(id) } });
   const emit = name => { for (const fn of [...(listeners.get(name) || [])]) fn(); };
   const advance = async ms => {
@@ -71,6 +71,35 @@ async function run() {
     try { await action(); rows.push({ name, status: 'passed' }); }
     catch (error) { rows.push({ name, status: 'failed', error: error.stack || String(error) }); }
   }
+  await check('sparse preview is fast-drag-only; release cancels it and accurate draw clears it', async () => {
+    const requests=[];let cancels=0,clears=0,closed=0;
+    const f=fixture({scrubSource:{},scrubApi:{create:()=>({request(t,s){requests.push([t,s.final]);return true;},cancel(){cancels++;},clear(){clears++;},async close(){closed++;}})}});
+    f.preview.request(1,{final:false});assert.equal(requests.length,0);
+    await f.advance(32);f.preview.request(1.01,{final:false});assert.equal(requests.length,0);
+    await f.advance(32);f.preview.request(2,{final:false});assert.deepEqual(requests,[[2,false]]);
+    await f.advance(32);f.preview.request(3,{final:true});assert.equal(requests.length,1);assert(cancels>=2);
+    f.preview.clear();assert(clears>0);await f.close();assert.equal(closed,1);
+  });
+  await check('final preview requires the same confirmed source PTS, not currentTime or a nearby frame', async () => {
+    const h = fixture({ info: { frames: [{ time: 0, end: .04 }, { time: .04, end: .11 }, { time: .11, end: .15 }] } });
+    try {
+      h.preview.request(.08, { final: true });
+      assert.equal(h.callbacks.size, 1, 'callback is armed before seeked');
+      h.complete(.041); await h.advance(10); assert.equal(h.overlay.draws.length, 0, 'currentTime is not a picture identity');
+      h.frame(0); assert.equal(h.overlay.draws.length, 0, 'reject previous frame even within 250ms');
+      assert.equal(h.callbacks.size, 1, 'wait for the actual presentation after an early callback');
+      h.frame(.04); assert.equal(h.preview.snapshot().time, .04);
+      h.preview.clear(); h.preview.request(.12, { final: true });
+      assert.equal(h.preview.snapshot().active, false, 'nearby cached frame cannot serve final target');
+      h.complete(.111); h.frame(.11); assert.equal(h.preview.snapshot().time, .11);
+    } finally { await h.close(); }
+  });
+  await check('confirmed callback before seeked is retained until the native picture is drawable', async () => {
+    const h=fixture({info:{frames:[{time:0,end:.1},{time:.1,end:.2}]}});
+    try{h.preview.request(.12,{final:true});h.frame(.1);assert.equal(h.overlay.draws.length,0);assert(h.preview.snapshot().pending);
+      h.complete(.101);assert.equal(h.preview.snapshot().time,.1);assert.equal(h.overlay.draws.length,1);
+    }finally{await h.close();}
+  });
   await check('unsupported native element remains optional and consumes no budget', async () => {
     const h = fixture({ unsupported: true }); h.preview.request(4); h.preview.clear(); h.preview.cancel(); await h.close();
     assert.equal(h.preview.snapshot().active, false); assert.equal(h.parent.children.length, 0);
@@ -132,6 +161,16 @@ async function run() {
     }
     finally { await h.close(); }
   });
+  await check('moving preview follows within a bounded distance, release rejects an old nearby result', async () => {
+    const h=fixture({frameCallback:false});
+    try{
+      h.preview.request(10);await h.advance(32);h.preview.request(10.16);await h.advance(32);h.preview.request(10.32);h.complete(10);
+      assert.equal(h.preview.snapshot().time,10,'use a recent approximate picture while the pointer keeps moving');
+      await h.advance(30);h.preview.request(10.48,{final:true});h.complete(10.32);
+      assert.equal(h.preview.snapshot().time,10,'obsolete result cannot replace the final target');h.complete(10.48);assert.equal(h.preview.snapshot().time,10.48);
+      h.preview.clear();h.preview.request(100);await h.advance(10);h.preview.request(300);h.complete(100);assert(!h.preview.snapshot().active,'a far old frame cannot masquerade as the new position');
+    }finally{await h.close();}
+  });
   await check('an initial wrong-PTS callback keeps the current target and its fallback alive', async () => {
     const h = fixture({ info: { duration: 20, frames: [{ ptsTicks: '3000000', timeBase: [1, 1000000] }] }, nativeDuration: 20 });
     try {
@@ -149,15 +188,15 @@ async function run() {
       h.preview.request(13.5); assert.deepEqual(h.seeks, []); h.video.readyState = 1; h.emit('loadedmetadata');
       assert.deepEqual(h.seeks, [16.5]); h.complete(3);
       assert.deepEqual(h.seeks, [16.5, 16.5], 'native automatic seek to its first presentation must not consume the intended target');
-      assert.equal(h.preview.snapshot().pending, true); assert.equal(h.preview.snapshot().active, false); assert.equal(h.callbacks.size, 0);
+      assert.equal(h.preview.snapshot().pending, true); assert.equal(h.preview.snapshot().active, false); assert.equal(h.callbacks.size, 1);
       h.complete(16.5); h.frame(16.5); assert.equal(h.preview.snapshot().time, 13.5); assert.equal(h.preview.snapshot().pending, false);
     } finally { await h.close(); }
   });
-  await check('a superseded picture older than 250ms cannot display or cover the newer accurate generation', async () => {
+  await check('a superseded native seek is retargeted without waiting and cannot cover the newer accurate generation', async () => {
     const h = fixture();
     try {
       h.preview.request(1); await h.advance(300); h.preview.request(8); h.complete(1); const oldCallbacks = [...h.callbacks.values()]; h.frame(1);
-      assert.equal(h.overlay.draws.length, 0); assert.deepEqual(h.seeks, [1, 8]); assert.equal(h.preview.snapshot().pending, true);
+      assert.equal(h.overlay.draws.length, 0); assert.deepEqual(h.seeks, [1, 8, 8]); assert.equal(h.preview.snapshot().pending, true);
       h.complete(8); h.frame(8); assert.equal(h.preview.snapshot().time, 8); assert.equal(h.overlay.draws.length, 1);
       h.preview.clear(); h.canvas.getContext('2d').drawImage({ kind: 'new-accurate-source-frame' });
       oldCallbacks.forEach(fn => fn(0, { mediaTime: 1 })); await h.advance(40);
@@ -196,12 +235,23 @@ async function run() {
       assert.equal(h.timers.size, 0); assert.equal(h.callbacks.size, 0);
     } finally { await h.close(); }
   });
-  await check('two slow native timeouts stop retries without presenting a stale picture', async () => {
+  await check('transient native timeouts back off and a later target can recover without stale output', async () => {
     const h = fixture();
     try {
       h.preview.request(2); await h.advance(1500); assert.equal(h.preview.snapshot().pending, false);
-      h.preview.request(6); await h.advance(1500); assert.equal(h.preview.snapshot().disabled, true);
-      h.complete(6); h.frame(6); assert.equal(h.overlay.draws.length, 0); assert.equal(h.timers.size, 0);
+      h.preview.request(6); await h.advance(1600); assert.equal(h.preview.snapshot().disabled, false);
+      assert.equal(h.preview.snapshot().failures, 2); h.complete(6); h.frame(6); assert.equal(h.overlay.draws.length, 0);
+      h.preview.request(12); await h.advance(200); h.complete(12); h.frame(12);
+      assert.equal(h.preview.snapshot().time, 12); assert.equal(h.preview.snapshot().failures, 0); assert.equal(h.timers.size, 0);
+    } finally { await h.close(); }
+  });
+  await check('an exact result within the fallback delay cancels native work before it begins', async () => {
+    const h = fixture();
+    try {
+      h.preview.request(4, { delayMs: 80 }); await h.advance(40); h.preview.clear(); await h.advance(100);
+      assert.equal(h.seeks.length, 0); assert.equal(h.preview.snapshot().active, false); assert.equal(h.timers.size, 0);
+      h.preview.request(9, { delayMs: 80 }); await h.advance(80); h.complete(9); h.frame(9);
+      assert.equal(h.preview.snapshot().time, 9);
     } finally { await h.close(); }
   });
   await check('visited low-resolution picture is reused immediately without another native seek', async () => {

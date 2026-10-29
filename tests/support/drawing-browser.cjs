@@ -5,8 +5,9 @@ const { spawn, spawnSync } = require('child_process');
 const { scratch } = require('./annotation-scratch.cjs');
 const root = path.resolve(__dirname, '../..');
 async function main() {
-  const e37Mode=process.argv.includes('--e37'),e32Mode=process.argv.includes('--e32')||e37Mode,e31Mode=process.argv.includes('--e31')||e32Mode,e30Mode=process.argv.includes('--e30')||e31Mode,e29Mode=process.argv.includes('--e29')||e30Mode,e28Mode=process.argv.includes('--e28')||e29Mode, e27Mode=process.argv.includes('--e27'), e26Mode=process.argv.includes('--e26'), e25Mode=process.argv.includes('--e25'), e24Mode=process.argv.includes('--e24'), e23Mode=process.argv.includes('--e23'), e22Mode=process.argv.includes('--e22'), e21Mode=process.argv.includes('--e21'), e20Mode = process.argv.includes('--e20')||e21Mode||e22Mode||e23Mode||e24Mode||e25Mode||e26Mode||e27Mode||e28Mode, e19Mode = process.argv.includes('--e19')||e20Mode;
-  const e18Mode = process.argv.includes('--e18'), perfMode = process.argv.includes('--e18-perf'), e16Mode = process.argv.includes('--e16'), e14Mode = process.argv.includes('--e14'), gestureMode = process.argv.includes('--gestures'), fixture = e37Mode ? 'e37-dom.js' : e32Mode ? 'e32-dom.js' : e31Mode ? 'e31-dom.js' : e30Mode ? 'e30-dom.js' : e29Mode ? 'e29-dom.js' : e28Mode ? 'e28-dom.js' : e27Mode ? 'e27-dom.js' : e26Mode ? 'e26-dom.js' : e25Mode ? 'e25-dom.js' : e24Mode ? 'e24-dom.js' : e23Mode ? 'e23-dom.js' : e22Mode ? 'e22-dom.js' : e21Mode ? 'e21-dom.js' : e20Mode ? 'e20-dom.js' : e19Mode ? 'e19-dom.js' : perfMode ? 'e18-perf.js' : e18Mode ? 'e18-dom.js' : e16Mode ? 'e16-dom.js' : e14Mode ? 'e14-dom.js' : gestureMode ? 'gestures-dom.js' : 'drawing-dom.js';
+  const e46Mode=process.argv.includes('--e46');
+  const e37Mode=process.argv.includes('--e37'),e32Mode=process.argv.includes('--e32')||e37Mode,e31Mode=process.argv.includes('--e31')||e32Mode,e30Mode=process.argv.includes('--e30')||e31Mode,e29Mode=process.argv.includes('--e29')||e30Mode,e28Mode=process.argv.includes('--e28')||e29Mode, e27Mode=process.argv.includes('--e27'), e26Mode=process.argv.includes('--e26'), e25Mode=process.argv.includes('--e25'), e24Mode=process.argv.includes('--e24'), e23Mode=process.argv.includes('--e23'), e22Mode=process.argv.includes('--e22'), e21Mode=process.argv.includes('--e21'), e20Mode = process.argv.includes('--e20')||e21Mode||e22Mode||e23Mode||e24Mode||e25Mode||e26Mode||e27Mode||e28Mode, e19Mode = process.argv.includes('--e19')||e20Mode||e46Mode;
+  const e18Mode = process.argv.includes('--e18'), perfMode = process.argv.includes('--e18-perf'), e16Mode = process.argv.includes('--e16'), e14Mode = process.argv.includes('--e14'), gestureMode = process.argv.includes('--gestures'), fixture = e46Mode ? 'e46-dom.js' : e37Mode ? 'e37-dom.js' : e32Mode ? 'e32-dom.js' : e31Mode ? 'e31-dom.js' : e30Mode ? 'e30-dom.js' : e29Mode ? 'e29-dom.js' : e28Mode ? 'e28-dom.js' : e27Mode ? 'e27-dom.js' : e26Mode ? 'e26-dom.js' : e25Mode ? 'e25-dom.js' : e24Mode ? 'e24-dom.js' : e23Mode ? 'e23-dom.js' : e22Mode ? 'e22-dom.js' : e21Mode ? 'e21-dom.js' : e20Mode ? 'e20-dom.js' : e19Mode ? 'e19-dom.js' : perfMode ? 'e18-perf.js' : e18Mode ? 'e18-dom.js' : e16Mode ? 'e16-dom.js' : e14Mode ? 'e14-dom.js' : gestureMode ? 'gestures-dom.js' : 'drawing-dom.js';
   const syntax = spawnSync(process.execPath, ['--check', path.join(root, 'tests/browser', fixture)], {encoding:'utf8', windowsHide:true}); if (syntax.status !== 0) throw Error(syntax.stderr);
   const temp = scratch(gestureMode ? 'gesture-ui' : 'drawing-ui'), pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const baseline = process.argv.includes('--baseline-e18'); assert(!baseline || e18Mode || perfMode);
@@ -18,6 +19,7 @@ async function main() {
   if(e29Mode&&process.argv.includes('--e29-baseline'))files.set('graphite-shell.js',fs.readFileSync(path.join(root,'verification-runs/e29-opt/shell-before.js'),'utf8'));
   files.set('index.html', Buffer.from(source('index.html').toString().replace('<script src="app.js"></script>', (perfMode ? '<script src="frame-index.js"></script>' : '') + '<script src="fixture.js"></script>')));
   if (perfMode) files.set('frame-index.js', Buffer.from('(function(){const module={exports:{}};\n' + source('frame-index.cjs') + '\nwindow.EVAFrameIndex=module.exports;})();'));
+  if(e46Mode)for(const m of source('index.html').toString().matchAll(/<(?:script|link)[^>]+(?:src|href)="([^"]+)"/g)){const name=m[1];if(name!=='app.js'&&/^[a-z0-9.-]+$/.test(name)&&fs.existsSync(path.join(root,'plugin',name)))files.set(name,source(name));}
   files.set('fixture.js', Buffer.concat([Buffer.from(process.argv.includes('--e19-records') ? 'window.E19_RECORDS=true;\n' : process.argv.includes('--note-screenshot') ? 'window.E16_SCREENSHOT="note";\n' : process.argv.includes('--types-screenshot') ? 'window.E16_SCREENSHOT="types";\n' : process.argv.includes('--watch-wheel') ? 'window.E14_WATCH_SCREENSHOT=true;\n' : process.argv.includes('--e15') ? 'window.E15_ERASER_CHECKS=true;\n' : ''), fs.readFileSync(path.join(root, 'tests/browser', fixture))]));
   const server = http.createServer((req, res) => {
     const name = req.url === '/' ? 'index.html' : req.url.slice(1), body = files.get(name);
@@ -27,7 +29,7 @@ async function main() {
   let browser, socket, closed, sessionId, serial = 0;
   const calls = new Map(), pageErrors = [];
   const call = (method, params = {}, target = null) => new Promise((resolve, reject) => {
-    const id = ++serial, timer = setTimeout(() => { calls.delete(id); reject(Error('CDP timeout: ' + method)); }, 8000);
+    const id = ++serial, timer = setTimeout(() => { calls.delete(id); reject(Error('CDP timeout: ' + method)); }, e46Mode?20000:8000);
     calls.set(id, { resolve, reject, timer }); socket.send(JSON.stringify({ id, method, params, ...(target ? { sessionId: target } : {}) }));
   });
   const evaluate = async expression => { const r = await call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, sessionId); if (r.exceptionDetails) throw Error(JSON.stringify(r.exceptionDetails)); return r.result.value; };
@@ -66,6 +68,7 @@ async function main() {
     }
     if(e31Mode&&result.passed){const at=await evaluate("(()=>{const r=document.querySelector('[data-setting=display]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()");await call('Input.dispatchMouseEvent',{type:'mouseMoved',x:at.x,y:at.y},sessionId);await pause(200);const color=await evaluate("getComputedStyle(document.querySelector('[data-setting=display]')).backgroundColor");assert.equal(color,'rgba(110, 181, 231, 0.22)','Real hover must use blue, not the legacy grey');result.checks.push('Real mouse hover resolves to unified pale blue');}
     console.log('drawing-browser-checks ' + JSON.stringify({ browser: version, result, pageErrors, scope: 'Native Chromium DOM/SVG with Session model; no real Eagle/media/library writes.' }));
+    if(e46Mode){const folder=path.join(root,'verification-runs/e46');fs.mkdirSync(folder,{recursive:true});const stamp=Date.now(),record=Buffer.from(JSON.stringify({browser:version,result,pageErrors,scope:'Independent Chrome DOM only; no Eagle/media/library writes.'},null,2));assert(record.length<=65536);fs.writeFileSync(path.join(folder,'dom-'+stamp+'.json'),record,{flag:'wx'});const png=Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},sessionId)).data,'base64');assert(png.length<=1024**2);fs.writeFileSync(path.join(folder,'dom-'+stamp+'.png'),png,{flag:'wx'});}
     if(e32Mode&&result.passed&&process.argv.includes('--wheel-screenshot'))await evaluate('window.E32Preview()');
     const screenshot = process.argv.slice(2).find(s => /^[a-z0-9-]+\.png$/.test(s));
     if (screenshot) {
@@ -79,6 +82,7 @@ async function main() {
       console.log('Drawing UI screenshot saved: ' + screenshot + ' ' + data.length + ' bytes');
     }
     assert(result.passed, result.error); assert.equal(pageErrors.length, 0);
+  } catch(error){if(e46Mode){const folder=path.join(root,'verification-runs/e46');fs.mkdirSync(folder,{recursive:true});fs.writeFileSync(path.join(folder,'dom-failure-'+Date.now()+'.json'),JSON.stringify({error:String(error.stack||error),pageErrors,browserLog:log,scope:'Independent Chrome DOM harness; no media/Eagle'},null,2),{flag:'wx'});}throw error;
   } finally {
     if (socket?.readyState === WebSocket.OPEN) { try { await call('Browser.close'); } catch (_) { /* Process may close transport first. */ } socket.close(); }
     if (browser && browser.exitCode === null) {

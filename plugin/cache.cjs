@@ -162,12 +162,38 @@ function readAssetsMap(info, physical) {
 
 function createCache(options = {}) {
   if (options.packFrames !== undefined && typeof options.packFrames !== 'boolean') fail('图片包选项无效。');
+  if (options.protectWholeProxy !== undefined && typeof options.protectWholeProxy !== 'boolean') fail('整片代理保护选项无效。');
+  if (options.independentWholeProxy !== undefined && typeof options.independentWholeProxy !== 'boolean') fail('独立整片代理选项无效。');
+  if(options.independentWholeProxy&&!options.protectWholeProxy)fail('独立整片代理需启用命名空间保护。');
   const { pluginRoot } = options, diskBytes = options.diskBytes === undefined ? LIMITS.cacheBytes : options.diskBytes;
   if (typeof pluginRoot !== 'string' || !path.isAbsolute(pluginRoot) || !Number.isSafeInteger(diskBytes) || diskBytes < 1 || diskBytes > LIMITS.cacheBytes)
     fail('需要插件绝对路径和不超过5GiB的缓存预算。');
   const plugin = path.resolve(pluginRoot), root = path.join(plugin, 'cache');
   if (/^c:/i.test(plugin)) fail('缓存不能位于C盘。');
   directory(plugin);
+  // E44's independent producer owns this namespace. Legacy maintenance may
+  // account its bytes, but has no authority to reap its locks or delete assets.
+  const protectedWhole = name => options.protectWholeProxy === true && name === 'e44-whole';
+  function protectedTreeBytes(start, callbacks = {}) {
+    // Independent whole-proxy quota is owned elsewhere. Legacy maintenance has
+    // no reason to walk an actively-generated multi-GiB namespace or charge it
+    // to JPEG's 5GiB budget; its root still cannot be a junction/symlink.
+    if(options.independentWholeProxy){directory(start);return 0;}
+    let bytes = 0, entries = 0;
+    const walk = (at, depth) => {
+      if (depth > 8 || ++entries > 16384) fail('受保护的整片代理目录超出盘点范围；保留原件。');
+      const before = directory(at), names = fs.readdirSync(at).sort(); callbacks.onDirectory?.(at, names, before);
+      for (const name of names) {
+        const file = path.join(at, name), stat = fs.lstatSync(file);
+        if (stat.isDirectory() && !stat.isSymbolicLink()) walk(file, depth + 1);
+        else { const leaf = regular(file); callbacks.onFile?.(file, leaf); bytes += leaf.size;
+          if (++entries > 16384 || !Number.isSafeInteger(bytes) || bytes > diskBytes) fail('整片代理占用超过总缓存预算；保留原件。'); }
+      }
+      const after = directory(at);
+      if (before.dev !== after.dev || before.ino !== after.ino || JSON.stringify(names) !== JSON.stringify(fs.readdirSync(at).sort())) fail('整片代理目录正在变化；本次未清理。');
+    };
+    walk(start, 0); return bytes;
+  }
   const live = new WeakMap(); let activeBatch = null;
   const manifestMemo = new Map(); let manifestMemoBytes = 0;
   const manifestMemoStats = { reads: 0, hits: 0, validations: 0, evictions: 0 };
@@ -310,6 +336,7 @@ function createCache(options = {}) {
     for (const name of fs.readdirSync(root)) {
       const file = path.join(root, name), stat = fs.lstatSync(file);
       if (stat.isDirectory() && !stat.isSymbolicLink()) {
+        if (protectedWhole(name)) { add(protectedTreeBytes(file)); continue; }
         if (pending.has(file)) {
           const plan = pending.get(file); directory(file);
           if (!sameDirectoryIdentity(file, stat, plan.directoryIdentity)) fail('待恢复清理目录身份已变化。');
@@ -884,6 +911,7 @@ function createCache(options = {}) {
       for (const name of fs.readdirSync(root)) {
         const file = path.join(root, name), stat = fs.lstatSync(file);
         if (stat.isDirectory()) {
+          if (protectedWhole(name)) { used += protectedTreeBytes(file); continue; }
           const planned = interruptedCleanup.get(file) || partialPlans.find(plan => plan.directory === file);
           if (!cachePattern.test(name) && !planned) fail('恢复根含未知目录。');
           directory(file);
@@ -1598,7 +1626,7 @@ function createCache(options = {}) {
     const base = { root, diskLimitBytes: diskBytes, deletionAuthorized: false, assetHashesVerified: false };
     if (!fs.existsSync(root)) return frozenCopy({ ...base, exists: false, usedBytes: 0, caches: [], leases: [] });
     const rootBefore = directory(root); verifyRoot();
-    const names = fs.readdirSync(root).sort(), stamps = new Map(), capturedLeaves = new Map(), cacheByDirectory = new Map();
+    const names = fs.readdirSync(root).sort(), stamps = new Map(), capturedLeaves = new Map(), cacheByDirectory = new Map(), protectedDirectories = [];
     const stamp = stat => JSON.stringify([stat.dev, stat.ino, stat.size, stat.mtimeMs]);
     const directoryKey = dir => { const resolved = path.resolve(dir); return process.platform === 'win32' ? resolved.toLowerCase() : resolved; };
     function capture(file) {
@@ -1612,6 +1640,10 @@ function createCache(options = {}) {
     for (const name of names) {
       const file = path.join(root, name), stat = fs.lstatSync(file);
       if (stat.isDirectory()) {
+        if (protectedWhole(name)) {
+          protectedTreeBytes(file, { onFile: file => capture(file), onDirectory: (file, names, stat) => protectedDirectories.push({ file, names, dev: stat.dev, ino: stat.ino }) });
+          continue;
+        }
         const match = /^media-([0-9a-f]{64})-([0-9a-f]{12})$/.exec(name);
         if (!match || !knownIds.has(match[2])) fail('未知或未完成目录阻止盘点，原件保留。');
         directory(file); capture(path.join(file, 'owner.json')); capture(path.join(file, 'manifest.json'));
@@ -1657,6 +1689,10 @@ function createCache(options = {}) {
     for (const item of caches) {
       const leaves = fs.readdirSync(item.directory).sort(), captured = capturedLeaves.get(directoryKey(item.directory)).sort();
       if (JSON.stringify(leaves) !== JSON.stringify(captured)) fail('盘点期间缓存目录内容已变化。');
+    }
+    for (const item of protectedDirectories) {
+      const stat = directory(item.file);
+      if (stat.dev !== item.dev || stat.ino !== item.ino || JSON.stringify(fs.readdirSync(item.file).sort()) !== JSON.stringify(item.names)) fail('盘点期间受保护的整片代理目录已变化。');
     }
     const rootAfter = directory(root); verifyRoot();
     if (rootBefore.dev !== rootAfter.dev || rootBefore.ino !== rootAfter.ino ||

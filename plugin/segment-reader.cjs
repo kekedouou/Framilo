@@ -59,14 +59,18 @@ function createSegmentReader({ info, acquire, release, readAsset }) {
       } })();
     active.add(task); task.then(() => active.delete(task), () => active.delete(task)); return task;
   }
-  function frame(file) {
+  function frame(file, trace) {
+    const began = trace ? performance.now() : null;
+    const note = (...args) => { try { trace?.(...args); } catch (_) { /* observation only */ } };
     const match = /^frame-(\d+)\.(?:jpg|avc)$/.exec(file), ordinal = match && Number(match[1]);
     if (!match || !Number.isSafeInteger(ordinal) || !info.frames[ordinal] || info.frames[ordinal].file !== file) throw new Error('无效的长视频帧资源。');
     const segment = groupAt(info.frames[ordinal].time), range = info.segments[segment];
+    if (trace) note('prepare', began, null, true);
     return use(segment, value => {
+      if (trace) note('prepare', began, performance.now());
       const resource = value.frames[ordinal - range.first];
       if (!resource || resource.ptsTicks !== info.frames[ordinal].ptsTicks) throw new Error('分段帧身份不一致。');
-      return readAsset(value, resource.file);
+      return readAsset(value, resource.file, trace);
     }, () => segment === targetOrdinal);
   }
   function audio(ordinal) {

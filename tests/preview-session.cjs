@@ -36,9 +36,9 @@ async function main(){let count=0;const test=async(name,fn)=>{await fn();count++
     const state=h.session.snapshot();assert.equal(state.preview.quality,'720p');assert.equal(state.preview.width,1280);assert.equal(state.preview.active,true);assert.equal(state.preview.time,1.4);assert.equal(state.playback.frameOrdinal,0);assert.equal(state.playback.time,0);assert.equal(state.sourceIdentity.sha256,SHA);assert(h.bindings.every(value=>value.sourceSha256===SHA));
     gate.resolve();await pending;assert.equal(h.session.snapshot().playback.frameOrdinal,2);assert.equal(h.session.snapshot().preview.active,false);assert.equal(h.session.snapshot().playback.time,.75);assert(!h.config.busy());await h.session.close();assert(!h.config.isCurrent());
   });
-  await test('final seek cancels temporary requests and exact commit clears the overlay at its real source frame',async()=>{
+  await test('final seek keeps a target-specific temporary request until the exact source frame commits',async()=>{
     const gate=deferred(),h=model({seek:()=>gate.promise});await h.session.loadSelected();h.setApprox({active:true,approximate:true,time:.2});const before=h.events.filter(value=>value[0]==='quick-request').length;
-    const pending=h.session.seek(1.2,{kind:'drag',final:true});await flush();assert(h.events.some(value=>value[0]==='quick-cancel'));assert.equal(h.events.filter(value=>value[0]==='quick-request').length,before);assert.equal(h.session.snapshot().playback.frameOrdinal,0);
+    const pending=h.session.seek(1.2,{kind:'drag',final:true});await flush();assert(!h.events.some(value=>value[0]==='quick-cancel'));assert.equal(h.events.filter(value=>value[0]==='quick-request').length,before+1);const last=h.events.filter(value=>value[0]==='quick-request').at(-1);assert.equal(last[1],1.2);assert.equal(last[2].final,true);assert.equal(last[2].delayMs,80);assert.equal(h.session.snapshot().playback.frameOrdinal,0);
     gate.resolve();await pending;assert.equal(h.session.snapshot().playback.frameOrdinal,3);assert.equal(h.session.snapshot().playback.time,1);assert.equal(h.session.snapshot().preview.active,false);assert(h.events.some(value=>value[0]==='quick-clear'));await h.session.close();
   });
   await test('source release waits for Player and both asynchronous preview closures',async()=>{

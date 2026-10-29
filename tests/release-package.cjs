@@ -1,10 +1,17 @@
 'use strict';
 // Packaging logic only: no archive creation, media, Eagle or source writes.
 const fs = require('fs'), path = require('path'), crypto = require('crypto'), assert = require('assert');
+const { spawnSync } = require('child_process');
 const pack = require('../scripts/package-release.cjs'), root = path.resolve(__dirname, '..');
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const base = Object.fromEntries(pack.RUNTIME.filter(n => !/native\/task-host\.local\.(exe|json)$/.test(n))
   .map(n => [n, fs.readFileSync(path.join(root, 'plugin', n))]));
+// Preserve the frozen Beta entry recipe. The current entry now requires the
+// native experience runtime and must not be laundered into the old 2MiB ZIP.
+for (const name of ['app.js', 'index.html']) {
+  const r = spawnSync('git', ['show', 'v0.1.0-beta.2:plugin/' + name], { cwd: root, windowsHide: true, maxBuffer: 1024 ** 2 });
+  assert.equal(r.status, 0, 'Frozen Beta2 entry must remain available in Git: ' + name); base[name] = r.stdout;
+}
 // Model bytes exercise dependency/hash rules; not a claim that this is an executable.
 base['native/task-host.local.exe'] = Buffer.from('MZ test-only guard model');
 base['native/task-host.local.json'] = Buffer.from(JSON.stringify({ schema: 'eva-task-guard-build-v1',
@@ -12,7 +19,7 @@ base['native/task-host.local.json'] = Buffer.from(JSON.stringify({ schema: 'eva-
 base['manifest.json'] = pack.packageManifest(base['manifest.json']);
 const copy = () => Object.fromEntries(Object.entries(base).map(([n, b]) => [n, Buffer.from(b)])); let count = 0;
 function test(name, f) { f(); count++; console.log('ok release package: ' + name); }
-test('complete latest runtime closes native, worker, frame-pack and UI dependencies', () => assert(pack.validateRuntime(copy()).dependenciesChecked));
+test('frozen Beta entry recipe still closes guard, worker, frame-pack and UI dependencies', () => assert(pack.validateRuntime(copy()).dependenciesChecked));
 for (const name of ['loop-selection.js', 'timeline-view.js', 'frame-pack.cjs', 'task-client.cjs', 'task-worker.cjs', 'native/task-host.cs', 'native/task-host.local.exe', 'native/task-host.local.json'])
   test('missing ' + name + ' is refused', () => { const files = copy(); delete files[name]; assert.throws(() => pack.validateRuntime(files)); });
 test('extra preference/media data cannot enter the allowlist', () => { const files = copy(); files['memory-settings.json'] = Buffer.from('{}'); assert.throws(() => pack.validateRuntime(files)); });
@@ -27,4 +34,4 @@ test('machine-specific user paths are refused without logging their content', ()
 test('common credential pattern is refused', () => assert.throws(() => pack.scanText(Buffer.from('gh' + 'p_' + 'x'.repeat(40)), 'model')));
 test('UTF16 binary strings use the same private-path check', () => assert.throws(() => pack.scanText(Buffer.from('Z:' + String.fromCharCode(92) + 'Users' + String.fromCharCode(92) + 'example', 'utf16le'), 'native-model')));
 test('release identity is stable across beta updates and version is exact', () => { const m = JSON.parse(base['manifest.json']); assert.equal(m.id, pack.ID); assert.equal(m.version, pack.VERSION); assert.equal(m.arch, 'x64'); });
-console.log('Release package: ' + count + ' pure/model checks; no ZIP, real executable or Eagle execution.');
+console.log('Release package: ' + count + ' pure/model checks; no ZIP, native execution or Eagle execution.');

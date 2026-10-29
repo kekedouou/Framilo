@@ -162,6 +162,7 @@
 .shell-setting-row>#memoryMiB{background:#20252a;border:1px solid #ffffff12;border-radius:2px;padding:3px 8px;color:#d7e1e9}
 .shell-settings-footer #memoryStatus,.shell-settings-status{width:100%;font-size:11px;line-height:1.5;margin:0;color:#c4d5e0;overflow-wrap:anywhere;max-height:64px;overflow:auto}
 .shell-settings-footer #memoryStatus:empty,.shell-settings-status:empty{display:none}
+.native-proxy-state{position:fixed;z-index:24;left:24px;bottom:76px;max-width:calc(100% - 48px);margin:0;padding:6px 10px;color:#9db4c4;background:#0b0f13b8;font-size:11px;line-height:1.5;pointer-events:none;user-select:none;opacity:.85;transition:opacity 240ms ease-out}.native-proxy-state[data-faded="true"]{opacity:0}.native-proxy-state[hidden]{display:none}
 
 .workspace[data-fullscreen="true"][data-header-open="true"] .shell-header-edge{pointer-events:none}
 
@@ -236,3 +237,6 @@
 .context-wheel-branch .context-wheel-item,.context-wheel-branch .context-wheel-wedge{pointer-events:auto}
 @keyframes wheel-branch-in{from{opacity:0}to{opacity:1}}
 @media(prefers-reduced-motion:reduce){.context-wheel-branch{animation:none}}
+
+/* E46: settings and maintenance feedback share the bottom-left fading notices. */
+.shell-alerts #memoryStatus,.shell-alerts #cacheClearStatus{transition:opacity 260ms ease,visibility 260ms}.shell-alerts #memoryStatus,.shell-alerts #cacheClearStatus{max-height:90px;overflow:hidden}

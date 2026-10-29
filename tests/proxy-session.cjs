@@ -38,10 +38,11 @@ function sessionModel(settings = {}) {
     } });
   return { session, calls, players, drawings, preferences };
 }
-async function entryModel() {
+async function entryModel(mode = 'proxy') {
   const root = path.resolve(__dirname, '../plugin'), code = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
   const hooks = {}, calls = [], updates = []; let configured, clientOptions;
-  const info = { leaseId: 'b'.repeat(24), source: { ...source, sha256: sha }, streaming: 'segments-v1' };
+  const info = { leaseId: 'b'.repeat(24), source: { ...source, sha256: sha },
+    ...(mode === 'proxy' ? { videoEncoding: 'filmcraft-native', nativeRuntime: { identity: 'model-native-runtime' } } : {}) };
   const backend = { media: { async prepare(selected, settings) { calls.push(['prepare', selected, settings]); return info; } },
     cache: { readAsset: async () => Buffer.from('frame'), readAudioSegment: async () => null, readFrameBatch: async () => [], release: async () => true,
       prefetch(...args) { calls.push(['prefetch', ...args]); }, target(...args) { calls.push(['target', ...args]); }, cancelReads(...args) { calls.push(['cancel', ...args]); },
@@ -51,14 +52,16 @@ async function entryModel() {
     snapshot: () => ({ epoch: 1, libraryEpoch: 1, sourceIdentity: { itemId: source.id, sha256: sha } }) };
   const modules = {
     'eagle.cjs': { createEagleAdapter: () => ({ captureSelected: () => source, discoverTools: async () => ({ ffmpeg: 'existing-only' }) }) },
-    'preferences.cjs': { createMemoryPreferences: () => ({ snapshot: () => ({ ramBytes: 1024 ** 3, compressedRamBytes: 128 * 1024 ** 2 }), backend: () => 'proxy', forwardPredecode: () => true }) },
+    'preferences.cjs': { createMemoryPreferences: () => ({ snapshot: () => ({ ramBytes: 1024 ** 3, compressedRamBytes: 128 * 1024 ** 2 }), backend: () => mode, forwardPredecode: () => true,
+      decoderPreference: () => 'prefer-hardware', proxyEncoder: () => 'cpu', automaticProxy: () => true, gpuDrawing: () => true }) },
     'drawing-store.cjs': { createAnnotationStore: () => null }, 'frame-index.cjs': {},
     'diagnostics.cjs': require('../plugin/diagnostics.cjs'),
     'task-client.cjs': { createTaskClient(options) { clientOptions = options; return backend; } },
+    'native-backend.cjs': { createNativeBackend(options) { clientOptions = options; return backend; } },
     'session.cjs': { createSession(options) { configured = options; return session; } }
   };
   const win = { addEventListener() {}, close() {}, EVAUI: { createUI: () => ({ canvas: {}, bindSession() {}, update(value) { updates.push(value); }, destroy() {} }) },
-    EVAPlayer: { Player: function (options) { this.options = options; } }, EVAProxyDecoder: { createProxyDecoder: settings => ({ settings, persistentDecoder: true }) } };
+    EVAPlayer: { Player: function (options) { this.options = options; } }, EVANativePlayer: { Player: function (options) { this.options = options; this.native = true; } }, EVAProxyDecoder: { createProxyDecoder: settings => ({ settings, persistentDecoder: true }) } };
   const eagle = Object.fromEntries(['onPluginCreate', 'onPluginRun', 'onLibraryChanged', 'onPluginBeforeExit', 'onPluginShow', 'onPluginHide'].map(name => [name, fn => { hooks[name] = fn; }]));
   vm.runInNewContext(code, { window: win, eagle, performance: { now: () => 100 }, Promise, setTimeout,
     require(name) { if (name === 'path') return path; if (name === 'fs') return { realpathSync: value => value }; const api = modules[path.basename(name)]; assert(api, name); return api; } });
@@ -100,14 +103,23 @@ async function main() {
     const changed=await h.session.setPlaybackSettings({ramMiB:1024,playbackBackend:'jpeg'});assert.equal(changed.status,'ready');
     assert.equal(h.session.snapshot().playbackBackend,'jpeg');assert.equal(h.session.snapshot().sourceIdentity.sha256,sha);await h.session.close();
   });
-  await test('actual app entry forwards backend, background status and decoder provider through lazy setup', async () => {
+  await test('actual app entry forwards native runtime and background status without old preview layers', async () => {
     const h = await entryModel(), signal = new AbortController().signal;
     assert.strictEqual(await h.configured.media.prepare(source, { playbackBackend: 'proxy', previewQuality: '720p', signal }), h.info);
     const request = h.calls.find(c => c[0] === 'prepare'); assert.strictEqual(request[1], source); assert.equal(request[2].playbackBackend, 'proxy'); assert.strictEqual(request[2].signal, signal);
     assert.equal(h.configured.cache.backgroundStatus(h.info).stage, 'complete'); const before = h.updates.length; h.clientOptions.onBackground(); assert.equal(h.updates.length, before + 1);
-    const player = h.configured.createPlayer({}); const decoder = player.options.createFrameDecoder({ token: 7 }); assert.equal(decoder.settings.token, 7); assert(decoder.persistentDecoder);
+    const player = h.configured.createPlayer({ mediaInfo: h.info }); assert(player.native); assert.strictEqual(player.options.nativeRuntime, h.info.nativeRuntime);
+    assert.equal(h.clientOptions.decoderPreference, 'prefer-hardware'); assert.equal(h.clientOptions.automaticProxy, true);
+    assert.equal(Object.keys(h.configured.createPreviewServices({ info: h.info })).length, 0, 'native source has no old provisional preview layers');
+    await assert.rejects(() => h.configured.exports.create({}), /当前界面未开放导出/);
     await h.hooks.onPluginBeforeExit(); assert(h.calls.find(c => c[0] === 'background-close'));
     const closed = h.updates.length; h.clientOptions.onBackground(); assert.equal(h.updates.length, closed);
+  });
+  await test('JPEG app keeps the original provider and guarded unavailable exports', async () => {
+    const h = await entryModel('jpeg'); await h.configured.media.prepare(source, { playbackBackend: 'jpeg', previewQuality: '720p' });
+    const player = h.configured.createPlayer({ mediaInfo: h.info }); assert(!player.native);
+    const decoder = player.options.createFrameDecoder({ token: 7 }); assert.equal(decoder.settings.token, 7); assert(decoder.persistentDecoder);
+    await assert.rejects(() => h.configured.exports.publish({}), /当前界面未开放导出/); await h.hooks.onPluginBeforeExit();
   });
   console.log('Proxy Session: ' + count + ' real Session/app assembly models; no media, native host or library writes.');
 }

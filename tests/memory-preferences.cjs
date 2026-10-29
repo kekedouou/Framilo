@@ -55,14 +55,14 @@ for (const kind of ['link', 'links', 'large', 'foreign', 'broken']) {
 {
   const m=model();m.put(file,JSON.stringify({owner:OWNER,percent:2.5}));const before=Buffer.from(m.files.get(file).data);
   assert.equal(m.create(42551783424).snapshot().ramMiB,1024);assert(m.create().snapshot().legacyConverted);assert(m.files.get(file).data.equals(before));
-  const p=m.create();p.save(1024);assert.deepEqual(JSON.parse(m.files.get(file).data),{owner:OWNER,ramMiB:1024,previewQuality:'720p',forwardPredecode:true,wheelFrames:1,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false,playbackBackend:'proxy'});assert(!m.create().snapshot().legacyConverted);
+  const p=m.create();p.save(1024);assert.deepEqual(JSON.parse(m.files.get(file).data),{owner:OWNER,ramMiB:1024,previewQuality:'720p',forwardPredecode:true,wheelFrames:1,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false,showProxyStrip:false,playbackBackend:'proxy',proxyEncoder:'nvidia',decoderPreference:'prefer-hardware',autoProxy:true,gpuDrawing:true,proxyDiskGiB:5,gpuAcceleration:true});assert(!m.create().snapshot().legacyConverted);
 }
 {
   const m=model();m.put(file,JSON.stringify({owner:OWNER,ramMiB:1024,previewQuality:'1080p'}));
   const old=Buffer.from(m.files.get(file).data),p=m.create();assert.equal(p.forwardPredecode(),true);assert(m.files.get(file).data.equals(old));
-  p.save(1024,'1080p',false);assert.equal(m.create().forwardPredecode(),false);p.save(2048);assert.equal(m.create().forwardPredecode(),false);
-  assert.throws(()=>p.save(1024,'720p','yes'));m.io.failRename=true;assert.throws(()=>p.save(1024,'720p',true));assert.equal(p.forwardPredecode(),false);
-  assert.equal(m.create().forwardPredecode(),false);m.put(file,JSON.stringify({owner:OWNER,ramMiB:1024,previewQuality:'1080p',forwardPredecode:'yes'}));assert.throws(()=>m.create());
+  p.save(1024,'1080p',false);assert.equal(m.create().forwardPredecode(),true);p.save(2048);assert.equal(m.create().forwardPredecode(),true);
+  assert.throws(()=>p.save(1024,'720p','yes'));m.io.failRename=true;assert.throws(()=>p.save(1024,'720p',true));assert.equal(p.forwardPredecode(),true);
+  assert.equal(m.create().forwardPredecode(),true);m.put(file,JSON.stringify({owner:OWNER,ramMiB:1024,previewQuality:'1080p',forwardPredecode:'yes'}));assert.throws(()=>m.create());
 }
 {
   const m=model(); m.put(file,JSON.stringify({owner:OWNER,ramMiB:2048}));
@@ -73,14 +73,14 @@ for (const kind of ['link', 'links', 'large', 'foreign', 'broken']) {
   m.io.failRename=false; m.put(temp,'interrupted write'); assert.throws(()=>m.create().save(1024,'720p')); assert.equal(m.create().quality(),'1080p');
 }
 {
-  const m=model(),p=m.create();assert.deepEqual(p.interaction(),{wheelFrames:1,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});
+  const m=model(),p=m.create();assert.deepEqual(p.interaction(),{wheelFrames:1,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false,showProxyStrip:false});
   p.save(1024,'1080p',true,{wheelFrames:5,showCacheStrip:false});const saved=Buffer.from(m.files.get(file).data);
-  assert.deepEqual(m.create().interaction(),{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});p.save(2048);assert.deepEqual(m.create().interaction(),{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});
+  assert.deepEqual(m.create().interaction(),{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false,showProxyStrip:false});p.save(2048);assert.deepEqual(m.create().interaction(),{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false,showProxyStrip:false});
   for(const value of [0,3,1.5,11,NaN,'2'])assert.throws(()=>p.save(1024,'720p',true,{wheelFrames:value,showCacheStrip:false}));
   assert.throws(()=>p.save(1024,'720p',true,{wheelFrames:1,showCacheStrip:'no'}));
   const original=Buffer.from(m.files.get(file).data);m.io.failRename=true;assert.throws(()=>p.save(1024,'720p',true,{wheelFrames:2,showCacheStrip:false}));
-  assert(m.files.get(file).data.equals(original));assert.deepEqual(p.interaction(),{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});assert(!m.files.has(temp));
-  m.io.failRename=false;m.put(file,saved);m.put(temp,'interrupted settings');assert.throws(()=>m.create().save(1024));assert.deepEqual(m.create().interaction(),{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false});
+  assert(m.files.get(file).data.equals(original));assert.deepEqual(p.interaction(),{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false,showProxyStrip:false});assert(!m.files.has(temp));
+  m.io.failRename=false;m.put(file,saved);m.put(temp,'interrupted settings');assert.throws(()=>m.create().save(1024));assert.deepEqual(m.create().interaction(),{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false,showProxyStrip:false});
 }
 for(const extra of [{wheelFrames:3},{showCacheStrip:0},{rateStep:.3},{rateStep:'0.1'},{wheelFrames:2,unknown:true}]){
   const m=model();m.put(file,JSON.stringify({owner:OWNER,ramMiB:1024,previewQuality:'720p',forwardPredecode:true,...extra}));assert.throws(()=>m.create());
@@ -90,7 +90,7 @@ for(const extra of [{wheelFrames:3},{showCacheStrip:0},{rateStep:.3},{rateStep:'
   m.put(file,legacy);const p=m.create();assert.equal(p.interaction().rateStep,.1);assert(m.files.get(file).data.equals(legacy));
   for(const rateStep of [.1,.2,.25,.5]){p.save(1024,'1080p',true,{wheelFrames:2,showCacheStrip:false,rateStep});assert.equal(m.create().interaction().rateStep,rateStep);}
   const saved=Buffer.from(m.files.get(file).data);for(const rateStep of [0,-.1,.3,NaN,'0.25'])assert.throws(()=>p.save(1024,'1080p',true,{wheelFrames:2,showCacheStrip:false,rateStep}));
-  assert(m.files.get(file).data.equals(saved));m.io.failRename=true;assert.throws(()=>p.save(1024,'1080p',true,{wheelFrames:2,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false}));
+  assert(m.files.get(file).data.equals(saved));m.io.failRename=true;assert.throws(()=>p.save(1024,'1080p',true,{wheelFrames:2,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false,showProxyStrip:false}));
   assert.equal(p.interaction().rateStep,.5);assert(m.files.get(file).data.equals(saved));assert(!m.files.has(temp));
 }
 {
@@ -101,3 +101,27 @@ for(const extra of [{wheelFrames:3},{showCacheStrip:0},{rateStep:.3},{rateStep:'
 console.log('Memory preference models: fixed tiers/limits/proportion, legacy read-only conversion, quality/predecode/wheel/strip persistence, atomic failure/concurrent/interrupted save, unsafe files and writer protection passed; no actual files written.');
 
 {const m=model();m.put(file,JSON.stringify({owner:OWNER,ramMiB:1024,previewQuality:'720p',forwardPredecode:true,showCacheStrip:true}));const p=m.create();assert.equal(p.interaction().showCacheStrip,true);p.save(2048);assert.equal(m.create().interaction().showCacheStrip,true);}
+
+{const m=model(),p=m.create();assert.equal(p.interaction().showProxyStrip,false);p.save(1024,'720p',true,{...p.interaction(),showProxyStrip:true});assert.equal(m.create().interaction().showProxyStrip,true);p.save(2048);assert.equal(m.create().interaction().showProxyStrip,true);const before=Buffer.from(m.files.get(file).data);m.io.failRename=true;assert.throws(()=>p.save(1024,'720p',true,{...p.interaction(),showProxyStrip:false}));assert(m.files.get(file).data.equals(before));assert.equal(m.create().interaction().showProxyStrip,true);}
+
+{
+ const m=model(),p=m.create();assert.equal(p.proxyEncoder(),'nvidia');assert.equal(p.decoderPreference(),'prefer-hardware');assert.equal(p.gpuAcceleration(),true);
+ p.save(1024,undefined,undefined,undefined,undefined,'nvidia','prefer-software');
+ assert.equal(m.create().proxyEncoder(),'nvidia');assert.equal(m.create().decoderPreference(),'prefer-hardware');
+ p.save(2048);assert.equal(m.create().proxyEncoder(),'nvidia');
+ const previous=Buffer.from(m.files.get(file).data);m.io.failRename=true;
+ assert.throws(()=>p.save(1024,undefined,undefined,undefined,undefined,'cpu','no-preference'));assert(m.files.get(file).data.equals(previous));
+ assert.equal(m.create().proxyEncoder(),'nvidia');m.io.failRename=false;
+ assert.throws(()=>p.save(1024,undefined,undefined,undefined,undefined,'automatic'));assert.throws(()=>p.save(1024,undefined,undefined,undefined,undefined,'cpu','cuda'));
+}
+
+
+// E46 unified switch persists atomically; legacy per-stage inputs cannot split it.
+{
+ const m=model(),p=m.create(),save=(gpu)=>p.save(1024,undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined,gpu);
+ save(false);assert.equal(m.create().gpuAcceleration(),false);assert.equal(m.create().gpuDrawing(),false);assert.equal(m.create().proxyEncoder(),'cpu');assert.equal(m.create().decoderPreference(),'prefer-software');
+ const old=Buffer.from(m.files.get(file).data);m.io.failRename=true;assert.throws(()=>save(true));assert(m.files.get(file).data.equals(old));assert.equal(p.gpuAcceleration(),false);assert.equal(m.create().gpuAcceleration(),false);assert(!m.files.has(temp));
+ m.io.failRename=false;save(true);assert.equal(m.create().gpuAcceleration(),true);assert.equal(m.create().proxyEncoder(),'nvidia');assert.equal(m.create().gpuDrawing(),true);
+ p.save(2048,undefined,false,undefined,undefined,'cpu','prefer-software',false,false);assert.equal(m.create().gpuAcceleration(),true);assert.equal(m.create().decoderPreference(),'prefer-hardware');assert.equal(m.create().forwardPredecode(),true);assert.equal(m.create().automaticProxy(),true);
+ for(const value of [null,0,'false'])assert.throws(()=>save(value));
+}

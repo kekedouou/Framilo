@@ -1,0 +1,22 @@
+{
+  "id": "EVAE44DIRECT20261028",
+  "version": "0.1.0",
+  "platform": "win",
+  "arch": "x64",
+  "name": "E44 直接播放技术关",
+  "logo": "/logo.png",
+  "devTools": false,
+  "main": {
+    "url": "index.html",
+    "width": 1100,
+    "height": 800,
+    "frame": true,
+    "resizable": true,
+    "multiple": false,
+    "runAfterInstall": false
+  },
+  "keywords": [
+    "E44",
+    "验证"
+  ]
+}

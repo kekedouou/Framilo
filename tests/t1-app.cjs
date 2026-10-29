@@ -24,13 +24,14 @@ function harness(settings = {}) {
     'cache.cjs': { createCache(options) { assert.strictEqual(options.pluginRoot, root); return settings.backendCache || { readAsset() {}, release() {} }; } },
     'eagle.cjs': { createEagleAdapter() { return Object.freeze(adapter); } },
     'drawing-store.cjs': { createAnnotationStore: () => null },
-    'preferences.cjs': { createMemoryPreferences() { return { forwardPredecode:()=>true, snapshot: () => ({ ramBytes: 1024 ** 3, compressedRamBytes: 128 * 1024 ** 2, percent: 2.5 }) }; } },
+    'preferences.cjs': { createMemoryPreferences() { return settings.preferences || { forwardPredecode:()=>true, snapshot: () => ({ ramBytes: 1024 ** 3, compressedRamBytes: 128 * 1024 ** 2, percent: 2.5 }) }; } },
     'session.cjs': { createSession(options) { config = options; return settings.realSession ? require('../plugin/session.cjs').createSession(options) : session; } },
     'diagnostics.cjs': { createDiagnostics: require('../plugin/diagnostics.cjs').createDiagnostics },
     'media.cjs': { createMedia(options) { assert.strictEqual(options.tools.ffmpeg, 'existing-only'); return { prepare(snapshot, options) { prepared++; assert.strictEqual(snapshot.id, 'fixed'); return { snapshot, options }; } }; } },
     'frame-index.cjs': {}
   };
   modules['task-client.cjs'] = { createTaskClient: options => require('./support/task-client-model.cjs').createModel(modules, options) };
+  Object.assign(modules, settings.modules || {});
   const eagle = Object.fromEntries(['onPluginCreate', 'onPluginRun', 'onLibraryChanged', 'onPluginBeforeExit', 'onPluginShow', 'onPluginHide'].map(name => [name, callback => { hooks[name] = callback; }]));
   if(settings.hostWindow)eagle.window=settings.hostWindow;
   function requestClose() {
@@ -59,6 +60,7 @@ function harness(settings = {}) {
   };
   const win = { EVAUI: { createUI: () => ui }, EVAPlayer: { Player: function (options) { this.options = options; } },
     close: requestClose, addEventListener(type, fn) { hooks[type] = fn; } };
+  if (settings.nativePlayer) win.EVANativePlayer = { Player: settings.nativePlayer };
   vm.runInNewContext(settings.code || code, { window: win, eagle, performance: { now: () => 100 }, require(name) {
     if (name === 'path') return path; if (name === 'fs') return { realpathSync: file => file };
     assert.strictEqual(path.dirname(name), root); assert(modules[path.basename(name)], name); return modules[path.basename(name)];
@@ -79,6 +81,21 @@ async function bounded(pending) {
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 async function main() {
+  {
+    let finish, hidden = 0, shown = 0;
+    const pending = new Promise(resolve => { finish = resolve; });
+    const h = harness({closeSession:()=>pending,hostWindow:{hide:async()=>hidden++,show:async()=>shown++}});
+    await h.hooks.onPluginCreate({path:h.root});const closing=h.hooks.onPluginBeforeExit();
+    assert.equal(hidden,1,'hide is requested before delayed cleanup');assert(!h.windowState().destroyed);
+    finish({status:'closed'});await closing;
+    await h.hooks.onPluginRun();assert(shown>0,'reopen presents only after cleanup');
+    console.log('E42 hide before cleanup / reopen after drain passed (host model)');
+  }
+  {
+    let shown=0;const h=harness({closeSession:async()=>{throw Error('model release failure');},hostWindow:{hide:async()=>{},show:async()=>shown++}});
+    await h.hooks.onPluginCreate({path:h.root});await h.hooks.onPluginBeforeExit().catch(()=>{});await tick();
+    assert(shown>0,'failed close is made visible');assert(h.updates.some(v=>v.error?.message.includes('model release failure')));
+  }
   {
     const calls = [], info = { streaming: 'segments-v1' }, pcm = { bytes: Buffer.from('pcm') };
     const backendCache = {

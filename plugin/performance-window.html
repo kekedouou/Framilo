@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'"><title>性能监测</title><link rel="stylesheet" href="performance.css"></head>
+<body><main class="monitor">
+<header class="heading"><strong>性能监测</strong><span id="state" class="state">连接中</span><button id="close" aria-label="关闭监测">×</button></header>
+<div class="stats"><div class="stat"><span>当前延迟</span><b id="delay">—</b></div><div class="stat" title="已完成操作中95%不超过此延迟；不包括被新目标替代的请求"><span>P95延迟</span><b id="p95">—</b></div><div class="stat" title="收到请求时，已解码RAM帧占全部请求的比例"><span>缓存命中</span><b id="hit">—</b></div></div>
+<div class="stage-head"><span>最近寻帧</span><b id="reason"></b></div><div id="phases"></div>
+<div class="resources">
+<div title="插件界面进程与本插件拥有的解码、生成进程工作集；不含共享GPU及其它Eagle窗口"><span>插件 RAM</span><b id="ramTotal">—</b></div>
+<div title="当前视频受管缓存与解码、绘制预留；不是进程工作集的可相减子集"><span>视频缓存 RAM</span><b id="ramVideo">—</b></div>
+<div title="插件全部视频缓存；不含原视频及软件"><span>总缓存磁盘</span><b id="diskTotal">—</b></div>
+<div title="当前视频各画质的代理与JPEG缓存"><span>本视频磁盘</span><b id="diskVideo">—</b></div>
+</div>
+<p id="message" class="message" role="status"></p></main><script src="performance-window.js"></script></body></html>

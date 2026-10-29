@@ -12,7 +12,7 @@ function fixture(settings = {}) {
     configure(config) { this.config = config; this.state = 'configured'; }
     decode(chunk) { this.chunks.push(chunk); if (settings.immediate) this.deliver(chunk); }
     deliver(chunk, overrides = {}) { const frame = { timestamp: chunk.timestamp, displayWidth: 16, displayHeight: 8, closed: 0, close() { this.closed++; }, ...overrides }; frames.push(frame); this.callbacks.output(frame); return frame; }
-    flush() { for (const chunk of this.chunks.splice(0)) this.deliver(chunk); return Promise.resolve(); }
+    flush() { if(settings.flush)return settings.flush(this);for (const chunk of this.chunks.splice(0)) this.deliver(chunk); return Promise.resolve(); }
     close() { this.state = 'closed'; }
   }
   const decoder = createProxyDecoder({ width: 16, height: 8, VideoDecoder: Decoder, EncodedVideoChunk: Chunk,
@@ -25,16 +25,40 @@ function fixture(settings = {}) {
   return { decoder, instances, frames, images, timers, fire };
 }
 async function main() {
+  {
+    const drains=[];
+    const h=fixture({flush:native=>new Promise(resolve=>{const submitted=native.chunks.splice(0);drains.push(()=>{submitted.forEach(c=>native.deliver(c));resolve();});})});
+    const first=h.decoder.decode(packet,{id:0});await tick();h.fire(8);assert.equal(drains.length,1);
+    const next=h.decoder.decode(packet,{id:1});await tick();h.fire(8);assert.equal(drains.length,1,'no overlapping flush');
+    drains.shift()();const image=await first;image.close();await tick();
+    assert([...h.timers.values()].some(t=>t.ms===8),'a request queued behind an active flush must get a replacement drain timer');
+    h.fire(8);assert.equal(drains.length,1);drains.shift()();(await next).close();await tick();
+    assert.equal(h.decoder.snapshot().pending,0);assert.equal(h.decoder.snapshot().flushes,2);await h.decoder.close();
+  }
+  for(const action of ['cancel','close']){
+    const drains=[],h=fixture({flush:n=>new Promise(resolve=>{const chunks=n.chunks.splice(0);drains.push(()=>{chunks.forEach(c=>n.deliver(c));resolve();});})});
+    const a=h.decoder.decode(packet,{id:0});await tick();h.fire(8);
+    const controller=new AbortController(),b=h.decoder.decode(packet,{id:1},{signal:controller.signal});await tick();h.fire(8);
+    const rejectedB=assert.rejects(b,e=>e.code===(action==='cancel'?'MEDIA_CANCELLED':'PROXY_DECODER_CLOSED'));
+    if(action==='close'){
+      const rejectedA=assert.rejects(a,e=>e.code==='PROXY_DECODER_CLOSED');await h.decoder.close();drains.shift()();await tick();await Promise.all([rejectedA,rejectedB]);
+      assert.equal(h.timers.size,0);assert.equal(h.decoder.snapshot().pending,0);assert(h.frames.every(f=>f.closed===1));
+    }else{
+      controller.abort();await rejectedB;drains.shift()();(await a).close();await tick();h.fire(8);assert.equal(drains.length,1);drains.shift()();await tick();
+      assert.equal(h.decoder.snapshot().pending,0);assert.equal(h.images.length,1);assert(h.frames.every(f=>f.closed===1));await h.decoder.close();
+    }
+  }
   assert.equal(annexB(packet).codec, 'avc1.42001f');
   for (const bytes of [Buffer.alloc(0), packet.subarray(0, 10), Buffer.from([0, 0, 1, 0x61, 0x80])])
     assert.throws(() => annexB(bytes), /代理/);
   {
-    const h = fixture(), one = h.decoder.decode(packet, { id: 100, time: 5 }), two = h.decoder.decode(packet, { id: 1, time: 0 });
+    const stages = [], h = fixture(), one = h.decoder.decode(packet, { id: 100, time: 5 }, {trace:(...args)=>stages.push(args)}), two = h.decoder.decode(packet, { id: 1, time: 0 });
     await assert.rejects(h.decoder.decode(packet, { id: 2 }), e => e.code === 'PROXY_DECODE_LIMIT'); await tick();
     assert.equal(h.instances.length, 1); const native = h.instances[0];
     assert.deepEqual(native.chunks.map(c => c.timestamp), [1, 2]);
     native.deliver(native.chunks[1]); native.deliver(native.chunks[0]);
     const images = await Promise.all([one, two]); assert.equal(images.length, 2); assert(h.frames.every(f => f.closed === 1));
+    assert(stages.some(s=>s[0]==='decodeNative'&&!s[3])&&stages.some(s=>s[0]==='convert'&&!s[3]),'native output and bitmap conversion have separate measurements');
     assert.equal(h.decoder.snapshot().pending, 0); assert.equal(h.decoder.snapshot().hardwareVerified, false);
     await h.decoder.close(); assert(images.every(i => i.closed === 0), 'returned images belong to caller'); images.forEach(i => i.close());
   }

@@ -37,7 +37,7 @@ function uiHarness() {
   win.requestAnimationFrame = fn => { const id = ++serial; frames.set(id, fn); return id; }; win.cancelAnimationFrame = id => frames.delete(id);
   const doc = { getElementById(id) { if (!elements.has(id)) elements.set(id, node()); return elements.get(id); } };
   const ui = createUI({ document: doc, window: win, now: () => clock }), pending = [], calls = [];
-  const session = { seek(time, options) { calls.push({ time, ...options }); return new Promise(resolve => pending.push({ time, resolve, due: clock + 1500 })); }, step() {}, saveComment() { calls.push({ saved: true }); } };
+  const session = { loopFrameAt(time,bounds={}){const ordinal=Math.max(bounds.minOrdinal??0,Math.min(bounds.maxOrdinal??600,bounds.ordinal??Math.round(time*60)));return{ordinal,frameId:ordinal,time:ordinal/60};}, seek(time, options) { calls.push({ time, ...options }); return new Promise(resolve => pending.push({ time, resolve, due: clock + 1500 })); }, step() {}, saveComment() { calls.push({ saved: true }); } };
   const state = { epoch: 1, state: 'paused', duration: 10, playback: { time: 2, frameId: 120, frameOrdinal: 120, frameCount: 601 }, comments: { status: 'ready' } };
   ui.bindSession(session); ui.update(state);
   return { ui, win, doc, calls, pending, state, el: id => doc.getElementById(id), clock: value => { clock = value; },

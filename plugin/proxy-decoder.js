@@ -64,6 +64,7 @@
     if (!['prefer-hardware', 'prefer-software', 'no-preference'].includes(preference))
       throw issue('PROXY_CONFIG_INVALID', '代理硬件偏好无效。');
     const counts = { decoded: 0, delivered: 0, cancelled: 0, flushes: 0, closedFrames: 0, discardedBitmaps: 0, peakPending: 0 };
+    const trace = (entry, phase, start, end, begin = false) => { try { entry.trace?.(phase, start, end, begin); } catch (_) { /* measurement cannot fail decoding */ } };
     const safeClose = object => { if (object && typeof object.close === 'function') { try { object.close(); } catch (_) { /* already closed */ } } };
     function settle(entry, error, value) {
       if (entry.settled) return;
@@ -93,14 +94,17 @@
         return;
       }
       pending.delete(entry.timestamp); clearTimer(entry.timer); clearTimer(entry.flushTimer); counts.decoded++;
+      const outputAt = now(); trace(entry, 'decodeNative', entry.decodeAt, outputAt);
       if (entry.cancelled) { safeClose(frame); counts.closedFrames++; finish(entry); return; }
       entry.phase = 'bitmap';
+      trace(entry, 'convert', outputAt, null, true);
       const conversion = Promise.resolve().then(async () => {
         let image = null;
         try {
           if (frame.displayWidth !== width || frame.displayHeight !== height)
             throw issue('PROXY_FRAME_SIZE', '代理解码画面尺寸与清单不符。');
           image = await bitmap(frame);
+          trace(entry, 'convert', outputAt, now());
           if (!image || image.width !== width || image.height !== height)
             throw issue('PROXY_FRAME_SIZE', '代理位图尺寸与清单不符。');
           if (closed || failure || entry.cancelled || entry.settled) {
@@ -137,6 +141,10 @@
       })();
       return initializing;
     }
+    function scheduleFlush(entry) {
+      if (flushAfterMs === null || closed || failure || entry.finished || entry.phase !== 'decode' || entry.flushTimer !== null) return;
+      entry.flushTimer = setTimer(() => { entry.flushTimer = null; flush(entry); }, flushAfterMs);
+    }
     function flush(entry) {
       if (closed || failure || entry.finished || entry.phase !== 'decode' || flushWork || !decoder || decoder.state !== 'configured') return;
       counts.flushes++;
@@ -144,7 +152,13 @@
       // output without reconstructing the decoder. Every following packet is a key.
       try { flushWork = Promise.resolve(decoder.flush()); }
       catch (error) { stop(error); return; }
-      flushWork.then(() => { flushWork = null; }, error => { flushWork = null; if (!closed && !failure) stop(error); });
+      flushWork.then(() => {
+        flushWork = null;
+        // A native flush only drains work submitted before its queue barrier.
+        // Later packets can lose their own timer while this flush is in flight.
+        // Rearm those still waiting, including cancelled work that owns a slot.
+        for (const waiting of pending.values()) scheduleFlush(waiting);
+      }, error => { flushWork = null; if (!closed && !failure) stop(error); });
     }
     function decode(bytes, frame, settings = {}) {
       if (closed || failure) return Promise.reject(failure || issue('PROXY_DECODER_CLOSED', '代理解码已关闭。'));
@@ -162,7 +176,7 @@
       let resolve, reject;
       const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
       const entry = { timestamp, sourceFrameId: frame.id, started, resolve, reject, settled: false, finished: false,
-        phase: 'setup', cancelled: false, signal: settings.signal, timer: null, flushTimer: null, abort: null };
+        phase: 'setup', cancelled: false, signal: settings.signal, trace: settings.trace, timer: null, flushTimer: null, abort: null };
       work.add(entry); counts.peakPending = Math.max(counts.peakPending, work.size);
       entry.abort = () => {
         if (entry.finished || entry.cancelled) return;
@@ -175,8 +189,9 @@
         await initialize(packet.codec);
         if (entry.finished || closed || failure) return;
         entry.phase = 'decode'; pending.set(timestamp, entry);
+        entry.decodeAt = now(); trace(entry, 'decodeNative', entry.decodeAt, null, true);
         decoder.decode(new NativeChunk({ type: 'key', timestamp, data: packet.bytes }));
-        if (flushAfterMs !== null && !entry.finished && entry.phase === 'decode') entry.flushTimer = setTimer(() => flush(entry), flushAfterMs);
+        scheduleFlush(entry);
       }).catch(error => { settle(entry, error); finish(entry); if (!closed && !failure) stop(error); });
       return promise;
     }

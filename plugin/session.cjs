@@ -3,6 +3,7 @@
 // Coordinates one material at a time. No Eagle calls, filesystem or UI access.
 const path = require('path');
 const { quality } = require('./preview-profile.cjs');
+const proxyEncoding = require('./proxy-encoding.cjs');
 const { interactionValue, DEFAULT_INTERACTION } = require('./preferences.cjs');
 const { createDrawingSession } = require('./drawing-session.cjs');
 function issue(code, message) { const error = new Error(message); error.code = code; return error; }
@@ -52,6 +53,12 @@ function createSession(options) {
       loadMetrics: loadMetrics ? { ...loadMetrics } : null,
       comments: observedComments(), drawings: drawings.snapshot(), exportState, exportFolders,
       preview: owner && owner.epoch === epoch && owner.info?.preview ? { ...owner.info.preview, ...owner.previews?.quick?.snapshot() } : null,
+      gpuAcceleration:options.memoryPreferences?.gpuAcceleration?.()!==false,
+      proxyEncoder: options.memoryPreferences?.gpuAcceleration ? (options.memoryPreferences.gpuAcceleration()?'nvidia':'cpu') : options.memoryPreferences?.proxyEncoder?.() || 'cpu',
+      proxyDiskGiB: options.memoryPreferences?.proxyDiskGiB?.() || 5,
+      decoderPreference: options.memoryPreferences?.decoderPreference?.() || 'prefer-hardware',
+      autoProxy: options.memoryPreferences?.automaticProxy?.() !== false,
+      gpuDrawing: options.memoryPreferences?.gpuDrawing?.() !== false,
       playbackBackend: options.memoryPreferences && typeof options.memoryPreferences.backend === 'function' ? options.memoryPreferences.backend() : 'jpeg',
       proxyPreparation: owner && owner.info && cache.backgroundStatus ? cache.backgroundStatus(owner.info) : null,
       previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : '720p',
@@ -137,7 +144,7 @@ function createSession(options) {
       loadComments(request, selected); // Independent read; never add API work to the frame loop.
       owned = { epoch: request.epoch, info: null, player: null, dispose: null, released: false, ready: false }; owner = owned;
       const mediaStartedAt = now();
-      const info = await media.prepare(selected, { signal: request.controller.signal, previewQuality: request.previewQuality, playbackBackend: request.playbackBackend, onProgress: value => {
+      const info = await media.prepare(selected, { signal: request.controller.signal, previewQuality: request.previewQuality, playbackBackend: request.playbackBackend, proxyEncoder: request.proxyEncoder, onProgress: value => {
         if (current(request) && owner === owned) { progress = typeof value === 'object' && value ? { ...value } : { stage: 'media-prepare', message: String(value) }; notify(); }
       } });
       const mediaReturnedAt = now(); owned.info = info;
@@ -149,8 +156,8 @@ function createSession(options) {
       drawings.open({ libraryPath: request.drawingLibrary || comments.libraryPath, itemId: source.id, sourceSha256: source.sha256, frames: info.frames, duration: info.duration });
       progress = { stage: 'player-initialize', message: '正在初始化画面与声音' }; notify();
       if (!current(request)) { await releaseOwner(owned); return { status: 'superseded' }; }
-      const player = createPlayer({ experimentMode: 'compressed-ram',
-        readAsset: (_copiedInfo, file) => cache.readAsset(info, file),
+      const player = createPlayer({ experimentMode: 'compressed-ram', mediaInfo: info,
+        readAsset: (_copiedInfo, file, trace) => cache.readAsset(info, file, trace),
         setMediaTarget: time => { if (cache.target) cache.target(info, time); },
         prefetchMedia: (time, loop) => { if (cache.prefetch) cache.prefetch(info, time, loop); },
         cancelMediaReads: () => { if (cache.cancelReads) cache.cancelReads(info); },
@@ -161,7 +168,8 @@ function createSession(options) {
         onChange: value => {
           if (!current(request) || owner !== owned) return;
           playback = { ...value };
-          if (!value.pendingTargets && ['paused', 'playing'].includes(value.state) && owned.previews?.quick?.snapshot().active) owned.previews.quick.clear();
+          if (!value.pendingTargets && ['paused', 'playing'].includes(value.state) &&
+              (owned.previews?.quick?.snapshot().active || owned.previews?.quick?.snapshot().pending)) owned.previews.quick.clear();
           if (owned.ready) {
             state = value.state;
             if (state === 'error') error = { code: value.lastErrorCode || 'PLAYBACK_FAILED', message: value.lastIssue || '视频播放或定位失败，请重试。' };
@@ -238,6 +246,10 @@ function createSession(options) {
     const startedAt = Number.isFinite(settings.startedAt) ? settings.startedAt : now();
     const request = { epoch: invalidate(), controller: new AbortController(), captured: null, startedAt, trigger: settings.trigger || 'selected-load',
       restoreTime: settings.restoreTime, restoreFrameId: settings.restoreFrameId, transportState: settings.transportState,
+      gpuAcceleration:options.memoryPreferences?.gpuAcceleration?.()!==false,
+      proxyEncoder: options.memoryPreferences?.gpuAcceleration ? (options.memoryPreferences.gpuAcceleration()?'nvidia':'cpu') : options.memoryPreferences?.proxyEncoder?.() || 'cpu',
+      proxyDiskGiB: options.memoryPreferences?.proxyDiskGiB?.() || 5,
+      decoderPreference: options.memoryPreferences?.decoderPreference?.() || 'prefer-hardware',
       playbackBackend: options.memoryPreferences && typeof options.memoryPreferences.backend === 'function' ? options.memoryPreferences.backend() : 'jpeg',
       previewQuality: options.memoryPreferences && typeof options.memoryPreferences.quality === 'function' ? options.memoryPreferences.quality() : undefined };
     if (!current(request)) return Promise.resolve({ status: 'superseded' });
@@ -264,23 +276,34 @@ function createSession(options) {
     const result = await cache.clearOther({ sourceSha256: retained.sha256 });
     return closed || token !== epoch ? { status: 'superseded' } : { status: 'cleared', ...result };
   }
-  async function setPlaybackSettings({ ramMiB, previewQuality, playbackBackend, forwardPredecode, wheelFrames, showCacheStrip, rateStep, drawingFadeSeconds } = {}, trigger = 'playback-settings') {
+  async function setPlaybackSettings({ ramMiB, previewQuality, playbackBackend, proxyEncoder, decoderPreference, autoProxy, gpuDrawing, gpuAcceleration, proxyDiskGiB, forwardPredecode, wheelFrames, showCacheStrip, showProxyStrip, rateStep, drawingFadeSeconds } = {}, trigger = 'playback-settings') {
     if (activeExport) throw issue('EXPORT_BUSY', '请等待导出结束或取消。');
     const preferences = options.memoryPreferences;
     if (!preferences) throw issue('MEMORY_SETTINGS_UNAVAILABLE', '当前入口没有内存设置接口。');
+    if(gpuAcceleration!==undefined){if(typeof gpuAcceleration!=='boolean')throw issue('SETTINGS_INVALID','GPU加速必须为开或关。');proxyEncoder=gpuAcceleration?'nvidia':'cpu';decoderPreference=gpuAcceleration?'prefer-hardware':'prefer-software';gpuDrawing=gpuAcceleration;}
     if (playbackBackend !== undefined && !['proxy','jpeg'].includes(playbackBackend)) throw issue('SETTINGS_INVALID','播放方式无效。');
     if (previewQuality !== undefined) quality(previewQuality);
+    if(proxyDiskGiB!==undefined)require('./preferences.cjs').diskValue(proxyDiskGiB);
+    if (proxyEncoder !== undefined) proxyEncoding.encoder(proxyEncoder);
+    if (decoderPreference !== undefined) proxyEncoding.decoder(decoderPreference);
+    if (autoProxy !== undefined && typeof autoProxy !== 'boolean') throw issue('SETTINGS_INVALID', '自动代理设置必须为开或关。');
+    if (gpuDrawing !== undefined && typeof gpuDrawing !== 'boolean') throw issue('SETTINGS_INVALID', 'GPU视频绘制必须为开或关。');
     if (forwardPredecode !== undefined && typeof forwardPredecode !== 'boolean') throw issue('SETTINGS_INVALID', '提前解压设置必须为开或关。');
+    // E46 these policies are fixed, including old API callers and legacy preferences.
+    forwardPredecode=true;autoProxy=true;
     const previousInteraction = typeof preferences.interaction === 'function' ? preferences.interaction() : DEFAULT_INTERACTION;
     const interaction = interactionValue(wheelFrames === undefined ? previousInteraction.wheelFrames : wheelFrames,
       showCacheStrip === undefined ? previousInteraction.showCacheStrip : showCacheStrip,
       rateStep === undefined ? previousInteraction.rateStep : rateStep,
-      drawingFadeSeconds === undefined ? previousInteraction.drawingFadeSeconds : drawingFadeSeconds, previousInteraction.drawingToolbar);
+      drawingFadeSeconds === undefined ? previousInteraction.drawingFadeSeconds : drawingFadeSeconds, previousInteraction.drawingToolbar,
+      showProxyStrip === undefined ? previousInteraction.showProxyStrip : showProxyStrip);
     preferences.preview(ramMiB);
     if (closed || comments.draft || drawings.snapshot().draft) throw issue('MEMORY_SETTINGS_BUSY', '请先保存或取消标注。');
     const token = epoch, retained = source, wasPreparing = state === 'preparing';
     const backendChanged = playbackBackend !== undefined && (typeof preferences.backend !== 'function' || preferences.backend() !== playbackBackend);
-    const onlyControls = !backendChanged && (forwardPredecode !== undefined || wheelFrames !== undefined || showCacheStrip !== undefined || rateStep !== undefined || drawingFadeSeconds !== undefined) && preferences.snapshot().ramMiB === ramMiB &&
+    const autoProxyChanged = autoProxy !== undefined && (preferences.automaticProxy?.() !== false) !== autoProxy;
+    const encodingChanged = gpuAcceleration!==undefined&&gpuAcceleration!==(preferences.gpuAcceleration?.()!==false) || proxyDiskGiB!==undefined&&proxyDiskGiB!==(preferences.proxyDiskGiB?.()||5) || proxyEncoder !== undefined && proxyEncoder !== (preferences.proxyEncoder?.() || 'cpu') || decoderPreference !== undefined && decoderPreference !== (preferences.decoderPreference?.() || 'prefer-hardware') || gpuDrawing !== undefined && gpuDrawing !== (preferences.gpuDrawing?.() !== false);
+    const onlyControls = !backendChanged && !encodingChanged && (autoProxy !== undefined || forwardPredecode !== undefined || wheelFrames !== undefined || showCacheStrip !== undefined || showProxyStrip !== undefined || rateStep !== undefined || drawingFadeSeconds !== undefined) && preferences.snapshot().ramMiB === ramMiB &&
       (previewQuality === undefined || typeof preferences.quality === 'function' && previewQuality === preferences.quality());
     const predecodeChanged = forwardPredecode !== undefined && (typeof preferences.forwardPredecode !== 'function' || forwardPredecode !== preferences.forwardPredecode());
     if (onlyControls && predecodeChanged && owner && owner.ready && typeof owner.player.setForwardPredecode !== 'function')
@@ -292,9 +315,10 @@ function createSession(options) {
     const time = actual ? actual.time : retainedTime;
     const frameId = actual ? actual.frameId : memoryResume ? memoryResume.frameId : undefined;
     const transportState = actual && actual.transport && retained ? { sourceSha256: retained.sha256, value: actual.transport } : memoryResume && memoryResume.transportState;
-    preferences.save(ramMiB, previewQuality, forwardPredecode, interaction, playbackBackend);
+    preferences.save(ramMiB, previewQuality, forwardPredecode, interaction, playbackBackend, proxyEncoder, decoderPreference, autoProxy, gpuDrawing,proxyDiskGiB,gpuAcceleration);
     if (onlyControls && owner && owner.ready) {
       if (predecodeChanged) owner.player.setForwardPredecode(forwardPredecode);
+      if (autoProxyChanged && owner.info?.nativeRuntime) proxyControl(autoProxy ? 'startProxy' : 'cancelProxy');
       notify(); return { status: 'applied' };
     }
     memoryResume = retained ? { id: retained.id, filePath: retained.filePath, time, frameId, transportState } : null;
@@ -303,13 +327,23 @@ function createSession(options) {
     return retained || wasPreparing ? startLoad({ trigger, restoreTime: time, restoreFrameId: frameId, transportState }, retained) : { status: 'applied' };
   }
   function setMemoryMiB(ramMiB) { return setPlaybackSettings({ ramMiB }, 'memory-settings'); }
+  function proxyControl(method) {
+    const owned = owner, token = epoch, runtime = owned?.info?.nativeRuntime;
+    if (closed || !owned?.ready || !runtime || typeof runtime[method] !== 'function') return { status: 'ignored' };
+    const operation = runtime[method]();
+    Promise.resolve(operation).then(() => { if (!closed && epoch === token && owner === owned) notify(); }, () => {
+      // Background failure is shown in its status, without invalidating source playback.
+      if (!closed && epoch === token && owner === owned) notify();
+    });
+    notify(); return { status: method === 'startProxy' ? 'started' : 'cancelled' };
+  }
   function setDrawingToolbar(visible) {
     if (closed) return { status: 'ignored' };
     if (typeof visible !== 'boolean') throw issue('SETTINGS_INVALID', '圈画工具条显示设置必须为开或关。');
     const preferences = options.memoryPreferences;
     if (!preferences || typeof preferences.interaction !== 'function') throw issue('SETTINGS_UNAVAILABLE', '当前入口没有工具条设置接口。');
     const previous = preferences.interaction();
-    const interaction = interactionValue(previous.wheelFrames, previous.showCacheStrip, previous.rateStep, previous.drawingFadeSeconds, visible);
+    const interaction = interactionValue(previous.wheelFrames, previous.showCacheStrip, previous.rateStep, previous.drawingFadeSeconds, visible, previous.showProxyStrip);
     preferences.save(preferences.snapshot().ramMiB, preferences.quality(), preferences.forwardPredecode(), interaction);
     notify(); return { status: 'saved' };
   }
@@ -322,10 +356,13 @@ function createSession(options) {
       return Promise.reject(issue('SESSION_NOT_READY', '视频尚未就绪或正在定位，请等待当前操作完成。'));
     if (method !== 'seek') owned.previews?.quick?.cancel();
     let result; try { result = owned.player[method](...args); } catch (failure) { result = Promise.reject(failure); }
-    if (method === 'seek' && owned.previews?.quick) {
-      const settings = args[1] || {}, ordinal = drawingModel.frameIndex(owned.info.frames, args[0], owned.info.duration);
-      if (!settings.final && ['rapid', 'drag'].includes(settings.kind) && !cache.isFrameReady?.(owned.info, ordinal)) owned.previews.quick.request(args[0]);
-      else owned.previews.quick.cancel();
+    if (['seek', 'step'].includes(method) && owned.previews?.quick) {
+      const current = owned.player.snapshot(), target = method === 'seek' ? args[0] : current.targetTime;
+      // A release or direct jump still needs a temporary picture while its
+      // exact target is pending. Clear it only when that exact draw completes.
+      if (current.pendingTargets && Number.isFinite(target)) owned.previews.quick.request(target, { delayMs: 80, final: method==='step'||args[1]?.final!==false,
+        performanceIdentity: { requestId: owned.player.requestId, epoch: owned.player.epoch } });
+      else owned.previews.quick.clear();
     }
     return Promise.resolve(result).then(value => token === epoch && !closed ? value : { status: 'superseded' }, failure => {
       if (token !== epoch || closed) return { status: 'superseded' };
@@ -472,7 +509,7 @@ function createSession(options) {
   async function beginComment(preferredId = null) {
     if (activeExport || drawings.snapshot().draft) return { status: 'ignored' };
     const owned = owner, token = epoch;
-    if (closed || !owned?.ready || comments.status !== 'ready' || comments.draft || !['paused', 'playing'].includes(state)) return { status: 'ignored' };
+    if (closed || !owned?.ready || comments.status !== 'ready' || comments.draft || !['paused', 'playing'].includes(state) || owned.player.snapshot().frameHeld === true) return { status: 'ignored' };
     let draft = Object.freeze({ id: ++draftSequence, status: 'pausing', source, libraryPath: comments.libraryPath,
       libraryEpoch, frameId: null, time: null, text: '', message: '正在固定画面…', attempt: null });
     commentChange({ draft });
@@ -480,7 +517,7 @@ function createSession(options) {
       await owned.player.pause();
       if (!liveDraft(draft.id, token)) return { status: 'superseded' };
       const actual = owned.player.snapshot(), frame = owned.info.frames[actual.frameOrdinal];
-      if (actual.state !== 'paused' || actual.pendingTargets > 0 || !frame || frame.id !== actual.frameId || frame.time !== actual.time)
+      if (actual.state !== 'paused' || actual.pendingTargets > 0 || actual.frameHeld === true || !frame || frame.id !== actual.frameId || frame.time !== actual.time)
         throw issue('COMMENT_FRAME_NOT_READY', '画面尚未定位完成，请完成定位后再添加标注。');
       const items = await freshNative(owned, token);
       if (!liveDraft(draft.id, token)) return { status: 'superseded' };
@@ -635,7 +672,7 @@ function createSession(options) {
         await owned.player.pause();
         if (!valid()) throw issue('EXPORT_CANCELLED', '导出已取消。');
         const actual = owned.player.snapshot(), frame = owned.info.frames[actual.frameOrdinal];
-        if (actual.state !== 'paused' || actual.pendingTargets > 0 || !frame || frame.id !== actual.frameId || frame.time !== actual.time)
+        if (actual.state !== 'paused' || actual.pendingTargets > 0 || actual.frameHeld === true || !frame || frame.id !== actual.frameId || frame.time !== actual.time)
           throw issue('EXPORT_FRAME', '画面尚未准确定位，请完成定位后再导出。');
         const transport = typeof owned.player.transportSnapshot === 'function' ? owned.player.transportSnapshot() : actual.transport;
         const loop = transport && transport.loop;
@@ -699,7 +736,7 @@ function createSession(options) {
   }
   async function beginDrawing(id = null, kind = 'edit') {
     const owned = owner, token = epoch;
-    if (closed || comments.draft || activeExport || exportState.status === 'unknown' || !owned || !owned.ready || !['paused', 'playing'].includes(state)) return { status: 'ignored' };
+    if (closed || comments.draft || activeExport || exportState.status === 'unknown' || !owned || !owned.ready || !['paused', 'playing'].includes(state) || !id && owned.player.snapshot().frameHeld === true) return { status: 'ignored' };
     let target;
     try { target = drawings.resolve(id, comments.items); } catch (failure) { drawings.fail(failure); return { status: 'failed' }; }
     const reservation = drawings.reserve(); if (reservation === null) return { status: 'ignored' };
@@ -715,7 +752,7 @@ function createSession(options) {
         if (!valid()) return { status: 'superseded' };
       }
       const actual = owned.player.snapshot(), frame = owned.info.frames[actual.frameOrdinal];
-      if (actual.state !== 'paused' || actual.pendingTargets > 0 || !frame || frame.id !== actual.frameId || frame.time !== actual.time)
+      if (actual.state !== 'paused' || actual.pendingTargets > 0 || actual.frameHeld === true || !frame || frame.id !== actual.frameId || frame.time !== actual.time)
         throw issue('DRAWING_FRAME_NOT_READY', '当前源帧尚未准确显示，请完成定位后重试。');
       const native = await freshNative(owned, token); if (!valid()) return { status: 'superseded' };
       target = drawings.resolveFrame({ frameId: actual.frameId, frameOrdinal: actual.frameOrdinal }, native);
@@ -801,7 +838,8 @@ function createSession(options) {
       const ordinals = rows => [...new Set((rows || []).filter(time => Number.isFinite(time) && time >= 0 && time <= owner.info.duration)
         .map(time => drawingModel.frameIndex(owner.info.frames, time, owner.info.duration)))];
       const order = { all: ordinals(value.all), visible: ordinals(value.visible) };
-      owner.previews?.records?.prioritize(order); cache.prioritizeRecords?.(owner.info, order);
+      if (owner.info.videoEncoding === 'filmcraft-native') owner.player.primeRecords?.(order);
+      else { owner.previews?.records?.prioritize(order); cache.prioritizeRecords?.(owner.info, order); }
     },
     saveDrawing, cancelDrawing: drawings.discard, setDrawingsVisible: drawings.setVisible, setDrawingStyles: drawings.setStyles,
     hasDrawingDraft: () => !!drawings.snapshot().draft,
@@ -823,6 +861,8 @@ function createSession(options) {
       return item && item.time <= duration ? control('seek', [item.time, { kind: 'annotation', index: item.drawingFrameOrdinal, final: true, inputAt: now() }], ['paused', 'playing', 'seeking']) : Promise.resolve({ status: 'ignored' });
     },
     annotationHistory: () => Object.freeze(annotationReceipts.slice()), setMemoryMiB, setPlaybackSettings, setDrawingToolbar, clearOtherCaches,
+    startProxy: () => proxyControl('startProxy'), cancelProxy: () => proxyControl('cancelProxy'),
+    setAutoProxy: enabled => setPlaybackSettings({ ramMiB: options.memoryPreferences?.snapshot()?.ramMiB, autoProxy: enabled }),
     beginExport, loadExportFolders, checkExport, cancelExport: () => { if (activeExport && !activeExport.issued) activeExport.controller.abort(); },
     libraryChanged: () => clear('library-changed'), close: () => clear('closed'), snapshot, memorySnapshot, cacheCoverageSnapshot });
 }

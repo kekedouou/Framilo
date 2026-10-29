@@ -192,7 +192,7 @@ function createLongMedia({ cache, tools, helpers: h }) {
       const end = indexed.sourceEnd;
       const info = { schema: 1, owner: OWNER, recipe: RECIPE, streaming: 'segments-v1', leaseId: crypto.randomBytes(12).toString('hex'),
         source: { ...snapshot, sha256: fingerprint.sha256, codec: video.codec_name, width: video.width, height: video.height, hasAudioStream: !!audio },
-        ...(proxy ? { videoEncoding: { format: 'annexb-idr-v1', codec: 'avc1.42c033' } } : {}),
+        ...(proxy ? { videoEncoding: require('./proxy-encoding.cjs').encoding(settings.proxyEncoder) } : {}),
         lastFrameEndTicks: end.lastFrameEndTicks, endTimeBase: end.timeBase,
         preview, width: preview.width, height: preview.height, duration, frames: indexed.frames, audio,
         segments: groups.map(group => ({ ...group })), metrics: { indexedPackets: indexed.frames.length, fullVideoRendered: false, lastFrameEnd: end.method } };
@@ -261,14 +261,7 @@ function createLongMedia({ cache, tools, helpers: h }) {
     const hasAudio = audioEnd > audioStart;
     const args = h.ffmpegArgs(snapshot.filePath, false, video.codec_name, video, info.preview);
     args.splice(args.indexOf('-i'), 0, '-noaccurate_seek', '-seek_timestamp', '1', '-ss', videoStart.toFixed(9));
-    if (info.videoEncoding) {
-      args[args.indexOf('-c:v')+1] = 'libx264';
-      args.splice(args.indexOf('-q:v'), 2, '-preset', 'ultrafast', '-crf', '20', '-profile:v', 'baseline', '-level:v', '5.1', '-g', '1', '-bf', '0',
-        '-x264-params', 'aud=1:repeat-headers=1:keyint=1:scenecut=0', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv');
-      args[args.indexOf('-f')+1] = 'h264';
-      const filter = args.indexOf('-vf') + 1;
-      args[filter] = args[filter].replace('out_range=pc:out_color_matrix=bt601', 'out_range=tv:out_color_matrix=bt709').replace('format=yuvj420p','format=yuv420p');
-    }
+    const production=info.videoEncoding?require('./proxy-encoding.cjs').configure(args,info,video):null;
     const vf = args.indexOf('-vf') + 1;
     args[vf] = `trim=start=${videoStart.toFixed(9)},trim=end_frame=${expected.length},` + args[vf];
     if (group.still) args.splice(args.indexOf('-f'), 0, '-frames:v', '1');
@@ -282,9 +275,11 @@ function createLongMedia({ cache, tools, helpers: h }) {
         `aresample=48000,atrim=start=${(origin + audioStart).toFixed(9)}:end=${(origin + audioEnd).toFixed(9)},ashowinfo@a`,
         '-c:a', 'pcm_f32le', '-f', 'wav', 'pipe:3');
     }
+    const began=performance.now();let firstPtsMs=null,firstPacketMs=null;
     const { child, finish } = h.childProcess(job, tools.ffmpeg, args, ['ignore', 'pipe', 'pipe', hasAudio ? 'pipe' : 'ignore'], false);
     const parser = info.videoEncoding ? new (require('./avc-access-units.cjs').AccessUnitParser)() : new h.JpegParser(), assets = [], pts = []; let base = null, audioFirst = null, total = 0, tail = '';
     const storeFrame = async value => {
+      if(firstPacketMs===null)firstPacketMs=performance.now()-began;
       const bytes = info.videoEncoding ? value.bytes : value;
       if (info.videoEncoding && value.codec.toLowerCase() !== info.videoEncoding.codec) fail('代理编码参数与声明不一致。');
       if (assets.length >= expected.length) fail('分段图片数量超出源帧索引。');
@@ -308,7 +303,7 @@ function createLongMedia({ cache, tools, helpers: h }) {
         if (row.includes('showinfo@v')) {
           const tb = /config in time_base:\s*(\d+)\/(\d+)/.exec(row); if (tb) base = [Number(tb[1]), Number(tb[2])];
           const p = /n:\s*(\d+)\s+pts:\s*(-?\d+)\s+pts_time:/.exec(row);
-          if (p) { if (Number(p[1]) !== pts.length || pts.length >= expected.length) fail('分段时间索引溢出。'); pts.push(p[2]); }
+          if (p) { if(firstPtsMs===null)firstPtsMs=performance.now()-began;if (Number(p[1]) !== pts.length || pts.length >= expected.length) fail('分段时间索引溢出。'); pts.push(p[2]); }
         }
         if (row.includes('ashowinfo@a') && audioFirst === null) { const p = /n:\s*0\s+pts:\s*(-?\d+)/.exec(row); if (p) audioFirst = p[1]; }
       }
@@ -328,7 +323,7 @@ function createLongMedia({ cache, tools, helpers: h }) {
     })());
     const results = await Promise.allSettled([videoTask, audioTask, stderrTask]), exit = await finish; h.check(job);
     for (const result of results) if (result.status === 'rejected') throw result.reason;
-    if (exit.error || exit.code !== 0) throw exit.error || new Error('分段读取失败：' + tail);
+    if (exit.error || exit.code !== 0) throw exit.error || Object.assign(new Error((production?.encoder==='h264_nvenc'?'GPU代理不可用，可在设置中切回CPU。':'分段读取失败：') + tail),{code:production?.encoder==='h264_nvenc'?'PROXY_GPU_UNAVAILABLE':'MEDIA_DECODE_FAILED'});
     if (!base || pts.length !== expected.length || assets.length !== expected.length || (info.videoEncoding ? 0 : parser.buffer.length)) fail('分段图片与时间戳不完整。');
     for (let i = 0; i < pts.length; i++) {
       const a = h.ratio(pts[i], base), b = h.ratio(expected[i].ptsTicks, expected[i].timeBase);
@@ -350,7 +345,8 @@ function createLongMedia({ cache, tools, helpers: h }) {
       ...(info.videoEncoding ? { videoEncoding: info.videoEncoding } : {}),
       source: { sha256: key, codec: video.codec_name, width: video.width, height: video.height, hasAudioStream: hasAudio },
       preview: info.preview, width: info.width, height: info.height, duration, frames: localFrames, audio,
-      ...(results[0].value ? { framePack: results[0].value } : {}), metrics: { segmentStart: group.start, sourceSha256: info.source.sha256 } };
+      ...(results[0].value ? { framePack: results[0].value } : {}), metrics: { segmentStart: group.start, sourceSha256: info.source.sha256,
+        production:production?{...production,firstSourceFrameMs:firstPtsMs,firstPacketMs,processAndPublishMs:performance.now()-began,scope:'overlapping FFmpeg pipeline; not additive stages'}:undefined } };
     frameIndex.validateIndex(manifest); return manifest;
   }
   async function release(info) {
@@ -364,7 +360,47 @@ function createLongMedia({ cache, tools, helpers: h }) {
     if (at < 0) return Promise.reject(new Error('标注静帧不属于当前源索引。'));
     return segment(info, at, { ...settings, stillOrdinal: ordinal });
   }
-  return { prepare, segment, still, release, proxyBudget, closeProxyBatch };
+  function scrubStream(info,start,signal){
+    const session=sessionFor(info);unchanged(session);
+    if(!info.videoEncoding||!Number.isSafeInteger(start)||!info.segments[start])throw Error('低清预览源会话无效。');
+    return require('./scrub-producer.cjs').createScrubProducer({info,start,signal,source:session.snapshot.filePath,
+      video:session.video,preview:profile.scrubDimensions(session.video,info.preview.quality),origin:session.origin,tool:tools.ffmpeg,helpers:h});
+  }
+  function scrubSegment(info,ordinal,items,settings={}){
+    const session=sessionFor(info),group=info.segments[ordinal];
+    if(!info.videoEncoding||!Number.isSafeInteger(ordinal)||!group)return Promise.reject(Error('低清分段索引无效。'));
+    const work=jobRun(settings,async job=>{
+      unchanged(session);const preview=profile.scrubDimensions(session.video,info.preview.quality);
+      const key=crypto.createHash('sha256').update(JSON.stringify(['scrub-q5-noref-100ms-v1',info.source.sha256,preview,group,h.COLOR_VERSION])).digest('hex');
+      const parent=await proxyBatch(session,job.signal),tx=await parent.beginSegment({sourceSha256:key,previewQuality:info.preview.quality,signal:job.signal});job.tx=tx;
+      let returned=null,primary=null;
+      try{
+        let manifest=await tx.readComplete({colorVersion:h.COLOR_VERSION});
+        if(!manifest){
+          if(!items?.length){await tx.abort();return null;}
+          let count=0,prior=-1;const entries=[];
+          for(const item of items){
+            if(!Number.isSafeInteger(item.ordinal)||item.ordinal<group.first||item.ordinal>group.last||item.ordinal<=prior||!Buffer.isBuffer(item.bytes)||item.bytes.length>1024**2)throw Error('低清源帧或数据无效。');
+            prior=item.ordinal;count+=item.bytes.length;if(count>8*1024**2)throw Error('低清分段缓冲超过上限。');
+            entries.push({...info.frames[item.ordinal],...await tx.writeFrame(entries.length+'.jpg',item.bytes)});
+          }
+          const pack=await tx.finishFrames(),following=info.frames[prior+1];
+          const indexed=frameIndex.buildIndex(entries,{lastFrameEndTicks:following?following.ptsTicks:info.lastFrameEndTicks,endTimeBase:following?following.timeBase:info.endTimeBase});
+          manifest={schema:1,owner:OWNER,recipe:RECIPE,colorVersion:h.COLOR_VERSION,color:h.previewColor(session.video),
+            source:{sha256:key,codec:session.video.codec_name,width:info.source.width,height:info.source.height,hasAudioStream:false},preview,
+            width:preview.width,height:preview.height,duration:indexed.videoDuration,frames:indexed.frames,audio:null,framePack:pack,
+            metrics:{purpose:'scrub-preview-v1',sourceSha256:info.source.sha256,groupOrdinal:ordinal,segmentStart:info.frames[items[0].ordinal].time,groupStart:group.start,groupEnd:group.end}};
+        }
+        if(manifest.preview.version!==profile.SCRUB_VERSION||manifest.videoEncoding||manifest.audio||manifest.metrics?.purpose!=='scrub-preview-v1'||manifest.metrics.sourceSha256!==info.source.sha256||manifest.metrics.groupOrdinal!==ordinal)throw Error('低清缓存身份不一致。');
+        for(const f of manifest.frames){const source=info.frames[f.id];if(!source||f.id<group.first||f.id>group.last||source.ptsTicks!==f.ptsTicks||source.timeBase.join(':')!==f.timeBase.join(':'))throw Error('低清缓存源帧不一致。');}
+        h.check(job);unchanged(session);returned=await tx.finish(manifest,{...manifest.source,filePath:session.snapshot.filePath});h.check(job);return returned;
+      }catch(error){primary=error;if(returned){try{await cache.release(returned);}catch(e){error.releaseError=e.message;}}try{await tx.abort();}catch(e){error.cleanupError=e.message;}throw error;}
+        finally{try{await tx.close();}catch(error){if(!primary){primary=error;if(returned)try{await cache.release(returned);}catch(e){primary.releaseError=e.message;}}primary.lockReleaseError=error.message;}
+        if(primary&&(primary.cleanupError||primary.lockReleaseError||primary.releaseError))throw Object.assign(Error('低清缓存回收失败：'+[primary.cleanupError,primary.lockReleaseError,primary.releaseError].filter(Boolean).join('；')),{code:'MEDIA_CLEANUP_FAILED'});}
+    });
+    session.operations.add(work);const done=()=>session.operations.delete(work);work.then(done,error=>{if(error.code==='MEDIA_CLEANUP_FAILED')session.cleanupFailure=error;done();});return work;
+  }
+  return { prepare, segment, still, release, proxyBudget, closeProxyBatch, scrubStream, scrubSegment };
 }
 module.exports = { createLongMedia, LIMITS, packetIndex, groupFrames,
   _test: Object.freeze({ AUDIO_PREROLL_VERSION, segmentKey, stillKey, audioInputArgs }) };

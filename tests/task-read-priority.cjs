@@ -14,7 +14,7 @@ function client(options={}){
   const emit=value=>host.stdout.emit('data',JSON.stringify(value)+'\n');let failReturn=!!options.failReturn;
   const read={async adopt(value,taskOwner){events.push(['adopt',value.leaseId,taskOwner]);if(options.adopt)await options.adopt(value);},async readAsset(value,file){events.push(['read',value.leaseId,file]);if(options.read)await options.read(value);return Buffer.from('jpeg-or-avc');},async detach(value){events.push(['detach',value.leaseId]);return true;},async readFrameBatch(){return [];},async inventory(){return {readOnly:true};},async close(){events.push(['thread-close']);}};
   host.stdin=new EventEmitter();host.stdin.writable=true;host.stdin.end=()=>{};host.stdin.write=text=>{
-    assert(Buffer.byteLength(text)<=32768);const value=JSON.parse(text);messages.push(value);if(value.controlId){if(!options.holdAcks)queueMicrotask(()=>emit({type:'control-ack',id:value.controlId}));return;}if(value.type==='guard'||value.method==='cancel')return;
+    assert(Buffer.byteLength(text)<=32768);const value=JSON.parse(text);messages.push(value);if(value.controlId){if(!options.holdAcks)queueMicrotask(()=>emit({type:'control-ack',id:value.controlId}));return;}if(value.type==='guard'||['cancel','quiesce','stopScrub'].includes(value.method))return;
     queueMicrotask(()=>{let result=true,error;
       if(value.method==='prepare')result=options.count>1000?{modelPacked:true}:info;
       if(value.method==='segment'){let segment=segments.get(value.ordinal);if(!segment){const range=info.segments[value.ordinal];segment={leaseId:String(value.ordinal+1).repeat(24),videoEncoding:info.videoEncoding,frames:info.frames.slice(range.first,range.last+1).map((f,n)=>({...f,file:n+'.avc'}))};segments.set(value.ordinal,segment);}result=segment;}
@@ -44,6 +44,27 @@ function worker(options={}){
   return {calls,info,messages,start,get lastId(){return next;},control:message=>input.emit('line',JSON.stringify(message)),async pump(){const work=[...timers.values()];timers.clear();work.forEach(fn=>fn());await flush();}};
 }
 async function main(){let count=0;const test=async(name,fn)=>{await fn();count++;console.log('ok task read priority: '+name);};
+  await test('sparse frames require adopted ownership and detach before source release',async()=>{
+    const gate=deferred(),h=client({adopt:async value=>{if(value.metrics)await gate.promise;}}),info=await h.prepare();
+    const value={leaseId:'f'.repeat(24),width:480,height:270,preview:{version:require('../plugin/preview-profile.cjs').SCRUB_VERSION},metrics:{purpose:'scrub-preview-v1',segmentStart:0},frames:[{id:0,time:0,file:'0.jpg'},{id:1,time:.1,file:'1.jpg'}]};
+    h.emit({type:'scrub-segment',parentLeaseId:info.leaseId,ordinal:0,value});await flush();assert.equal(h.api.cache.findScrubFrame(info,0),null);
+    gate.resolve();await flush();const frame=h.api.cache.findScrubFrame(info,.08);assert.equal(frame.id,1);assert.equal(h.api.cache.findScrubFrame(info,1.5),null);
+    await assert.rejects(h.api.cache.readScrubFrame(info,{...frame}));await h.api.cache.readScrubFrame(info,frame);
+    await h.api.cache.release(info);assert(h.messages.some(m=>m.method==='stopScrub'));assert(h.events.some(e=>e[0]==='detach'&&e[1]===value.leaseId));await assert.rejects(h.api.cache.readScrubFrame(info,frame));await h.api.close();
+  });
+  await test('beginClose sends one quiesce without claiming the owner has completed shutdown',async()=>{
+    const h=client(),info=await h.prepare();h.api.beginClose();h.api.beginClose();
+    assert.equal(h.messages.filter(x=>x.method==='quiesce').length,1);
+    assert(!h.api.stopped);await h.api.cache.release(info);await h.api.close();assert(h.api.stopped);
+  });
+  await test('quiesce aborts producer immediately but retains borrowed records until returned',async()=>{
+    const gate=deferred();let signal;const h=worker({segment:async(n,s)=>{signal=s;await gate.promise;if(s.aborted)throw Object.assign(Error('cancelled'),{code:'MEDIA_CANCELLED'});}});
+    await h.start('prepare');const value=await h.start('recordStill',{leaseId:h.info.leaseId,ordinal:1});await h.pump();
+    assert(signal&&!signal.aborted);h.control({method:'quiesce'});assert(signal.aborted);
+    assert(!h.calls.some(v=>v[0]==='release-source'));await h.start('releaseRecord',{leaseId:h.info.leaseId,recordLeaseId:value.leaseId});
+    gate.resolve();await flush();await h.pump();assert.equal(h.calls.filter(v=>v[0]==='segment').length,1);
+    await h.start('release',{leaseId:h.info.leaseId});await h.start('close');
+  });
   await test('segment events become ready only after asynchronous adoption and duplicate events coalesce',async()=>{
     const gate=deferred(),h=client({adopt:()=>gate.promise}),info=await h.prepare(),segment={leaseId:'c'.repeat(24),videoEncoding:info.videoEncoding,frames:info.frames.slice(0,2).map((f,n)=>({...f,file:n+'.avc'}))};
     h.emit({type:'proxy-segment',parentLeaseId:info.leaseId,ordinal:0,value:segment});h.emit({type:'proxy-segment',parentLeaseId:info.leaseId,ordinal:0,value:segment});assert.equal(h.api.cache.isFrameReady(info,0),false);assert.equal(h.events.filter(v=>v[0]==='adopt').length,1);gate.resolve();await flush();assert(h.api.cache.isFrameReady(info,0));

@@ -31,13 +31,14 @@ const identity = { self: () => { const value = base.self(); if (!value) throw ne
     }
     return ordinary;
   } };
-const cache = require('./cache.cjs').createCache({ pluginRoot: root, taskOwner, processIdentity: identity, packFrames: true });
+const cache = require('./cache.cjs').createCache({ pluginRoot: root, taskOwner, processIdentity: identity, packFrames: true, protectWholeProxy: true });
 const handles = new Map(), controllers = new Map(),requestMethods=new Map();
 const longOwners = new Map(), backgrounds = new Map();
+const scrubBackgrounds=new Map();
 const recordBorrows = new Map(),recordPriorities=new Map();
 function backgroundEvent(leaseId,value){send({type:"proxy-progress",leaseId,value});}
 let sourceExports = null;
-let tail = Promise.resolve(), stopping = false, shutdownTask = null;
+let tail = Promise.resolve(), stopping = false, quiescing = false, shutdownTask = null;
 function send(value) { const text = JSON.stringify(value); if (Buffer.byteLength(text) > 8 * 1024 ** 2) throw new Error('Control response exceeds 8MiB.'); process.stdout.write(text + '\n'); }
 function response(id, result, error) { send({ type: 'response', id, ...(error ? { error: { code: error.code || (error.name === 'AbortError' ? 'MEDIA_CANCELLED' : 'TASK_FAILED'), message: String(error.message).slice(0, 2048) } } : { result }) }); }
 function enqueue(fn) { const work = tail.then(fn); tail = work.catch(() => {}); return work; }
@@ -66,9 +67,10 @@ async function closeProxyBatches(except) {
 }
 function shutdown(id) {
   if (shutdownTask) return shutdownTask;
-  stopping = true; for(const bg of backgrounds.values())bg.foreground(); for (const controller of controllers.values()) controller.abort();
+  stopping = true; for(const bg of scrubBackgrounds.values())bg.stop();for(const bg of backgrounds.values())bg.foreground(); for (const controller of controllers.values()) controller.abort();
   shutdownTask = enqueue(async () => {
     if(recordBorrows.size)throw Error('标注静帧尚未交还，未确认关闭。');
+    for(const bg of scrubBackgrounds.values())await bg.close();scrubBackgrounds.clear();
     for(const bg of backgrounds.values())await bg.close(); backgrounds.clear();
     for (const info of handles.values()) {
       if (longOwners.has(info.leaseId)) await longOwners.get(info.leaseId).releaseLong(info);
@@ -86,7 +88,7 @@ async function execute(message, controller) {
   if (message.method === 'prepare') {
     await closeProxyBatches();
     const media = require('./media.cjs').createMedia({ tools: message.tools, cache });
-    const info = await media.prepare(message.snapshot, { signal: controller.signal, previewQuality: message.previewQuality, playbackBackend: message.playbackBackend,
+    const info = await media.prepare(message.snapshot, { signal: controller.signal, previewQuality: message.previewQuality, playbackBackend: message.playbackBackend, proxyEncoder: message.proxyEncoder,
       onProgress: value => send({ type: 'progress', id: message.id, value }) });
     handles.set(info.leaseId, info);
     if (info.streaming) longOwners.set(info.leaseId, media);
@@ -94,11 +96,18 @@ async function execute(message, controller) {
       const bg=require('./proxy-background.cjs').createProxyBackground({info,
         prepare:(ordinal,signal)=>media.prepareSegment(info,ordinal,{signal}),release:value=>cache.release(value),
         prepareRecord:typeof media.prepareStill==='function'?(ordinal,signal)=>media.prepareStill(info,ordinal,{signal}):undefined,
-        enqueue,idle:()=>!stopping&&!controllers.size,
+        enqueue,idle:()=>!stopping&&!quiescing&&!controllers.size&&scrubBackgrounds.get(info.leaseId)?.snapshot().stage!=='preparing',
         budget:async signal=>{await closeProxyBatches(info.leaseId);return media.proxyBudget(info,{signal});},
         closeBatch:()=>media.closeProxyBatch(info),emit:value=>backgroundEvent(info.leaseId,value),
-        onSegment:(ordinal,value)=>{send({type:'proxy-segment',parentLeaseId:info.leaseId,ordinal,value});}});
+        onSegment:(ordinal,value)=>{send({type:'proxy-segment',parentLeaseId:info.leaseId,ordinal,value});scrubBackgrounds.get(info.leaseId)?.start();}});
       backgrounds.set(info.leaseId,bg);bg.kick();
+      const scrub=require('./scrub-background.cjs').createScrubBackground({info,enqueue,
+        lookup:(n,signal)=>media.scrubSegment(info,n,null,{signal}),publish:(n,items,signal)=>media.scrubSegment(info,n,items,{signal}),
+        stream:(n,signal)=>media.scrubStream(info,n,signal),release:value=>cache.release(value),
+        budget:async signal=>{await closeProxyBatches(info.leaseId);return media.proxyBudget(info,{signal});},
+        onSegment:(ordinal,value)=>send({type:'scrub-segment',parentLeaseId:info.leaseId,ordinal,value}),
+        emit:value=>{send({type:'scrub-progress',leaseId:info.leaseId,value});if(value.stage!=='preparing')bg.kick();}});
+      scrubBackgrounds.set(info.leaseId,scrub);
     }
     return info.streaming ? require('./media-wire.cjs').packInfo(info) : info;
   }
@@ -127,12 +136,18 @@ async function execute(message, controller) {
   if (message.method === 'release') {
     const info = handles.get(message.leaseId); if (!info) throw new Error('Unknown task lease.');
     if([...recordBorrows.values()].some(entry=>entry.parent===message.leaseId))throw Error('标注静帧尚未交还。');
+    if(scrubBackgrounds.has(message.leaseId)){await scrubBackgrounds.get(message.leaseId).close();scrubBackgrounds.delete(message.leaseId);}
     if(backgrounds.has(message.leaseId)){await backgrounds.get(message.leaseId).close();backgrounds.delete(message.leaseId);}
     if (longOwners.has(message.leaseId)) { await longOwners.get(message.leaseId).releaseLong(info); longOwners.delete(message.leaseId); }
     else await cache.release(info);
     handles.delete(message.leaseId);recordPriorities.delete(message.leaseId);return true;
   }
-  if (message.method === 'clearOther') { await closeProxyBatches(); return cache.clearOther(message.settings); }
+  if (message.method === 'clearOther') {
+    await closeProxyBatches();
+    const maintenance=message.settings?.independentWholeProxy===true
+      ? require('./cache.cjs').createCache({pluginRoot:root,taskOwner,processIdentity:identity,packFrames:true,protectWholeProxy:true,independentWholeProxy:true}) : cache;
+    return maintenance.clearOther(message.settings);
+  }
   if (['export', 'publishExport', 'discardExport'].includes(message.method)) {
     if (!sourceExports) sourceExports = require('./export.cjs').createExportStore({ pluginRoot: root });
     if (message.method === 'export') {
@@ -151,6 +166,14 @@ const input = readline.createInterface({ input: process.stdin, crlfDelay: Infini
 input.on('line', line => {
   if (Buffer.byteLength(line) > 32768) { shutdown(); return; }
   let message; try { message = JSON.parse(line); } catch (_) { shutdown(); return; }
+  // Stop producers immediately, while renderer leases/reads drain separately.
+  if (message.method === 'quiesce') {
+    quiescing = true;
+    for(const bg of scrubBackgrounds.values())bg.stop();
+    for (const bg of backgrounds.values()) bg.foreground();
+    for (const [id, method] of requestMethods) if (['prepare','segment','recordStill'].includes(method)) controllers.get(id)?.abort();
+    return;
+  }
   if (message.method === 'cancel') { const controller = controllers.get(message.id); if (controller) controller.abort(); return; }
   if(['target','prioritizeRecords'].includes(message.method)){
     // Receipt acknowledges pipe consumption, not completed media preparation.
@@ -167,8 +190,11 @@ input.on('line', line => {
     const values=[];for(let n=0;n<bits.length*8;n++)if(bits[n>>>3]&(1<<(n&7))){if(n>=info.frames.length)return;values.push(n);}
     const prior=recordPriorities.get(info.leaseId)||{all:[],visible:[]};prior[message.kind]=values;recordPriorities.set(info.leaseId,prior);bg.prioritizeRecords(prior);return;
   }
+  if(message.method==='stopScrub'){scrubBackgrounds.get(message.leaseId)?.stop();return;}
   if (!Number.isSafeInteger(message.id) || message.id < 1 || controllers.has(message.id)) { shutdown(); return; }
   if (message.method === 'close') { shutdown(message.id); return; }
+  if(message.method==='prepare')for(const bg of scrubBackgrounds.values())bg.stop();
+  if(message.method==='release')scrubBackgrounds.get(message.leaseId)?.stop();
   if(message.method==='recordStill'&&!stopping){
     try{const info=handles.get(message.leaseId),bg=backgrounds.get(message.leaseId),value=borrowReadyRecord(info,message.ordinal,bg);
       if(value){response(message.id,value);return;}

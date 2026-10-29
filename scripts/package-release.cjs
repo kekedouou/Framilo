@@ -6,9 +6,22 @@ const VERSION = '0.1.0-beta.2', NAME = 'eagle-video-analysis-' + VERSION + '-win
 const ID = 'EVAVIDEOANALYSISBETA20261014', ROOT = path.resolve(__dirname, '..'), LIMIT = 2 * 1024 ** 2;
 const RUNTIME = Object.freeze(['manifest.json', 'index.html', 'styles.css', 'graphite.css', 'interface-icons.js', 'settings-view.js','graphite-shell.js', 'timeline-strip.js', 'logo.png', 'app.js', 'window-drag.cjs', 'ui.js', 'loop-selection.js', 'timeline-view.js', 'screen-gestures.js', 'screen-gesture-ui.js', 'context-wheel.js', 'player.js',
   'session.cjs', 'eagle.cjs', 'drawing-erase.js', 'drawing-model.js', 'drawing-ui.js', 'drawing-session.cjs', 'drawing-store.cjs', 'export.cjs', 'media.cjs', 'cache.cjs', 'process-identity.cjs', 'frame-index.cjs', 'frame-pack.cjs',
-  'diagnostics.cjs', 'preferences.cjs', 'preview-profile.cjs', 'task-client.cjs', 'task-worker.cjs', 'cache-read-client.cjs', 'cache-read-worker.cjs', 'long-media.cjs', 'segment-reader.cjs', 'segment-audio.cjs', 'proxy-decoder.js', 'quick-preview.js', 'record-previews.js', 'avc-access-units.cjs', 'media-wire.cjs', 'proxy-background.cjs',
+  'diagnostics.cjs', 'live-resources.cjs', 'proxy-storage.cjs', 'performance-core.cjs', 'performance-stages.cjs', 'performance-window.html', 'performance-window.js', 'performance-runtime.cjs', 'performance-view.js', 'performance.css', 'preferences.cjs', 'preview-profile.cjs', 'task-client.cjs', 'task-worker.cjs', 'cache-read-client.cjs', 'cache-read-worker.cjs', 'long-media.cjs', 'segment-reader.cjs', 'segment-audio.cjs', 'proxy-decoder.js', 'proxy-encoding.cjs', 'quick-preview.js', 'scrub-preview.js', 'scrub-background.cjs', 'scrub-producer.cjs', 'record-previews.js', 'avc-access-units.cjs', 'media-wire.cjs', 'proxy-background.cjs',
   'native/task-host.cs', 'native/task-host.local.exe', 'native/task-host.local.json']);
 const NAMES = [...RUNTIME, 'README.md', 'CHANGELOG.md', 'BUILD-INFO.json'].sort();
+// This profile only validates the registered local development directory. It is
+// deliberately separate from the frozen Beta distribution recipe and its 2MiB cap.
+const NATIVE_LIMIT = 64 * 1024 ** 2, NATIVE_ID = 'EVAVIDEOANALYSIS20261011';
+const NATIVE_RUNTIME = Object.freeze([...RUNTIME, 'native-backend.cjs', 'native-reader.cjs', 'native-wire.cjs',
+  'native-player.js', 'native-renderer.js', 'whole-proxy.cjs', 'bin/filmcraft-media.exe',
+  'bin/filmcraft-media.build.json', 'bin/FilmCraft-LICENSE-MIT', 'bin/FilmCraft-LICENSE-APACHE',
+  'bin/FilmCraft-NOTICE', 'bin/filmcraft-third-party.json', 'bin/filmcraft-third-party.txt']);
+const FILMCRAFT_COMMIT = '176e6a9c585fd29e4b18d691663fe88a936c5b37';
+const UPSTREAM_TEXTS = Object.freeze({
+  'bin/FilmCraft-LICENSE-MIT': 'd2d8416f0883694c23b473e26372506e9e11f5f41b55a92b7388dab921d9a207',
+  'bin/FilmCraft-LICENSE-APACHE': '0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594',
+  'bin/FilmCraft-NOTICE': '717a46e0fed6b8381cde394291c51d257db53ab9a0de333fcaa515a7a1ca5eec'
+});
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const dist = path.join(ROOT, 'dist'), folder = path.join(dist, NAME), zip = folder + '.zip';
 const installParent = path.join(dist, 'install-check-' + VERSION), install = path.join(installParent, NAME);
@@ -18,8 +31,8 @@ function node(file, directory = false) {
     fs.realpathSync(file).toLowerCase() === path.resolve(file).toLowerCase() && (directory || s.nlink === 1n), 'Unsafe package path: ' + file);
   return s;
 }
-function read(file) {
-  const s = node(file); assert(s.size <= BigInt(LIMIT), 'Package file exceeds 2MiB.');
+function read(file, limit = LIMIT) {
+  const s = node(file); assert(s.size <= BigInt(limit), 'Package file exceeds profile byte limit.');
   const b = fs.readFileSync(file), a = node(file);
   assert(['dev', 'ino', 'size', 'mtimeNs'].every(k => s[k] === a[k]) && b.length === Number(s.size), 'Package input changed.'); return b;
 }
@@ -39,11 +52,17 @@ function packageManifest(bytes) {
   const original = JSON.parse(bytes); assert.equal(original.version, VERSION); assert.equal(original.platform, 'win'); assert.equal(original.arch, 'x64');
   return Buffer.from(JSON.stringify({ ...original, id: ID, name: '视频分析 · MVP Beta', keywords: ['视频', '逐帧', '分析', 'Beta'] }, null, 2) + '\n');
 }
-function validateRuntime(files) {
-  assert.deepStrictEqual(Object.keys(files).sort(), [...RUNTIME].sort(), 'Runtime allowlist incomplete or contains extra data.');
+function validateRuntime(files, options = {}) {
+  const native = options.profile === 'native-experience';
+  assert(!options.profile || native, 'Unknown runtime validation profile.');
+  const runtime = native ? NATIVE_RUNTIME : RUNTIME;
+  assert.deepStrictEqual(Object.keys(files).sort(), [...runtime].sort(), 'Runtime allowlist incomplete or contains extra data.');
+  assert(Object.values(files).every(Buffer.isBuffer), 'Runtime inputs must be file bytes.');
+  const bytes = Object.values(files).reduce((n, b) => n + b.length, 0);
+  assert(bytes <= (native ? NATIVE_LIMIT : LIMIT), 'Runtime exceeds profile byte limit.');
   const manifest = JSON.parse(files['manifest.json']);
   assert.equal(manifest.version, VERSION); assert.equal(manifest.platform, 'win'); assert.equal(manifest.arch, 'x64');
-  assert.equal(manifest.id, ID); assert.equal(manifest.main.url, 'index.html'); assert.equal(manifest.main.multiple, false); assert.equal(manifest.devTools, false);
+  assert.equal(manifest.id, native ? NATIVE_ID : ID); assert.equal(manifest.main.url, 'index.html'); assert.equal(manifest.main.multiple, false); assert.equal(manifest.devTools, false);
   assert.equal(manifest.logo, '/logo.png');
   const local = (name, from) => {
     const normalized = path.posix.normalize(path.posix.join(path.posix.dirname(from), name));
@@ -68,7 +87,59 @@ function validateRuntime(files) {
   assert.equal(build.schema, 'eva-task-guard-build-v1'); assert.equal(build.bytes, files['native/task-host.local.exe'].length);
   assert.equal(build.sourceSha256, sha(files['native/task-host.cs'])); assert.equal(build.executableSha256, sha(files['native/task-host.local.exe']));
   assert(build.bytes <= 256 * 1024); assert.equal(files['native/task-host.local.exe'].subarray(0, 2).toString(), 'MZ');
-  return { runtimeFiles: RUNTIME.length, dependenciesChecked: true, guardVerified: true };
+  const result = { runtimeFiles: runtime.length, runtimeBytes: bytes, dependenciesChecked: true, guardVerified: true };
+  if (native) Object.assign(result, validateNativeBinary(files), { profile: 'native-experience', localOnly: true, archiveGenerated: false });
+  return result;
+}
+function validateNativeBinary(files) {
+  const meta = JSON.parse(files['bin/filmcraft-media.build.json']);
+  assert.deepStrictEqual(Object.keys(meta).sort(), ['schema', 'created', 'upstream', 'upstreamCommit', 'version', 'protocol',
+    'bridgeSha256', 'patchSha256', 'binarySha256', 'binaryBytes', 'dependencyNoticesSha256', 'compiler', 'linker', 'buildLog'].sort(), 'Unexpected native build metadata.');
+  assert.equal(meta.schema, 1); assert.equal(meta.protocol, 2); assert.equal(meta.version, '0.13.0');
+  assert.equal(meta.upstream, 'https://github.com/storytold/filmcraft'); assert.equal(meta.upstreamCommit, FILMCRAFT_COMMIT);
+  assert(Number.isFinite(Date.parse(meta.created)), 'Invalid native build time.');
+  assert(['bridgeSha256', 'patchSha256', 'binarySha256', 'dependencyNoticesSha256'].every(k => /^[0-9a-f]{64}$/.test(meta[k])), 'Invalid native build hashes.');
+  assert(typeof meta.compiler === 'string' && meta.compiler.startsWith('rustc ') && meta.compiler.includes('x86_64-pc-windows-gnu'));
+  assert.equal(meta.linker, 'rust-lld / ld.lld / link-self-contained');
+  assert(/^native-build-\d+\.log$/.test(meta.buildLog), 'Native build log must be a relative identifier.');
+  const binary = files['bin/filmcraft-media.exe'];
+  assert.equal(meta.binaryBytes, binary.length); assert(binary.length > 0 && binary.length <= NATIVE_LIMIT);
+  assert.equal(binary.subarray(0, 2).toString(), 'MZ'); assert.equal(meta.binarySha256, sha(binary), 'Native binary differs from build manifest.');
+  for (const [name, hash] of Object.entries(UPSTREAM_TEXTS)) assert.equal(sha(files[name]), hash, 'Upstream license or NOTICE changed: ' + name);
+  const notices = files['bin/filmcraft-third-party.txt'];
+  assert.equal(meta.dependencyNoticesSha256, sha(notices), 'Dependency notices differ from build manifest.');
+  const index = JSON.parse(files['bin/filmcraft-third-party.json']);
+  assert.deepStrictEqual(Object.keys(index).sort(), ['packages', 'upstreamCommit']); assert.equal(index.upstreamCommit, FILMCRAFT_COMMIT);
+  assert(Array.isArray(index.packages) && index.packages.length > 1, 'Native dependency index is empty.');
+  const body = notices.toString('utf8'), markers = [...body.matchAll(/\n\n===== LICENSE TEXT ([0-9a-f]{64}) =====\n/g)], texts = new Map();
+  for (let n = 0; n < markers.length; n++) {
+    const m = markers[n], text = body.slice(m.index + m[0].length, markers[n + 1]?.index ?? body.length);
+    assert(!texts.has(m[1]) && sha(Buffer.from(text)) === m[1], 'License text hash is invalid.'); texts.set(m[1], text);
+  }
+  const referenced = new Set(), names = new Set();
+  for (const p of index.packages) {
+    assert.deepStrictEqual(Object.keys(p).sort(), ['name', 'version', 'license', 'source', 'licenseTexts'].sort());
+    assert(/^[\w-]+$/.test(p.name) && typeof p.version === 'string' && p.version.length > 0 && typeof p.license === 'string' && p.license.length > 0);
+    assert(/^https:\/\/(?:github\.com\/storytold\/|crates\.io\/crates\/)/.test(p.source), 'Unrecognized dependency source.');
+    const key = p.name + '@' + p.version; assert(!names.has(key), 'Duplicate native dependency.'); names.add(key);
+    assert(Array.isArray(p.licenseTexts) && p.licenseTexts.length && p.licenseTexts.every(id => texts.has(id)), 'Dependency license text missing.');
+    assert(body.includes(p.name + ' ' + p.version + ' | ' + p.license + '\nSource: ' + p.source + '\nLicense texts: ' + p.licenseTexts.join(', ')), 'Dependency index and notice text disagree.');
+    p.licenseTexts.forEach(id => referenced.add(id));
+  }
+  const expectedIndex = index.packages.map(p => p.name + ' ' + p.version + ' | ' + p.license + '\nSource: ' + p.source + '\nLicense texts: ' + p.licenseTexts.join(', ')).join('\n\n');
+  const sectionStart = body.indexOf('\n\nfilmcraft-platform ');
+  assert(sectionStart >= 0 && markers.length && body.slice(sectionStart + 2, markers[0].index) === expectedIndex, 'Dependency notice package closure differs from index.');
+  assert(names.has('filmcraft-platform@0.13.0')); assert.equal(referenced.size, texts.size, 'Unindexed license text.');
+  return { nativeBinaryVerified: true, nativeProtocol: meta.protocol, nativeBinaryBytes: binary.length,
+    dependencyLicensePackages: names.size, dependencyLicenseTexts: texts.size, licenseClosureVerified: true };
+}
+function validateNativeExperience(directory = path.join(ROOT, 'plugin')) {
+  node(directory, true); const files = Object.fromEntries(NATIVE_RUNTIME.map(name => [name, read(path.join(directory, name), NATIVE_LIMIT)]));
+  return validateRuntime(files, { profile: 'native-experience' });
+}
+function assertLegacyBuildSource(directory = path.join(ROOT, 'plugin')) {
+  assert(!fs.existsSync(path.join(directory, 'bin/filmcraft-media.exe')) && !fs.existsSync(path.join(directory, 'native-backend.cjs')),
+    'Native experience sources cannot use the frozen Beta2 2MiB packaging recipe. Validate native-experience locally; no release ZIP is authorized.');
 }
 function ps(source, extra = {}) {
   const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); Add-Type -AssemblyName System.IO.Compression; Add-Type -AssemblyName System.IO.Compression.FileSystem; " + source], {
@@ -108,6 +179,7 @@ function verify() {
 }
 function build() {
   assert(process.platform === 'win32' && !/^c:/i.test(ROOT), 'Build on a non-C Windows drive.'); node(ROOT, true);
+  assertLegacyBuildSource();
   const status = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: ROOT, encoding: 'utf8', windowsHide: true });
   assert(status.status === 0 && !status.stdout.trim(), 'Commit reviewed sources before freezing package.');
   const revision = spawnSync('git', ['show', '-s', '--format=%H%n%cI', 'HEAD'], { cwd: ROOT, encoding: 'utf8', windowsHide: true });
@@ -160,7 +232,8 @@ function verifyInstall() {
     realEaglePackagedCopyVerified: false, note: 'Independent path/native hashes passed; actual Eagle loading still requires host observation.' };
 }
 if (require.main === module) {
-  const mode = process.argv[2] || 'build'; assert(process.argv.length <= 3 && ['build', 'verify', 'extract', 'verify-install'].includes(mode));
-  console.log(JSON.stringify(({ build, verify, extract, 'verify-install': verifyInstall })[mode](), null, 2));
+  const mode = process.argv[2] || 'build'; assert(process.argv.length <= 3 && ['build', 'verify', 'extract', 'verify-install', 'native-experience'].includes(mode));
+  console.log(JSON.stringify(({ build, verify, extract, 'verify-install': verifyInstall, 'native-experience': validateNativeExperience })[mode](), null, 2));
 }
-module.exports = { VERSION, NAME, ID, RUNTIME, packageManifest, validateRuntime, scanText, build, verify, extract, verifyInstall };
+module.exports = { VERSION, NAME, ID, RUNTIME, NATIVE_RUNTIME, NATIVE_LIMIT, packageManifest, validateRuntime, validateNativeExperience,
+  assertLegacyBuildSource, scanText, build, verify, extract, verifyInstall };

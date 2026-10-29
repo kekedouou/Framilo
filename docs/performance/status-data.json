@@ -1,0 +1,16 @@
+{
+  "facts": {
+    "runId": "2026-10-27T13-57-04-223Z-7a18981a",
+    "code": "eef68cf785b9a0c9a3a36cc3c900a48a52de0547ec5c0a4d1fae03800dc6e59a",
+    "status": "completed",
+    "requests": 1846,
+    "p50": 5.299999997019768,
+    "p95": 27.799999997019768,
+    "source": "36fb269b755ba433fd248dc2f297ace583e92385cf9cd5806e96abe75468784b",
+    "scope": "Eagle renderer / formal Player, software submission only"
+  },
+  "analysis": {
+    "runId": "2026-10-27T13-57-04-223Z-7a18981a",
+    "code": "eef68cf785b9a0c9a3a36cc3c900a48a52de0547ec5c0a4d1fae03800dc6e59a"
+  }
+}

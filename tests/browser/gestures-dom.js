@@ -10,6 +10,7 @@
     async seek(time,options){seeks.push({time,...options});state.playback={...state.playback,time,frameId:Math.round(time*30),frameOrdinal:Math.round(time*30)};publish();return{status:'drawn'};},
     async play(){toggles++;state.state='playing';publish();return{status:'playing'};},async pause(){toggles++;state.state='paused';publish();return{status:'paused'};},
     async setPlaybackRate(rate){rates.push(rate);state.playback={...state.playback,transport:{...state.playback.transport,rate}};publish();return{status:'applied'};},
+    loopFrameAt(time,b={}){const ordinal=Math.max(b.minOrdinal??0,Math.min(b.maxOrdinal??299,b.ordinal??Math.floor(time*30+1e-9)));return{ordinal,time:ordinal/30};},
     setDrawingObjects(){},setDrawingStyles:()=>({status:'saved'}),cancelDrawing(){state.drawings.draft=null;publish();return true;},
     beginDrawing:async()=>({status:'ignored'}),beginComment:async()=>({status:'ignored'})};
   function pointer(type,x,y,extra={}){const r=el('screen').getBoundingClientRect();const event=new PointerEvent(type,{pointerId:77,button:0,buttons:type==='pointerup'?0:1,clientX:r.left+x,clientY:r.top+y,bubbles:true,cancelable:true,...extra});(type==='pointerdown'?el('picture'):window).dispatchEvent(event);return event;}
@@ -22,9 +23,9 @@
     pointer('pointerup',320,40);await settle();check(seeks.at(-1).final&&seeks.at(-1).time>seeks[0].time,'Release processes the last pointer position and requests accurate final settlement');
     const width=el('screen').getBoundingClientRect().width,start=state.playback.time;
     pointer('pointerdown',200,250);pointer('pointermove',250,250,{shiftKey:true});await settle();
-    check(Math.abs(seeks.at(-1).time-start-100/width*10)<.0001,'Shift doubles horizontal sensitivity');
+    check(Math.abs(seeks.at(-1).time-start-Math.trunc(100/8)/30)<.0001,'Shift doubles horizontal sensitivity');
     pointer('pointermove',300,250,{ctrlKey:true});await settle();
-    check(Math.abs(seeks.at(-1).time-start-125/width*10)<.0001,'Ctrl halves the next movement without jumping the previous target');
+    check(Math.abs(seeks.at(-1).time-start-Math.trunc(125/8)/30)<.0001,'Ctrl halves the next movement without jumping the previous target');
     pointer('pointerup',300,250);await sleep(10);
     const previousSeeks=seeks.length,rateBefore=state.playback.transport.rate;
     pointer('pointerdown',400,300);pointer('pointermove',400,270);await settle();
@@ -79,11 +80,11 @@
       const baseline=seeks.length,rateCount=rates.length,w=el('screen').getBoundingClientRect().width;
       pointer('pointerdown',300,260);pointer('pointermove',340,260);await settle();
       pointer('pointermove',420,260);await settle();
-      check(seeks.length===baseline+2&&Math.abs(state.playback.time-5-120/w*10)<.0001,kind+' hint cannot interrupt successive seek/UI refreshes after switching (expired='+expired+')');
+      check(seeks.length===baseline+2&&Math.abs(state.playback.time-5-Math.trunc(120/8)/30)<.0001,kind+' hint cannot interrupt successive seek/UI refreshes after switching (expired='+expired+')');
       pointer('pointermove',320,260);await settle();
-      check(Math.abs(state.playback.time-5-20/w*10)<.0001,'Reverse movement continues in the same new-video drag ('+kind+', expired='+expired+')');
+      check(Math.abs(state.playback.time-5-Math.trunc(20/8)/30)<.0001,'Reverse movement continues in the same new-video drag ('+kind+', expired='+expired+')');
       pointer('pointerup',360,260);await settle();
-      check(seeks.at(-1).final&&Math.abs(state.playback.time-5-60/w*10)<.0001&&rates.length===rateCount,'Release settles the latest position without a speed-change workaround ('+kind+', expired='+expired+')');
+      check(seeks.at(-1).final&&Math.abs(state.playback.time-5-Math.trunc(60/8)/30)<.0001&&rates.length===rateCount,'Release settles the latest position without a speed-change workaround ('+kind+', expired='+expired+')');
     }
     for(let source=0;source<3;source++){
       state.epoch++;state.playback={...state.playback,time:5};publish();const baseline=seeks.length;

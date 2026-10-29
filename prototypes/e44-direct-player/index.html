@@ -1,0 +1,7 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>E44 直接播放技术关</title>
+<style>body{margin:0;background:#000;color:#afc7d8;font:14px system-ui}header{padding:12px 20px}canvas{display:block;width:100%;max-height:72vh;object-fit:contain}video{position:absolute;width:2px;height:2px;left:0;bottom:0;opacity:.01;pointer-events:none}#track{position:relative;margin:22px;height:8px;background:#24292c}#cursor{position:absolute;width:3px;height:18px;top:-5px;background:#87b4d2}p{padding:0 20px;color:#a0aab1}button{color:inherit;background:#202a30;border:1px solid #455460;padding:8px 15px;margin-left:20px}</style>
+<header>E44 · 最小直读样机　<span id="status">等待测试</span></header>
+<canvas width="1280" height="720"></canvas><video id="reference" playsinline></video><div id="track"><i id="cursor"></i></div>
+<p>自动比较原生播放与直接解码。不生成代理，不写素材标注。计时窗口请保持可见。</p><button id="run">运行技术关</button>
+<button id="filmcraft">运行 FilmCraft 源码对照</button>
+<script src="direct.js"></script><script src="worker-client.js"></script><script src="gate.js"></script><script src="host.js"></script><script src="../e44-filmcraft/host.js"></script><script src="../../plugin/player.js"></script><script src="../../plugin/native-renderer.js"></script><script src="../../plugin/native-player.js"></script><script src="experience-host.js"></script></html>

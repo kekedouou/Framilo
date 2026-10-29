@@ -23,8 +23,8 @@ function createShell({document:doc,window:win,getState,getSession,getRange,annot
  on(win,'pointerup',endHeaderDrag);on(win,'pointercancel',endHeaderDrag);on(header,'lostpointercapture',endHeaderDrag);on(win,'blur',endHeaderDrag);
  const toastState=new Map();
  const data=(node,key,value)=>{const next=String(value);if(node.dataset[key]!==next)node.dataset[key]=next;};
- function updateToasts(s){for(const id of ['drawingStatus','commentStatus']){const n=$(id),text=n?.textContent||'',draft=id==='drawingStatus'?s.drawings?.draft:s.comments?.draft,key=s.epoch+':'+text+':'+!!draft;let old=toastState.get(id);if(old?.key===key)continue;if(old)clearTimeout(old.timer);n.removeAttribute('data-faded');old={key,timer:null};toastState.set(id,old);
- const persistent=!!draft||/失败|未保存|未知|无法|错误|仍保留|核对|冲突|未完成|重试|丢失|中断/.test(text);
+ function updateToasts(s){for(const id of ['drawingStatus','commentStatus','memoryStatus','cacheClearStatus']){const n=$(id),text=n?.textContent||'',draft=id==='drawingStatus'?s.drawings?.draft:s.comments?.draft,key=s.epoch+':'+text+':'+!!draft+':'+n?.getAttribute?.('data-notice-revision');if(!n)continue;let old=toastState.get(id);if(old?.key===key)continue;if(old)clearTimeout(old.timer);n.removeAttribute('data-faded');old={key,timer:null};toastState.set(id,old);
+ const persistent=n.getAttribute?.('data-persistent')==='true'||!!draft||/正在|准备中|清理中|处理中/.test(text)||/失败|未保存|未知|无法|错误|仍保留|核对|冲突|未完成|重试|丢失|中断/.test(text);
  if(text&&!persistent){for(const [other,v]of toastState)if(other!==id&&!v.persistent){clearTimeout(v.timer);$(other).setAttribute('data-faded','true');}old.timer=setTimeout(()=>n.setAttribute('data-faded','true'),2200);}old.persistent=persistent;}}
  const strip=root.EVATimelineStrip?.create({document:doc,window:win,getSession,getState,getRange});
  const pane=doc.querySelector('.player-pane'),edge=make('div','shell-edge'),dock=make('nav','shell-dock');dock.setAttribute('aria-label','观察工具');
@@ -34,7 +34,7 @@ function createShell({document:doc,window:win,getState,getSession,getRange,annot
  settings.setAttribute('aria-label','设置');workspace.append(settings);
  const settingsView=root.EVASettingsView.create({document:doc,window:win,workspace,settings});
  const toolPanel=remember($('drawingPanel'));workspace.append(toolPanel);
- const alerts=make('div','shell-alerts');for(const id of ['error','retry','commentStatus','drawingStatus'])alerts.append(remember($(id)));workspace.append(alerts);
+ const alerts=make('div','shell-alerts');for(const id of ['error','retry','commentStatus','drawingStatus','memoryStatus','cacheClearStatus'])alerts.append(remember($(id)));workspace.append(alerts);
  const guide=make('section','shell-guide');guide.hidden=true;guide.append(make('strong','','把注意力留给画面'),make('p','','点击播放 · 滚轮逐帧'),make('p','','按住左键：左右定位，上下调速'),make('p','','右键甩动或长按：标注、片段、记录、循环'),button('close','关闭提示',()=>{guide.hidden=true;try{win.localStorage.setItem('eva-graphite-guide','seen');}catch(_){}}));workspace.append(guide);
  const help=make('button','shell-help','重看操作提示');on(help,'click',()=>{guide.hidden=false;});settings.querySelector('.shell-settings-footer').append(help);
  try{guide.hidden=win.localStorage.getItem('eva-graphite-guide')==='seen';}catch(_){}

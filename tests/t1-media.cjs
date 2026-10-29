@@ -282,7 +282,7 @@ async function main() {
   await test('T1 media receives explicit existing tools and never offers installation', () => {
     const h = harness(); assert.throws(() => h.api.createMedia({ tools: { ffmpeg: '', ffprobe: tools.ffprobe }, cache: h.cache }));
     assert.throws(() => h.api.createMedia({ tools, cache: {} }));
-    assert.strictEqual(Object.keys(h.media).join(','), 'prepare,prepareSegment,prepareStill,releaseLong,proxyBudget,closeProxyBatch');
+    assert.strictEqual(Object.keys(h.media).join(','), 'prepare,prepareSegment,prepareStill,releaseLong,scrubStream,scrubSegment,proxyBudget,closeProxyBatch');
     assert.strictEqual(typeof h.media.prepareStill, 'function');
   });
   await test('codec-specific input and filter parallelism preserves the JPEG and audio recipe', async () => {

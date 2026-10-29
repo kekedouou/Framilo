@@ -11,7 +11,7 @@
     function cancelTimer(){if(holdTimer!==null)clear(holdTimer);holdTimer=null;}
     function flush(final=false){
       if(frame!==null){(win.cancelAnimationFrame||clearTimeout).call(win,frame);frame=null;}
-      const item=queued;queued=null;if(item)seek(item.time,final);
+      const item=queued;queued=null;if(item)seek(item.time,final,item.ordinal);
     }
     function release(old=machine.snapshot()){machine.cancel();cancelTimer();queued=null;
       if(frame!==null){(win.cancelAnimationFrame||clearTimeout).call(win,frame);frame=null;}
@@ -47,7 +47,7 @@
       show(action.direction);
       if(action.kind==='seek'){
         queued=action;
-        if(frame===null)frame=(win.requestAnimationFrame||((fn)=>later(fn,16))).call(win,()=>{frame=null;const pending=queued;queued=null;if(pending)seek(pending.time,false);});
+        if(frame===null)frame=(win.requestAnimationFrame||((fn)=>later(fn,16))).call(win,()=>{frame=null;const pending=queued;queued=null;if(pending)seek(pending.time,false,pending.ordinal);});
       }else if(action.kind==='rate'){
         if(getContext().canRate===false)return;
         const v=machine.snapshot();rate(action.rate);

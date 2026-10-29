@@ -48,6 +48,28 @@ function harness(store = memoryStore(), settings = {}) {
 
 async function main() {
   let count = 0; const test = async (name, fn) => { await fn(); count++; console.log('ok drawing session: ' + name); };
+  await test('a held picture after a failed target cannot become a text or drawing draft', async () => {
+    const h = harness(); await h.load();
+    h.player.change({ state: 'paused', pendingTargets: 0, frameHeld: true, targetTime: .099 });
+    assert.equal(h.session.snapshot().playback.frameId, 10);
+    assert.equal((await h.session.beginComment()).status, 'ignored');
+    assert.equal(h.session.snapshot().comments.draft, null);
+    assert.equal((await h.session.beginDrawing()).status, 'ignored');
+    assert.equal(h.writes, 0); assert.equal(h.store.data.size, 0);
+    h.player.change({ frameHeld: false, frameId: 20, frameOrdinal: 2, time: .099 });
+    assert.equal((await h.session.beginDrawing()).status, 'editing');
+    assert.equal(h.session.snapshot().drawings.draft.frameId, 20);
+    assert.equal(h.writes, 0); await h.session.close();
+  });
+  await test('pending held targets do not enter annotation or drawing editing', async () => {
+    const h = harness(); await h.load();
+    h.player.change({ state: 'seeking', pendingTargets: 1, frameHeld: true, targetTime: .099 });
+    assert.equal((await h.session.beginComment()).status, 'ignored');
+    assert.equal((await h.session.beginDrawing()).status, 'ignored');
+    assert.equal(h.session.snapshot().comments.draft, null);
+    assert.equal(h.session.snapshot().drawings.draft, null);
+    assert.equal(h.writes, 0); assert.equal(h.store.data.size, 0); await h.session.close();
+  });
   await test('D reuses the one current-frame group and links the existing native text without adding it again', async () => {
     const h = harness(); await h.load(); await h.session.seek(.033); await h.session.beginDrawing();
     assert.equal(h.session.snapshot().drawings.draft.frameId, 12); h.session.setDrawingObjects(objects());

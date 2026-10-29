@@ -100,12 +100,16 @@
       <p id="cacheStatus" class="cache-status muted"></p>
       <details class="memory-settings">
         <summary>设置</summary>
+        <button id="performanceMonitor" type="button">性能监测</button>
         <label for="qualitySelect">预览画质</label>
         <select id="qualitySelect" aria-label="预览画质" disabled><option value="720p">720p</option><option value="1080p">1080p</option><option value="1440p">2K（1440p）</option></select>
         <p class="muted">保持比例，不放大小视频。</p>
         <label for="playbackBackend">播放方式</label>
-        <select id="playbackBackend" aria-label="播放方式" disabled><option value="proxy">帧内代理</option><option value="jpeg">JPEG 序列</option></select>
-        <label class="predecode-option"><input id="forwardPredecode" type="checkbox" checked disabled> 提前解压周围画面</label>
+        <select id="playbackBackend" aria-label="播放方式" disabled><option value="proxy">代理</option><option value="jpeg">JPEG 序列</option></select>
+        <label for="proxyDiskGiB">代理磁盘额度</label>
+        <select id="proxyDiskGiB" aria-label="代理磁盘额度" disabled><option value="1">1 GiB</option><option value="2">2 GiB</option><option value="5">5 GiB</option><option value="10">10 GiB</option><option value="20">20 GiB</option><option value="50">50 GiB</option><option value="100">100 GiB</option></select>
+        <label class="predecode-option"><input id="gpuAcceleration" type="checkbox" checked disabled> GPU加速</label>
+        <input id="forwardPredecode" type="checkbox" checked hidden disabled aria-hidden="true">
         <label class="predecode-option"><input id="showDrawings" type="checkbox" checked> 显示屏幕标注（H）</label>
         <label class="predecode-option"><input id="drawingToolbar" type="checkbox"> 显示圈画工具条</label>
         <p class="muted">立即生效并记住选择，不删除标注，不需点击应用。</p>
@@ -158,13 +162,17 @@
       </section>
     </aside>
   </main>
+  <p id="proxyState" class="native-proxy-state" role="status" hidden></p>
   <div id="drawingExit" class="drawing-exit" role="dialog" aria-modal="true" aria-label="未保存圈画" hidden>
     <div><p id="drawingExitMessage"></p><button id="drawingExitSave" type="button">保存后继续</button><button id="drawingExitDiscard" type="button">放弃修改</button><button id="drawingExitReturn" type="button">返回编辑</button></div>
   </div>
   <script src="proxy-decoder.js"></script>
+  <script src="scrub-preview.js"></script>
   <script src="quick-preview.js"></script>
   <script src="record-previews.js"></script>
   <script src="player.js"></script>
+  <script src="native-renderer.js"></script>
+  <script src="native-player.js"></script>
   <script src="loop-selection.js"></script>
   <script src="timeline-view.js"></script>
   <script src="drawing-erase.js"></script>
@@ -175,6 +183,7 @@
   <script src="interface-icons.js"></script>
   <script src="timeline-strip.js"></script>
   <script src="settings-view.js"></script>
+  <script src="performance-view.js"></script>
   <script src="graphite-shell.js"></script>
   <script src="context-wheel.js"></script>
   <script src="ui.js"></script>

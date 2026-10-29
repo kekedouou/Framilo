@@ -8,7 +8,8 @@ function validateEncoding(info) {
       throw Error('AVC帧必须声明明确的视频编码。');
     return null;
   }
-  if (!encoding || Object.keys(encoding).sort().join(',') !== 'codec,format' ||
+  if (!encoding || !['codec,format','codec,format,recipe'].includes(Object.keys(encoding).sort().join(',')) ||
+      (encoding.recipe!==undefined && encoding.recipe!=='nvenc-p1-qp20-v1') ||
       encoding.format !== 'annexb-idr-v1' || typeof encoding.codec !== 'string' || !/^avc1\.[0-9a-fA-F]{6}$/.test(encoding.codec))
     throw Error('视频帧编码版本或AVC编码标识无效。');
   if (info.frames.some(frame => typeof frame.file !== 'string' || !/^\d{1,12}\.avc$/.test(frame.file)))

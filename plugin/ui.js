@@ -60,6 +60,8 @@
   }
   function createUI(options = {}) {
     const doc = options.document || document, win = options.window || window, now = options.now || (() => performance.now());
+    doc.querySelector?.('[data-eva-closing]')?.remove();
+    let closingSurface = null;
     const ids = ['screen', 'picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
       'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentShade', 'commentEditor', 'commentTime', 'commentChoice', 'commentText', 'commentSave', 'commentCancel', 'commentKeyboardHint', 'commentDraftPreview', 'commentEditorStatus',
       'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality',
@@ -70,6 +72,9 @@
     if (ids.some(id => !el[id])) throw new Error('播放器界面缺少必要元素。');
     // New controls are optional for older embedded pages and DOM fixtures.
     el.playbackBackend = doc.getElementById('playbackBackend');
+    const codecControls=['proxyDiskGiB'].map(id=>({id,el:doc.getElementById(id),shown:null})).filter(c=>c.el?.tagName==='SELECT');
+    el.showProxyStrip = doc.getElementById('showProxyStrip');
+    for (const id of ['autoProxy', 'gpuDrawing', 'gpuAcceleration', 'proxyGenerate', 'proxyCancel', 'proxyState']) el[id] = doc.getElementById(id);
     const backendControl = !!el.playbackBackend && String(el.playbackBackend.tagName).toUpperCase() === 'SELECT';
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
     let seekIntent = null;
@@ -89,15 +94,59 @@
     let coverageTimer = null, coverageKey = null, coverageEpoch = null, coverageSize = null;
     let coverageText = '';
     const coverageContext = typeof el.decodedCache.getContext === 'function' ? el.decodedCache.getContext('2d') : null;
+    function proxyLabel(value) {
+      if (!value) return '';
+      if (value.stage === 'complete') return '整片代理已就绪';
+      if (value.stage === 'budget') return '代理空间不足，继续播放原片';
+      if (value.stage === 'error') return '后台准备失败' + (value.error ? '：' + String(value.error.message || value.error).slice(0, 160) : '');
+      if (value.stage === 'cancelled') return '代理生成已取消';
+      if (value.stage !== 'preparing') return '';
+      const message = typeof value.message === 'string' ? value.message.trim().slice(0, 80) : '';
+      if (value.status === 'queued') return message || '整片代理等待启动';
+      if (value.status === 'checking') return message || '正在检查整片代理';
+      if (value.status === 'validating') {
+        const phases = { frames: '正在逐帧核验', 'source-hash': '正在校验源视频', 'proxy-hash': '正在校验代理文件', publish: '正在发布整片代理' };
+        const label = message || phases[value.validationPhase] || '正在校验完整代理';
+        const done = value.validationDone, total = value.validationTotal;
+        const counted = Number.isSafeInteger(done) && done >= 0 && Number.isSafeInteger(total) && total > 0 && done <= total;
+        if (value.validationPhase === 'frames' && counted) return label + ' · ' + done + '/' + total + ' 帧';
+        const fraction = Number.isFinite(value.validationProgress) ? value.validationProgress : counted ? done / total : null;
+        const hashing = value.validationPhase === 'source-hash' || value.validationPhase === 'proxy-hash';
+        return label + (hashing && fraction !== null ? ' · ' + Math.floor(Math.max(0, Math.min(1, fraction)) * 100) + '%' : '');
+      }
+      // Old embedded providers do not expose a status. Keep their compatible
+      // label while current native encoding is explicitly a phase percentage.
+      return (value.status === 'encoding' ? '代理编码 ' : '整片代理生成 ') + Math.floor(Math.max(0, Math.min(1, Number(value.progress) || 0)) * 100) + '%' +
+        (Number.isFinite(value.speed) && value.speed > 0 ? ' · ' + value.speed.toFixed(1) + '倍速' : '') +
+        (Number.isFinite(value.remainingSeconds) && value.remainingSeconds > 0 ? ' · 约' + Math.ceil(value.remainingSeconds) + '秒' : '');
+    }
     function updateCoverageStatus() {
       const value = session && state.playbackBackend !== 'jpeg' && !['empty', 'closing', 'closed'].includes(state.state) ? state.proxyPreparation : null;
-      let proxy = '';
-      if (value?.stage === 'complete') proxy = '代理已就绪';
-      else if (value?.stage === 'budget') proxy = '容量已满，优先准备当前位置';
-      else if (value?.stage === 'error') proxy = '后台准备失败' + (value.error ? '：' + String(value.error.message || value.error).slice(0, 160) : '');
-      else if (value?.stage === 'preparing' && Number.isSafeInteger(value.ready) && value.ready >= 0 && Number.isSafeInteger(value.total) && value.total >= value.ready)
-        proxy = '代理准备 ' + value.ready + '/' + value.total;
-      set(el.cacheStatus, 'textContent', [coverageText, proxy].filter(Boolean).join(' · '));
+      set(el.cacheStatus, 'textContent', [coverageText, proxyLabel(value)].filter(Boolean).join(' · '));
+    }
+    let proxyToastKey = null, proxyToastTimer = null;
+    function updateProxyMessage() {
+      const node = el.proxyState; if (!node) return;
+      if(state.playbackBackend==='jpeg'&&state.state==='preparing'){
+        if(proxyToastTimer!==null)win.clearTimeout(proxyToastTimer);proxyToastTimer=null;
+        proxyToastKey=state.epoch+':jpeg';node.removeAttribute?.('data-faded');node.hidden=false;
+        const p=state.progress||{},labels={hash:'校验视频',analyze:'读取视频信息',cache:'检查已有缓存',decode:'生成JPEG序列',verify:'核验JPEG序列','player-initialize':'准备画面与声音'};
+        const label=p.message||labels[p.stage]||'准备JPEG序列';
+        set(node,'textContent',label+(Number.isSafeInteger(p.frames)?' · 已准备'+p.frames+'帧':''));return;
+      }
+      const value = state.playbackBackend !== 'jpeg' ? state.proxyPreparation : null;
+      const stage = value?.stage, active = ['paused', 'playing', 'seeking'].includes(state.state);
+      if (!active || !['preparing', 'complete', 'cancelled', 'error', 'budget'].includes(stage)) {
+        if (proxyToastTimer !== null) win.clearTimeout(proxyToastTimer); proxyToastTimer = null; proxyToastKey = null; node.hidden = true; return;
+      }
+      const key = state.epoch + ':' + stage;
+      if (key !== proxyToastKey) {
+        if (proxyToastTimer !== null) win.clearTimeout(proxyToastTimer); proxyToastTimer = null;
+        proxyToastKey = key; node.removeAttribute?.('data-faded');
+        if (['complete', 'cancelled'].includes(stage)) proxyToastTimer = win.setTimeout(() => { node.setAttribute('data-faded', 'true'); proxyToastTimer = null; }, 2200);
+      }
+      node.hidden = false;
+      set(node, 'textContent', proxyLabel(value));
     }
     function clearCoverage() {
       if (coverageKey !== 'empty' && coverageContext) coverageContext.clearRect(0, 0, el.decodedCache.width || 1, el.decodedCache.height || 3);
@@ -159,7 +208,9 @@
     }
     on(win, 'focus', refreshCommentsOnReturn);
     if (typeof doc.addEventListener === 'function') on(doc, 'visibilitychange', refreshCommentsOnReturn);
-    let memoryApplySerial = 0, memoryBusy = false, toolbarBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null, shownPredecode = null, shownWheel = null, shownStrip = null, shownRateStep = null, shownFade = null, shownBackend = null;
+    let memoryApplySerial = 0, memoryBusy = false, toolbarBusy = false, cleaning = false, shownMemory = null, shownTier = '', shownQuality = null, shownPredecode = null, shownWheel = null, shownStrip = null, shownProxyStrip = null, shownRateStep = null, shownFade = null, shownBackend = null, shownAutoProxy = null, shownGpuDrawing = null;
+    let messageRevision=0;
+    function settingsMessage(node,text,persistent=false){node.setAttribute('data-notice-revision',String(++messageRevision));set(node,'textContent',text);node.setAttribute('data-persistent',String(persistent));node.removeAttribute?.('data-faded');shellUI?.update(state);}
     function updateMemorySettings() {
       const memory = state.memorySettings;
       const disabled = !session || !memory || (memoryBusy && state.state !== 'preparing') || cleaning || transportBusy || !!noteRequest || !!exportRequest || ['closing', 'closed'].includes(state.state) || !!state.comments?.draft || !!state.drawings?.draft || selection.snapshot().editing;
@@ -170,7 +221,14 @@
         const backend = state.playbackBackend === 'jpeg' ? 'jpeg' : 'proxy';
         if (shownBackend !== backend) { shownBackend = backend; set(el.playbackBackend, 'value', backend); }
       }
-      set(el.wheelFrames, 'disabled', disabled); set(el.showCacheStrip, 'disabled', disabled);
+      for(const c of codecControls){set(c.el,'disabled',disabled);const value=state[c.id]||(c.id==='proxyDiskGiB'?5:c.id==='proxyEncoder'?'cpu':'prefer-hardware');if(c.shown!==value){c.shown=value;set(c.el,'value',value);}}
+      const native = state.playbackBackend === 'proxy', proxyStage = state.proxyPreparation?.stage;
+      if (el.autoProxy) { set(el.autoProxy, 'disabled', disabled || !native); if (shownAutoProxy !== (state.autoProxy !== false)) { shownAutoProxy = state.autoProxy !== false; set(el.autoProxy, 'checked', shownAutoProxy); } }
+      if(el.gpuAcceleration?.type==='checkbox'){set(el.gpuAcceleration,'disabled',disabled);const value=state.gpuAcceleration!==false;if(el.gpuAcceleration._shown!==value){el.gpuAcceleration._shown=value;set(el.gpuAcceleration,'checked',value);}}
+      if (el.gpuDrawing) { set(el.gpuDrawing, 'disabled', disabled || !native); if (shownGpuDrawing !== (state.gpuDrawing !== false)) { shownGpuDrawing = state.gpuDrawing !== false; set(el.gpuDrawing, 'checked', shownGpuDrawing); } }
+      if (el.proxyGenerate) set(el.proxyGenerate, 'disabled', disabled || !native || !['paused', 'playing', 'seeking'].includes(state.state) || ['preparing', 'complete'].includes(proxyStage));
+      if (el.proxyCancel) set(el.proxyCancel, 'disabled', disabled || !native || proxyStage !== 'preparing');
+      set(el.wheelFrames, 'disabled', disabled); set(el.showCacheStrip, 'disabled', disabled); if (el.showProxyStrip) set(el.showProxyStrip, 'disabled', disabled);
       set(el.rateStep, 'disabled', disabled); set(el.drawingFadeSeconds, 'disabled', disabled);
       set(el.cacheClearOther, 'disabled', disabled || !['paused', 'playing', 'seeking'].includes(state.state));
       if (memory && memory !== shownMemory) {
@@ -185,12 +243,13 @@
       const qualityKey = desiredQuality + ':' + choices.map(n => n.value).join(',');
       if (shownQuality !== qualityKey) { shownQuality = qualityKey; set(el.qualitySelect, 'value', effectiveQuality); }
       if (shownPredecode !== !!state.forwardPredecode) {
-        shownPredecode = !!state.forwardPredecode; set(el.forwardPredecode, 'checked', shownPredecode);
+        shownPredecode = !!state.forwardPredecode; set(el.forwardPredecode, 'checked', true);
       }
       const interaction = state.interactionSettings || { wheelFrames: 1, showCacheStrip: true };
       set(el.drawingToolbar, 'checked', interaction.drawingToolbar === true);
       set(el.drawingToolbar, 'disabled', !session || !session.setDrawingToolbar || toolbarBusy || state.state === 'closed');
       if (shownWheel !== interaction.wheelFrames) { shownWheel = interaction.wheelFrames; set(el.wheelFrames, 'value', String(shownWheel)); }
+      if (el.showProxyStrip && shownProxyStrip !== !!interaction.showProxyStrip) { shownProxyStrip = !!interaction.showProxyStrip; set(el.showProxyStrip, 'checked', shownProxyStrip); }
       if (shownStrip !== interaction.showCacheStrip) { shownStrip = interaction.showCacheStrip; set(el.showCacheStrip, 'checked', shownStrip); }
       if (shownRateStep !== (interaction.rateStep ?? .1)) { shownRateStep = interaction.rateStep ?? .1; set(el.rateStep, 'value', String(shownRateStep)); }
       if (shownFade !== (interaction.drawingFadeSeconds ?? .25)) { shownFade = interaction.drawingFadeSeconds ?? .25; set(el.drawingFadeSeconds, 'value', String(shownFade)); }
@@ -206,31 +265,33 @@
     on(el.drawingToolbar, 'change', async () => {
       if (el.drawingToolbar.disabled || !session?.setDrawingToolbar) return;
       const active = session, visible = el.drawingToolbar.checked; toolbarBusy = true;
-      try { await active.setDrawingToolbar(visible); if (session === active) set(el.memoryStatus, 'textContent', '工具条设置已保存。'); }
-      catch (failure) { if (session === active) set(el.memoryStatus, 'textContent', failure.message || String(failure)); }
+      try { await active.setDrawingToolbar(visible); if (session === active) settingsMessage(el.memoryStatus, '工具条设置已保存。'); }
+      catch (failure) { if (session === active) settingsMessage(el.memoryStatus, failure.message || String(failure),true); }
       finally { toolbarBusy = false; updateMemorySettings(); }
     });
     on(el.memoryApply, 'click', async () => {
       if (el.memoryApply.disabled || !session || typeof session.setPlaybackSettings !== 'function' && typeof session.setMemoryMiB !== 'function') return;
       const active = session, applySerial = ++memoryApplySerial, ramMiB = Number(el.memoryMiB.value);
-      memoryBusy = true; set(el.memoryStatus, 'textContent', '正在应用，完成后保持暂停…'); updateMemorySettings();
+      memoryBusy = true; settingsMessage(el.memoryStatus, '正在应用，完成后保持暂停…'); updateMemorySettings();
       try { const result = typeof active.setPlaybackSettings === 'function'
-          ? await active.setPlaybackSettings({ ramMiB, previewQuality: el.qualitySelect.value, forwardPredecode: el.forwardPredecode.checked,
-            wheelFrames: Number(el.wheelFrames.value), showCacheStrip: !!el.showCacheStrip.checked, rateStep: Number(el.rateStep.value), drawingFadeSeconds: Number(el.drawingFadeSeconds.value),
-            ...(backendControl ? { playbackBackend: el.playbackBackend.value } : {}) }) : await active.setMemoryMiB(ramMiB);
+          ? await active.setPlaybackSettings({ ramMiB, previewQuality: el.qualitySelect.value, forwardPredecode: true,
+            proxyDiskGiB: Number(doc.getElementById('proxyDiskGiB')?.value||state.proxyDiskGiB||5),wheelFrames: Number(el.wheelFrames.value), showCacheStrip: !!el.showCacheStrip.checked, showProxyStrip: el.showProxyStrip ? !!el.showProxyStrip.checked : !!state.interactionSettings?.showProxyStrip, rateStep: Number(el.rateStep.value), drawingFadeSeconds: Number(el.drawingFadeSeconds.value),
+            ...Object.fromEntries(codecControls.map(c=>[c.id,c.id==='proxyDiskGiB'?Number(c.el.value):c.el.value])), ...(backendControl ? { playbackBackend: el.playbackBackend.value } : {}), ...(el.autoProxy ? { autoProxy: !!el.autoProxy.checked } : {}), ...(el.gpuAcceleration?.type==='checkbox'?{gpuAcceleration:!!el.gpuAcceleration.checked}:{}) }) : await active.setMemoryMiB(ramMiB);
         if (session !== active || applySerial !== memoryApplySerial) return;
-        set(el.memoryStatus, 'textContent', result.status === 'error' ? '设置已保存，视频准备失败；可调整画质或内存后重试。' :
+        settingsMessage(el.memoryStatus, result.status === 'error' ? '设置已保存，视频准备失败；可调整画质或内存后重试。' :
           result.status === 'superseded' ? '操作已被素材切换或关闭替代。' : '设置已保存。');
-      } catch (failure) { if (session === active && applySerial === memoryApplySerial) set(el.memoryStatus, 'textContent', String(failure.message || failure)); }
-      finally { if (applySerial === memoryApplySerial) memoryBusy = false; if (session === active && applySerial === memoryApplySerial) { shownMemory = null; shownQuality = null; shownPredecode = null; shownWheel = null; shownStrip = null; shownRateStep = null; shownFade = null; shownBackend = null; updateMemorySettings(); } }
+      } catch (failure) { if (session === active && applySerial === memoryApplySerial) settingsMessage(el.memoryStatus, String(failure.message || failure),true); }
+      finally { if (applySerial === memoryApplySerial) memoryBusy = false; if (session === active && applySerial === memoryApplySerial) { shownMemory = null; shownQuality = null; shownPredecode = null; shownWheel = null; shownStrip = null; shownProxyStrip = null; shownRateStep = null; shownFade = null; shownBackend = null; codecControls.forEach(c=>c.shown=null); updateMemorySettings(); } }
     });
+    if (el.proxyGenerate) on(el.proxyGenerate, 'click', () => { if (!el.proxyGenerate.disabled && session?.startProxy) invoke(() => session.startProxy()); });
+    if (el.proxyCancel) on(el.proxyCancel, 'click', () => { if (!el.proxyCancel.disabled && session?.cancelProxy) invoke(() => session.cancelProxy()); });
     on(el.cacheClearOther, 'click', async () => {
       if (el.cacheClearOther.disabled || !session || typeof session.clearOtherCaches !== 'function') return;
-      const active = session; cleaning = true; set(el.cacheClearStatus, 'textContent', '正在清理，保留当前及正在使用的缓存…'); updateMemorySettings();
-      try { const result = await active.clearOtherCaches(); if (session !== active) return;
-        set(el.cacheClearStatus, 'textContent', result.status === 'superseded' ? '操作已被素材切换或关闭替代。' :
+      const active = session; cleaning = true; settingsMessage(el.cacheClearStatus, '正在清理，保留当前及正在使用的缓存…'); updateMemorySettings();
+      try { if(typeof win.requestAnimationFrame==='function')await new Promise(resolve=>win.requestAnimationFrame(resolve));const result = await active.clearOtherCaches(); if (session !== active) return;
+        settingsMessage(el.cacheClearStatus, result.status === 'superseded' ? '操作已被素材切换或关闭替代。' : result.message ? result.message :
           '已清除' + result.cleared + '个缓存，释放' + (result.freedBytes / 1048576).toFixed(1) + ' MB；当前及正在使用的缓存保留。');
-      } catch (failure) { if (session === active) set(el.cacheClearStatus, 'textContent', String(failure.message || failure)); }
+      } catch (failure) { if (session === active) settingsMessage(el.cacheClearStatus, String(failure.message || failure),true); }
       finally { cleaning = false; if (session === active) updateMemorySettings(); }
     });
     function layoutComment() {
@@ -249,7 +310,8 @@
       try { Promise.resolve(fn()).catch(() => {}); } catch (_) { /* session publishes operation errors */ }
     };
     const previewActive = () => state.preview?.active === true;
-    const cursorTime = () => seekIntent && seekIntent.epoch === state.epoch ? seekIntent.time : state.playback?.time || 0;
+    const cursorTime = () => seekIntent && seekIntent.epoch === state.epoch ? seekIntent.time
+      : state.playback?.pendingTargets && Number.isFinite(state.playback.targetTime) ? state.playback.targetTime : state.playback?.time || 0;
     function settleIntent() {
       if (seekIntent?.completed && !gesture && !screenUI?.active() && !previewActive() &&
           state.state !== 'seeking' && !(state.playback?.pendingTargets > 0)) seekIntent = null;
@@ -343,7 +405,7 @@
       set(el.loopCancel, 'hidden', !editing.editing);
       set(el.loopSelect, 'textContent', editing.editing ? '确认片段（R）' : loop && (loop.startOrdinal != null || loop.endOrdinal != null) ? '清除片段（R）' : '选择片段（R）');
       set(el.play, 'disabled', !interactive() || editing.editing || editing.busy || !(['paused', 'playing'].includes(state.state) || state.playback?.buffering));
-      set(el.commentAdd, 'disabled', !interactive() || previewActive() || !!seekIntent || editing.editing || editing.busy || !!gesture || state.comments?.status !== 'ready');
+      set(el.commentAdd, 'disabled', !interactive() || previewActive() || !!seekIntent || editing.editing || editing.busy || !!gesture || state.comments?.status !== 'ready' || state.playback?.frameHeld === true);
       if (!transportBusy) {
         set(el.loopEnabled, 'checked', !!(loop && loop.enabled));
       }
@@ -650,7 +712,7 @@
         for (const button of markerButtons) set(button, 'disabled', !ready);
         renderedInteractive = ready;
       }
-      set(el.commentAdd, 'disabled', !ready || !value || value.status !== 'ready' || state.state === 'seeking');
+      set(el.commentAdd, 'disabled', !ready || !value || value.status !== 'ready' || state.state === 'seeking' || state.playback?.frameHeld === true);
       set(el.commentDraftPreview, 'hidden', !draft || draft.kind === 'delete' || !draft.text?.trim());
       set(el.commentDraftPreview, 'textContent', draft && draft.kind !== 'delete' ? formatTime(draft.time) + ' · 草稿\n' + (draft.text || '') : '');
       set(el.commentEditorStatus, 'textContent', draft?.message || '');
@@ -689,6 +751,7 @@
       if (editable && editorId !== draft.id) { editorId = draft.id; editorEpoch = state.epoch; if (!deleting) el.commentText.focus(); }
     }
     function update(snapshot) {
+      if (closingSurface) { closingSurface.textContent = snapshot.error?.message || ''; return; }
       if (state.epoch !== snapshot.epoch) showCommentActions(null);
       state = snapshot;
       if (!previewActive() && previewDisabled.size) { for (const [node, disabled] of previewDisabled) node.disabled = disabled; previewDisabled.clear(); }
@@ -729,6 +792,7 @@
       updateExports();
       updateMemorySettings();
       updateCoverageStatus();
+      updateProxyMessage();
       updateTransport();
       if (drawingUI) drawingUI.update(state);
       if (previewActive()) {
@@ -744,7 +808,7 @@
       if (el.decodedCache.hidden !== hideStrip) { set(el.decodedCache, 'hidden', hideStrip); coverageKey = null; }
     }
     drawingUI = drawingAPI.createDrawingUI({ document: doc, window: win, getSession: () => session, getState: () => state, menuActive: () => !!contextUI?.active(),
-      canBegin: () => shortcutReady() && !transportBusy && state.exportState?.status !== 'unknown', isKey: letterKey });
+      canBegin: () => shortcutReady() && !transportBusy && state.exportState?.status !== 'unknown' && state.playback?.frameHeld !== true, isKey: letterKey });
     let screenSelectionPoint = null;
     screenUI = screenGestureAPI.createScreenGestureUI({ document: doc, window: win, now,
       getContext: () => ({ epoch: state.epoch, enabled: interactive() && !gesture && !memoryBusy && !cleaning &&
@@ -752,11 +816,13 @@
         canStart: interactive() && !selection.snapshot().busy && !transportBusy, canRate: shortcutReady() || !!rateRequest, horizontalOnly: selection.snapshot().editing,
         // State checks on every move do not need a fresh layout measurement.
         get width() { return el.screen.getBoundingClientRect().width; },
-        range: viewRange, time: state.playback?.time || 0, rate: state.playback?.transport?.rate || 1,
-        step: state.interactionSettings?.rateStep || .1 }),
+        range: viewRange, time: cursorTime(), rate: state.playback?.transport?.rate || 1,
+        minOrdinal:viewRange.focused?state.playback?.transport?.loop?.startOrdinal:0,
+        maxOrdinal:viewRange.focused?state.playback?.transport?.loop?.endOrdinal:state.playback?.frameCount-1,
+        frameAt:(time,bounds)=>session?.loopFrameAt?.(time,bounds),step: state.interactionSettings?.rateStep || .1 }),
       start: () => { const s = selection.snapshot(); screenSelectionPoint = s.editing ? (s.controlled ? s.active : selection.nextPoint() || s.active || (Math.abs((state.playback?.time || 0) - s.start.time) <= Math.abs((state.playback?.time || 0) - s.end.time) ? 'start' : 'end')) : null; },
       release: () => { screenSelectionPoint = null; },
-      seek: (time, final) => { clearHint(); if (screenSelectionPoint && selection.snapshot().editing) selection.move(screenSelectionPoint, time, final, now()); else requestSeek(time, { final, kind: final ? 'release' : 'rapid', inputAt: now() }); },
+      seek: (time, final, ordinal) => { clearHint(); if (screenSelectionPoint && selection.snapshot().editing) selection.move(screenSelectionPoint, time, final, now(),ordinal); else requestSeek(time, { index:ordinal,final, kind: final ? 'release' : 'rapid', inputAt: now() }); },
       rate: value => requestRate(value),
       toggle: () => { if ((shortcutReady() || interactive() && state.playback?.buffering) && !transportBusy) invoke(() => state.state === 'playing' || state.playback?.buffering ? session.pause() : session.play()); } });
     contextUI = contextAPI.createContextWheel({ document: doc, window: win, screen: el.screen, now,
@@ -770,9 +836,9 @@
             { id: 'unused-down', label: '', disabled: true }, { id: 'endpoint-start', label: '控制头', symbol: '←' }] };
         const loop = state.playback?.transport?.loop;
         return { epoch: state.epoch, mode: 'watch', enabled: interactive() && !gesture && !memoryBusy && !cleaning && !transportBusy && !selection.snapshot().busy,
-          items: [{ id: 'note', label: '添加标注', symbol: 'N', disabled: !shortcutReady() || state.comments?.status !== 'ready' },
+          items: [{ id: 'note', label: '添加标注', symbol: 'N', disabled: !shortcutReady() || state.comments?.status !== 'ready' || state.playback?.frameHeld === true },
             { id: 'loop', label: loop?.enabled ? '关闭循环' : '开启循环', symbol: '↻', selected: !!loop?.enabled, disabled: selection.snapshot().editing },
-            { id: shellUI ? 'records' : 'drawing', label: shellUI ? '记录' : '添加圈画', symbol: '✎', disabled: !shortcutReady() || state.drawings?.status !== 'ready' },
+            { id: shellUI ? 'records' : 'drawing', label: shellUI ? '记录' : '添加圈画', symbol: '✎', disabled: !shortcutReady() || state.drawings?.status !== 'ready' || !shellUI && state.playback?.frameHeld === true },
             { id: 'selection', label: '选择片段', symbol: '↔' }] };
       },
       opening: () => { screenUI.reset(); },
@@ -808,7 +874,14 @@
       if (memoryTimer === null && typeof win.setInterval === 'function') memoryTimer = win.setInterval(refreshMemory, 500);
       if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
     }, update,
-      destroy() {
+      destroy({ closing = false } = {}) {
+        if (proxyToastTimer !== null) win.clearTimeout(proxyToastTimer); proxyToastTimer = null;
+        if (el.proxyState) el.proxyState.hidden = true;
+        if (closing && doc.createElement && doc.body) {
+          closingSurface = doc.createElement('div'); closingSurface.setAttribute('data-eva-closing', '');
+          closingSurface.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#000;color:#d7a49e;display:flex;align-items:center;justify-content:center;padding:32px;font:14px Segoe UI';
+          doc.body.appendChild(closingSurface);
+        }
         seekIntent = null;
         for (const [node, disabled] of previewDisabled) node.disabled = disabled; previewDisabled.clear();
         shellUI?.destroy();

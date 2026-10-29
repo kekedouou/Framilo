@@ -22,6 +22,18 @@ function createTaskClient(options) {
   const key = sha(Buffer.from(root.toLowerCase())), runtime = options.runtime || process.execPath;
   const backgroundProgress=new Map(),retainedSegments=new Map(),closingSources=new Set(),retainedValues=new WeakSet();
   const recordReads = new Set(), recordEntries = new Map(), pendingRecordReturns=new Set(),priorityBits=new WeakMap();
+  const scrubSegments=new Map(),scrubProgress=new Map(),scrubDescriptors=new WeakMap();
+  function retainScrub(parent,ordinal,value){
+    if(!/^[0-9a-f]{24}$/.test(parent)||!Number.isSafeInteger(ordinal)||ordinal<0||ordinal>=120000||value?.metrics?.purpose!=='scrub-preview-v1'||value.videoEncoding||value.audio||value.preview?.version!==require('./preview-profile.cjs').SCRUB_VERSION)throw Error('低清段登记无效。');
+    let group=scrubSegments.get(parent);if(!group){group=new Map();scrubSegments.set(parent,group);}
+    if(group.has(ordinal))throw Error('低清段重复登记。');
+    const entry={value,ready:false,frames:[],promise:null};group.set(ordinal,entry);
+    entry.promise=local.adopt(value,taskOwner).then(()=>{
+      entry.frames=value.frames.map(frame=>{const descriptor=Object.freeze({time:value.metrics.segmentStart+frame.time,width:value.width,height:value.height,id:frame.id});scrubDescriptors.set(descriptor,{parent,entry,file:frame.file});return descriptor;});entry.ready=true;
+    });entry.promise.catch(()=>{});return entry.promise;
+  }
+  async function detachScrub(parent){const group=scrubSegments.get(parent);if(group)for(const entry of group.values()){entry.ready=false;await entry.promise.catch(()=>{});entry.ready=false;await local.detach(entry.value);}scrubSegments.delete(parent);scrubProgress.delete(parent);}
+  function stopScrub(parent){if(host&&!ended&&host.stdin.writable)write({method:'stopScrub',leaseId:parent});}
   function retainLocal(parent,ordinal,value){
     if(!/^[0-9a-f]{24}$/.test(parent)||!Number.isSafeInteger(ordinal)||ordinal<0||ordinal>=120000||!value?.videoEncoding)throw Error('代理段登记无效。');
     let group=retainedSegments.get(parent);if(!group){group=new Map();retainedSegments.set(parent,group);}
@@ -39,7 +51,7 @@ function createTaskClient(options) {
   const readers = new Map();
   // Each intention lane has at most one message in the OS pipe and one latest
   // replacement. A slow worker must not accumulate every pointer movement.
-  const intentions = new Map(), controlAcks = new Map(); let controlSerial = 0, closeSent = false;
+  const intentions = new Map(), controlAcks = new Map(); let controlSerial = 0, closeSent = false, quiesceSent = false;
   function flushIntention(key, lane) {
     if (lane.sent || !lane.next || closing || failure || ended || closingSources.has(lane.leaseId)) return;
     const value = lane.next; lane.next = null; lane.sent = ++controlSerial;
@@ -93,6 +105,8 @@ function createTaskClient(options) {
             }
             else if (value.type === 'progress') { const request = pending.get(value.id); if (request && request.onProgress) request.onProgress(value.value); }
             else if (value.type === 'proxy-segment') {if(!closingSources.has(value.parentLeaseId))retainLocal(value.parentLeaseId,value.ordinal,value.value).catch(failed);}
+            else if(value.type==='scrub-progress'){if(!closingSources.has(value.leaseId))scrubProgress.set(value.leaseId,value.value);}
+            else if (value.type === 'scrub-segment') {if(!closing&&!closingSources.has(value.parentLeaseId))retainScrub(value.parentLeaseId,value.ordinal,value.value).catch(failed);}
             else if (value.type === 'proxy-progress') {if(closingSources.has(value.leaseId))continue;backgroundProgress.set(value.leaseId,value.value);if(options.onBackground)options.onBackground(value.value);}
             else if (value.type === 'response') {
               const request = pending.get(value.id); if (!request) throw new Error('任务响应编号无效。'); pending.delete(value.id);
@@ -167,7 +181,20 @@ function createTaskClient(options) {
     const bad=returns.find(result=>result.status==='rejected');if(bad)throw bad.reason;
     if([...pendingRecordReturns].some(token=>!parent||token.parent===parent))throw Error('标注静帧读取占用尚未交还。');}
   const cache = {
-    readAsset: (info, file) => failure ? Promise.reject(failure) : readers.has(info) ? readers.get(info).frame(file) : local.readAsset(info, file),
+    scrubStatus:info=>scrubProgress.get(info.leaseId)||null,
+    findScrubFrame(info,time){
+      if(!leases.has(info)||closing||closingSources.has(info.leaseId)||!Number.isFinite(time)||!info.streaming)return null;
+      const group=scrubSegments.get(info.leaseId),n=segmentAt(info,time);let best=null,distance=.15;
+      for(const ordinal of [n-1,n,n+1]){const entry=group?.get(ordinal);if(!entry?.ready)continue;
+        let l=0,h=entry.frames.length;while(l<h){const m=(l+h)>>>1;if(entry.frames[m].time<time)l=m+1;else h=m;}
+        for(const i of [l-1,l]){const f=entry.frames[i];if(f&&Math.abs(f.time-time)<=distance){best=f;distance=Math.abs(f.time-time);}}
+      }return best;
+    },
+    async readScrubFrame(info,descriptor){const owned=scrubDescriptors.get(descriptor);
+      if(!leases.has(info)||closing||closingSources.has(info.leaseId)||!owned||owned.parent!==info.leaseId||!owned.entry.ready)throw issue('MEDIA_CANCELLED','低清读取会话已结束。');
+      return local.readAsset(owned.entry.value,owned.file);
+    },
+    readAsset: (info, file, trace) => failure ? Promise.reject(failure) : readers.has(info) ? readers.get(info).frame(file, trace) : local.readAsset(info, file, trace),
     readAudioSegment: (info, ordinal) => readers.get(info).audio(ordinal),
     target: (info, time) => { if (readers.has(info)) readers.get(info).cancelExcept(time);if(Number.isFinite(time))control('target',info,{time}); },
     prioritizeRecords:(info,value)=>{const valid=items=>Array.isArray(items)&&items.length<=120000&&items.every(n=>Number.isSafeInteger(n)&&n>=0&&n<info.frames.length);if(!value||!valid(value.all)||!valid(value.visible)||info.frames.length>120000)throw Error('标注优先帧无效。');const prior=priorityBits.get(info)||{};for(const kind of ['all','visible']){const bits=Buffer.alloc(Math.ceil(info.frames.length/8));for(const n of value[kind])bits[n>>>3]|=1<<(n&7);const encoded=bits.toString('base64');if(prior[kind]!==encoded){control('prioritizeRecords',info,{kind,bits:encoded});prior[kind]=encoded;}}priorityBits.set(info,prior);},
@@ -176,12 +203,13 @@ function createTaskClient(options) {
     prefetch: (info, time, loop) => { if (readers.has(info)) readers.get(info).prefetch(time, loop); },
     cancelReads: info => { if (readers.has(info)) readers.get(info).cancelAll(); },
     readFrameBatch: (...args) => failure ? Promise.reject(failure) : local.readFrameBatch(...args),
-    async release(info) { if (!leases.has(info)) return false; closingSources.add(info.leaseId);
+    async release(info) { if (!leases.has(info)) return false; stopScrub(info.leaseId);closingSources.add(info.leaseId);
       retireIntentions(info.leaseId);
       await drainRecords(info.leaseId);
       if (readers.has(info)) { await readers.get(info).close(); readers.delete(info); }
       else await local.detach(info);
       await detachRetained(info.leaseId);
+      await detachScrub(info.leaseId);
       await ask('release', { leaseId: info.leaseId }); leases.delete(info); backgroundProgress.delete(info.leaseId); closingSources.delete(info.leaseId); return true; },
     clearOther: settings => ask('clearOther', { settings }),
     backgroundStatus: info=>backgroundProgress.get(info.leaseId)||null,
@@ -189,8 +217,8 @@ function createTaskClient(options) {
   };
   const media = { async prepare(snapshot, settings = {}) {
     const tools = await options.discoverTools(settings.signal);
-    const info = require('./media-wire.cjs').unpackInfo(await ask('prepare', { snapshot, tools, previewQuality: settings.previewQuality, playbackBackend: settings.playbackBackend }, settings));
-    if (settings.signal && settings.signal.aborted) { closingSources.add(info.leaseId);await detachRetained(info.leaseId);await ask('release', { leaseId: info.leaseId });backgroundProgress.delete(info.leaseId);closingSources.delete(info.leaseId);throw issue('MEDIA_CANCELLED', '视频准备已取消。'); }
+    const info = require('./media-wire.cjs').unpackInfo(await ask('prepare', { snapshot, tools, previewQuality: settings.previewQuality, playbackBackend: settings.playbackBackend, proxyEncoder: settings.proxyEncoder }, settings));
+    if (settings.signal && settings.signal.aborted) { stopScrub(info.leaseId);closingSources.add(info.leaseId);await detachRetained(info.leaseId);await detachScrub(info.leaseId);await ask('release', { leaseId: info.leaseId });backgroundProgress.delete(info.leaseId);closingSources.delete(info.leaseId);throw issue('MEDIA_CANCELLED', '视频准备已取消。'); }
     if (info.streaming) {
       const reader = require('./segment-reader.cjs').createSegmentReader({ info,
         acquire: async (ordinal, signal) => {
@@ -200,7 +228,7 @@ function createTaskClient(options) {
           catch (error) { if(!info.videoEncoding)await ask('release', { leaseId: value.leaseId }); throw error; }
           return value;
         }, release: async value => { if(retainedValues.has(value))return; await local.detach(value); await ask('release', { leaseId: value.leaseId }); },
-        readAsset: (value, file) => local.readAsset(value, file) });
+        readAsset: (value, file, trace) => local.readAsset(value, file, trace) });
       readers.set(info, reader);
     } else try { await local.adopt(info, taskOwner); } catch (error) { await ask('release', { leaseId: info.leaseId }); throw error; }
     leases.add(info); return info;
@@ -214,6 +242,7 @@ function createTaskClient(options) {
       for (const reader of readers.values()) await reader.close(); readers.clear();
       for (const info of leases) if (!info.streaming) await local.detach(info);
       for(const parent of retainedSegments.keys())await detachRetained(parent);
+      for(const parent of scrubSegments.keys())await detachScrub(parent);
       leases.clear(); backgroundProgress.clear();
       try { if (!failure && !ended) await ask('close'); }
       catch (error) { if (!guardCancelled) throw error; }
@@ -221,7 +250,15 @@ function createTaskClient(options) {
       await local.close();if (failure) throw failure; return { status: 'closed' };
     })(); closing.catch(() => {}); return closing;
   }
-  function beginClose() { if (host && !ended && host.stdin.writable) write({ type: 'guard', event: 'closing' }); }
+  function beginClose() {
+    retireIntentions();
+    for (const reader of readers.values()) reader.cancelAll();
+    for (const task of recordReads) task.controller.abort();
+    if (host && !ended && host.stdin.writable) {
+      write({ type: 'guard', event: 'closing' });
+      if (!quiesceSent) { quiesceSent = true; write({ method: 'quiesce' }); }
+    }
+  }
   const exports = {
     async create(info, request, settings = {}) {
       if (!leases.has(info)) throw issue('EXPORT_SESSION', '导出会话已失效。');

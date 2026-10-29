@@ -23,7 +23,9 @@
   }
   let ui = window.EVAUI.createUI({hostAction});
   let session = null, diagnostics = null, initializing = false, closed = false;
+  let performanceMonitor = null, performanceView = null, activePlayer = null;
   let closeTask = null, allowUnload = false, exitScheduled = false;
+  let hideTask = Promise.resolve(), closeFailure = null;
   let drawingCloseIntent = null, drawingLoadSequence = 0;
   let backend = null, adapter = null, lastPlugin = null, pendingOpen = null, initialSelection = null;
   let entryOverride = null;
@@ -81,45 +83,72 @@
       adapter = createEagleAdapter(eagle);
       const sessionAdapter = { ...adapter };
       sessionAdapter.captureSelected = () => { if (initialSelection) { const captured = initialSelection; initialSelection = null; return captured; } return adapter.captureSelected(); };
-      const cache = { readAsset: (...args) => backend.cache.readAsset(...args),
-        readAudioSegment: (...args) => backend.cache.readAudioSegment(...args),
-        target: (...args) => backend.cache.target(...args),
-        isFrameReady: (...args) => !!backend?.cache?.isFrameReady?.(...args),
-        prioritizeRecords: (...args) => backend?.cache?.prioritizeRecords?.(...args),
-        readRecordFrame: (...args) => backend.cache.readRecordFrame(...args),
-        backgroundStatus: (...args) => backend?.cache?.backgroundStatus?.(...args) || null,
-        prefetch: (...args) => backend.cache.prefetch(...args),
-        cancelReads: (...args) => backend.cache.cancelReads(...args),
-        readFrameBatch: (...args) => backend.cache.readFrameBatch(...args),
-        release: (...args) => backend.cache.release(...args), clearOther: (...args) => backend.cache.clearOther(...args) };
-      let preparedMedia = null, discovery = null;
+      // Route leases by the info object that acquired them, never by a newer
+      // active backend after a source or settings switch.
+      const mediaOwners = new WeakMap();
+      const ownedCache = info => mediaOwners.get(info) || backend?.cache;
+      const cache = { readAsset: (info, ...args) => ownedCache(info).readAsset(info, ...args),
+        readAudioSegment: (info, ...args) => ownedCache(info).readAudioSegment(info, ...args),
+        target: (info, ...args) => ownedCache(info)?.target?.(info, ...args),
+        isFrameReady: (info, ...args) => !!ownedCache(info)?.isFrameReady?.(info, ...args),
+        prioritizeRecords: (info, ...args) => ownedCache(info)?.prioritizeRecords?.(info, ...args),
+        readRecordFrame: (info, ...args) => ownedCache(info).readRecordFrame(info, ...args),
+        backgroundStatus: (info, ...args) => ownedCache(info)?.backgroundStatus?.(info, ...args) || null,
+        prefetch: (info, ...args) => ownedCache(info)?.prefetch?.(info, ...args),
+        cancelReads: (info, ...args) => ownedCache(info)?.cancelReads?.(info, ...args),
+        readFrameBatch: (info, ...args) => ownedCache(info).readFrameBatch(info, ...args),
+        release: async (info, ...args) => { const holder = ownedCache(info); await holder.release(info, ...args); mediaOwners.delete(info); },
+        clearOther: (...args) => backend.cache.clearOther(...args) };
+      let preparedMedia = null, discovery = null, discoveredTools = null, backendKey = null;
       // Selection is captured by session immediately; tool discovery waits only
       // inside preparation, so it cannot silently change the clicked material.
       const media = { async prepare(snapshot, options) {
         const signal = options && options.signal;
         if (signal && signal.aborted) throw cancelled();
-        if (!preparedMedia) {
-          if (!discovery) discovery = Promise.resolve().then(() => adapter.discoverTools())
+        const native = options?.playbackBackend === 'proxy';
+        const memory = preferences.snapshot();
+        const acceleration=preferences.gpuAcceleration?.();
+        const decoder=acceleration===undefined?(preferences.decoderPreference?.()||'prefer-hardware'):acceleration?'prefer-hardware':'prefer-software',encoder=acceleration===undefined?(preferences.proxyEncoder?.()||'cpu'):acceleration?'nvidia':'cpu',gpu=acceleration===undefined?preferences.gpuDrawing?.()!==false:acceleration;
+        const key = native ? ['native', memory.ramBytes, decoder, encoder, true, gpu,(preferences.proxyDiskGiB?.()||5)].join(':') : 'jpeg';
+        if (!preparedMedia || key !== backendKey) {
+          if (!discoveredTools && !discovery) discovery = Promise.resolve().then(() => adapter.discoverTools())
             .finally(() => { discovery = null; });
-          const tools = await waitTools(discovery, signal);
+          const tools = discoveredTools || await waitTools(discovery, signal); discoveredTools = tools;
           if (signal && signal.aborted) throw cancelled();
-          if (!preparedMedia) {
-            backend = createTaskClient({ pluginRoot: root, discoverTools: async () => tools,
+          if (!preparedMedia || key !== backendKey) {
+            if (backend) { const previous = backend; preparedMedia = null; backendKey = null; backend = null;
+              await previous.close(); if (signal?.aborted) throw cancelled(); }
+            const onBackground = () => { if (session && !closed) ui.update(session.snapshot()); };
+            backend = native ? require(path.join(root, 'native-backend.cjs')).createNativeBackend({ pluginRoot: root, tools,
+              limitBytes:(preferences.proxyDiskGiB?.()||5)*1024**3, ramBytes: memory.ramBytes, decoderPreference: decoder, proxyEncoder: encoder, automaticProxy: true, gpuDrawing: gpu, onBackground })
+              : createTaskClient({ pluginRoot: root, discoverTools: async () => tools,
               onWaiting: () => { if (session && !closed) ui.update({ ...session.snapshot(), progress: { stage: 'handover', message: '正在等待上一个视频任务结束' } }); },
-              onBackground: () => { if (session && !closed) ui.update(session.snapshot()); },
+              onBackground,
               onFailure: error => { if (session && !closed) session.close().finally(() => startupError(error)).catch(() => {}); } });
-            preparedMedia = backend.media;
+            preparedMedia = backend.media; backendKey = key;
           }
         }
-        return preparedMedia.prepare(snapshot, options);
+        const active = backend, info = await preparedMedia.prepare(snapshot, options);
+        mediaOwners.set(info, active.cache); return info;
       } };
-      const exports = { create: (...args) => backend.exports.create(...args), publish: (...args) => backend.exports.publish(...args),
-        discard: (...args) => backend.exports.discard(...args) };
+      const exportOperation = (name, args) => {
+        const provider = backend?.exports;
+        if (!provider || typeof provider[name] !== 'function')
+          return Promise.reject(Object.assign(new Error('当前界面未开放导出。'), { code: 'EXPORT_UNAVAILABLE' }));
+        return provider[name](...args);
+      };
+      const exports = { create: (...args) => exportOperation('create', args), publish: (...args) => exportOperation('publish', args),
+        discard: (...args) => exportOperation('discard', args) };
       session = createSession({ eagleAdapter: sessionAdapter, media, cache, now, memoryPreferences: preferences, annotationStore, exports,
         createPreviewServices: ({ info, player, isCurrent, onChange, read, busy, register }) => {
+          // The native core owns its exact thumbnails and has a single display
+          // output; old video/sparse/segment preview services never attach to it.
+          if (info.videoEncoding === 'filmcraft-native') return {};
           const { budget, evict } = player.auxiliaryBudget();
           const quick = info.videoEncoding ? window.EVAQuickPreview.createQuickPreview({ canvas: ui.canvas, info, budget, evict, onChange,
+              onPerformance: event => performanceMonitor?.observe(event, { sessionEpoch: session.snapshot().epoch }),
               sourceUrl: require('url').pathToFileURL(info.source.filePath).href,
+              scrubSource:{find:time=>backend.cache.findScrubFrame(info,time),read:frame=>backend.cache.readScrubFrame(info,frame)},
               isCurrent: () => isCurrent() && (player.snapshot().pendingTargets > 0 || player.snapshot().state === 'loading') }) : null;
           register('quick', quick);
           const records = window.EVARecordPreviews.createRecordPreviews({ info, budget, evict, read, isCurrent, busy });
@@ -130,12 +159,29 @@
           const binding = Object.freeze({ sessionEpoch: value.epoch, libraryEpoch: value.libraryEpoch,
             itemId: identity && identity.itemId, sourceSha256: identity && identity.sha256 });
           const memory = preferences.snapshot();
-          return new window.EVAPlayer.Player({ ...options,
-            createFrameDecoder: settings => { if (!window.EVAProxyDecoder) throw Error('帧内代理解码组件没有加载，请切换JPEG序列。'); return window.EVAProxyDecoder.createProxyDecoder(settings); }, ramBytes: memory.ramBytes, compressedRamBytes: memory.compressedRamBytes,
+          const nativeInfo = options.mediaInfo?.videoEncoding === 'filmcraft-native' ? options.mediaInfo : null;
+          const Player = nativeInfo ? window.EVANativePlayer?.Player : window.EVAPlayer.Player;
+          if (!Player) throw Error('原生播放器组件尚未加载，请重新打开插件。');
+          activePlayer = new Player({ ...options,
+            ...(nativeInfo ? { nativeRuntime: nativeInfo.nativeRuntime, gpuDrawing: preferences.gpuDrawing() } : {}),
+            createFrameDecoder: settings => { if (!window.EVAProxyDecoder) throw Error('帧内代理解码组件没有加载，请切换JPEG序列。'); return window.EVAProxyDecoder.createProxyDecoder({...settings, hardwareAcceleration: preferences.decoderPreference?.() || 'prefer-hardware'}); }, ramBytes: memory.ramBytes, compressedRamBytes: memory.compressedRamBytes,
             forwardPredecode: preferences.forwardPredecode(), canvas: ui.canvas, frameIndex,
-            emit: event => diagnostics.publish('player', () => ({ binding, event })) });
+            emit: event => { performanceMonitor?.observe(event, binding); diagnostics.publish('player', () => ({ binding, event })); } });
+          activePlayer.observeCanvas = !!performanceMonitor?.enabled();
+          activePlayer.observePerformance = !!performanceMonitor?.enabled();
+          return activePlayer;
         }, onChange: snapshot => { ui.update(snapshot); diagnostics.publish('state', snapshot); } });
       ui.bindSession(session);
+      performanceView = window.EVAPerformanceView?.create({
+        createMonitor: onUpdate => {
+          const api = require(path.join(root, 'performance-runtime.cjs'));
+          performanceMonitor = api.createMonitor({ root,
+            context: api.playerContext(() => activePlayer, () => session.snapshot()),
+            seek: (time, settings) => session.seek(time, settings), pause: () => session.pause(),
+            onUpdate: value => { if (activePlayer) activePlayer.observeCanvas = activePlayer.observePerformance = value.state !== 'off'; onUpdate(value); } });
+          return performanceMonitor;
+        }
+      });
       return loadSelected({ startedAt: entryAt, trigger: 'plugin-create' }).catch(() => {});
     } catch (error) { startupError(error); }
     finally { initializing = false; }
@@ -144,14 +190,22 @@
     if (closeTask) return closeTask;
     if (session && session.hasDrawingDraft && session.hasDrawingDraft()) return Promise.resolve({ status: 'cancelled' });
     closed = true;
+    // Hide the window, not its failure/result: owned resources still close below.
+    // Keep the promise so a delayed host hide cannot hide a reopened session.
+    try { hideTask = Promise.resolve(eagle.window?.hide?.()).catch(() => {}); } catch (_) { hideTask = Promise.resolve(); }
     try { closeTask = (async () => {
       let result, failure;
       // Arm the independent deadline before awaiting potentially stuck media
       // cleanup. Player reads still drain before the owner releases its leases.
       try { if (backend) backend.beginClose(); } catch (error) { failure = error; }
+      const reportClose = Promise.resolve().then(() => performanceView?.destroy()).catch(error => {
+        diagnostics?.publish('monitor-close-failed', { message: String(error.message).slice(0,512) });
+      });
       try { result = session ? await session.close() : { status: 'closed' }; } catch (error) { failure = error; }
       try { if (backend) await backend.close(); } catch (error) { failure = failure || error; }
+      await reportClose;
       if (failure) throw failure;
+      if (result?.status === 'error') throw new Error(result.error?.message || '资源释放未完成');
       return result;
     })(); }
     catch (error) { closeTask = Promise.reject(error); }
@@ -161,8 +215,8 @@
       if (diagnostics) diagnostics.publish('close-result', { status: 'error', error: {
         message: String(failure && failure.message || failure).slice(0, 1024) } });
     });
-    closeTask.catch(() => {});
-    ui.destroy(); ui.update({ state: 'closing', source: null, duration: 0, playback: null, error: null }); return closeTask;
+    closeTask.catch(closeFailed);
+    ui.destroy({ closing: true }); ui.update({ state: 'closing', source: null, duration: 0, playback: null, error: null }); return closeTask;
   }
   function requestClose() {
     if (closeTask) return closeTask;
@@ -174,30 +228,33 @@
   }
   async function presentWindow(){try{const host=eagle.window;if(!host?.show)return;await host.show();if(!closed)await host.focus?.();}catch(_){/* Host may already be closing. */}}
   function run() {
-    presentWindow();
-    if (session && !closed) return loadSelected({ startedAt: now(), trigger: 'plugin-run' }).catch(() => {});
+    if (session && !closed) { presentWindow(); return loadSelected({ startedAt: now(), trigger: 'plugin-run' }).catch(() => {}); }
     if (!closed || !lastPlugin || !adapter) return;
     const startedAt = now(); let captured;
     try { captured = Promise.resolve(adapter.captureSelected()); } catch (error) { captured = Promise.reject(error); }
     const request = { captured, startedAt };
     request.captured.catch(() => {}); pendingOpen = request;
-    return closeTask.then(result => {
+    return closeTask.then(async result => {
+      await hideTask;
       if (pendingOpen !== request) return;
       if (result && result.status === 'error') throw new Error(result.error && result.error.message || '旧任务未能正常释放。');
       pendingOpen = null; initialSelection = request.captured; entryOverride = request.startedAt;
-      session = null; backend = null; closeTask = null; closed = false; allowUnload = false; exitScheduled = false;
-      ui = window.EVAUI.createUI({hostAction}); return initialize(lastPlugin);
+      session = null; backend = null; closeTask = null; closed = false; allowUnload = false; exitScheduled = false; closeFailure = null;
+      ui = window.EVAUI.createUI({hostAction}); const work = initialize(lastPlugin); presentWindow(); return work;
     }).catch(startupError);
   }
   function closeFailed(error) {
+    closeFailure = error;
     allowUnload = false; exitScheduled = false;
+    hideTask.then(() => presentWindow());
     ui.update({ state: 'closed', source: null, duration: 0, playback: null,
       error: { message: '关闭清理失败，窗口暂未关闭：' + String(error && error.message || error).slice(0, 1024) } });
     // An error remains an error in diagnostics. Once the independent owner has
     // actually exited, it must not imprison the user's error window forever.
-    if (backend && backend.stopped) setTimeout(() => { allowUnload = true; window.close(); }, 0);
+    // Keep the error visible; a subsequent explicit close may leave once stopped.
   }
   function beforeUnload(event) {
+    if (closeFailure && backend?.stopped) { allowUnload = true; return; }
     if (allowUnload) return;
     // Eagle's exit notification does not await our Promise. Keep this renderer
     // alive so media can stop/wait for children and streams, abort its own

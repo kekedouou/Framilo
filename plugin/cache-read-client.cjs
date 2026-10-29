@@ -63,7 +63,15 @@ function createReadClient({ pluginRoot, onFailure = () => {}, renderer = process
     const work = value.promise.then(() => ask(method, { leaseId: value.leaseId, ...fields })).then(convert);
     value.reads.add(work); work.then(() => value.reads.delete(work), () => value.reads.delete(work)); return work;
   }
-  function readAsset(info, file) { return reading(info, 'read', { file }, value => Buffer.from(value)); }
+  function readAsset(info, file, trace) {
+    if (!trace) return reading(info, 'read', {file}, value => Buffer.from(value));
+    const began = performance.now(), note = (...args) => { try { trace(...args); } catch (_) { /* observation only */ } };
+    note('readIO', began, null, true);
+    return reading(info, 'read', {file}, value => {
+      const copiedAt = performance.now(); note('readIO', began, copiedAt);
+      const result = Buffer.from(value); note('transfer', copiedAt, performance.now()); return result;
+    });
+  }
   function readFrameBatch(info, files) { return reading(info, 'batch', { files }, values => values.map(value => Buffer.from(value))); }
   async function detach(info) {
     const value = adopted.get(info); if (!value) return false;

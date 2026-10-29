@@ -10,7 +10,7 @@ function target(tagName = 'div', parent = null) {
     addEventListener(type, fn) { if (!handlers.has(type)) handlers.set(type, new Set()); handlers.get(type).add(fn); },
     removeEventListener(type, fn) { if (handlers.has(type)) handlers.get(type).delete(fn); },
     fire(type, values = {}) { const e = { pointerId: 1, button: 0, buttons: 1, clientX: 100, preventDefault() { this.prevented = true; }, ...values }; for (const fn of handlers.get(type) || []) fn(e); return e; },
-    setAttribute(name, value) { this.attributes[name] = value; }, replaceChildren(...children) { this.children = children; },
+    setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name){delete this.attributes[name];}, replaceChildren(...children) { this.children = children; },
     getBoundingClientRect() { return { left: 100, width: 200 }; },
     focus() {}, setPointerCapture(id) { this.capture = id; }, hasPointerCapture(id) { return this.capture === id; }, releasePointerCapture() { this.capture = null; },
     closest(selector) {
@@ -20,16 +20,71 @@ function target(tagName = 'div', parent = null) {
       return matches ? this : this.parentElement ? this.parentElement.closest(selector) : null;
     } };
 }
-function harness() {
-  const elements = new Map(), win = target(), calls = [], doc = { getElementById(id) { if (!elements.has(id)) elements.set(id, target()); return elements.get(id); } };
+function harness({gpuCheckbox=false}={}) {
+  const absent=new Set(['autoProxy','gpuDrawing','proxyGenerate','proxyCancel']),elements = new Map(), win = target(), calls = [], doc = { getElementById(id) { if(absent.has(id))return null;if (!elements.has(id)) elements.set(id, target()); return elements.get(id); } };
+  if(gpuCheckbox)Object.assign(doc.getElementById('gpuAcceleration'),{tagName:'input',type:'checkbox',checked:true});
   const ui = createUI({ document: doc, window: win, now: () => 123 });
   doc.getElementById('timeline').setAttribute('role', 'slider');
   doc.getElementById('timeline').focus = () => { doc.activeElement = doc.getElementById('timeline'); };
-  const session = { seek(time, options) { calls.push(['seek', time, options]); return Promise.resolve(); }, toggle() { calls.push(['toggle']); }, step(delta) { calls.push(['step', delta]); }, retry() { calls.push(['retry']); } };
-  const state = { epoch: 1, state: 'paused', duration: 10, source: { name: '中文 空格.mp4' }, playback: { time: 2, frameId: 120 } };
+  const session = { loopFrameAt(time,b={}){const min=Number.isSafeInteger(b.minOrdinal)?b.minOrdinal:0,max=Number.isSafeInteger(b.maxOrdinal)?b.maxOrdinal:599,ordinal=Math.max(min,Math.min(max,b.ordinal??Math.floor(time*60+1e-9)));return{ordinal,time:ordinal/60};}, seek(time, options) { calls.push(['seek', time, options]); return Promise.resolve(); }, toggle() { calls.push(['toggle']); }, step(delta) { calls.push(['step', delta]); }, retry() { calls.push(['retry']); } };
+  const state = { epoch: 1, state: 'paused', duration: 10, source: { name: '中文 空格.mp4' }, playback: { time: 2, frameId: 120, frameOrdinal:120, frameCount:600 } };
   ui.bindSession(session); ui.update(state);
   return { ui, el: id => doc.getElementById(id), win, calls, state, doc };
 }
+test('E46 proxy progress and one-shot completion fade work without the retired manual proxy controls',()=>{
+ const h=harness(),timers=new Map();let serial=0;
+ h.win.setTimeout=fn=>{timers.set(++serial,fn);return serial;};h.win.clearTimeout=id=>timers.delete(id);
+ const native={...h.state,playbackBackend:'proxy',memorySettings:{ramMiB:1024,ramBytes:1024**3}};
+ for(const id of ['autoProxy','proxyGenerate','proxyCancel','gpuDrawing'])assert.equal(h.el(id),null);
+ h.ui.update({...native,proxyPreparation:{stage:'preparing',progress:.42}});
+ assert.equal(h.el('proxyState').textContent,'整片代理生成 42%');
+ h.ui.update({...native,proxyPreparation:{stage:'cancelled'}});assert.equal(timers.size,1);
+ h.ui.update({...native,proxyPreparation:{stage:'complete'}});assert.equal(timers.size,1);[...timers.values()][0]();timers.clear();assert.equal(h.el('proxyState').attributes['data-faded'],'true');
+ h.ui.update({...native,playback:{...native.playback,time:3},proxyPreparation:{stage:'complete'}});assert.equal(timers.size,0);assert.equal(h.el('proxyState').attributes['data-faded'],'true');
+ h.ui.destroy();assert.equal(h.el('proxyState').hidden,true);
+});
+
+test('E44 proxy labels distinguish encoding, real validation and publication without inherited99percent or stale ETA',()=>{
+ const h=harness(),native={...h.state,playbackBackend:'proxy'},cases=[
+  [{status:'queued',message:'整片代理等待启动'},'整片代理等待启动'],
+  [{status:'checking',message:'正在检查已存代理'},'正在检查已存代理'],
+  [{status:'encoding',progress:.423,speed:2,remainingSeconds:3},'代理编码 42% · 2.0倍速 · 约3秒'],
+  [{status:'validating',validationPhase:'frames',validationDone:67,validationTotal:100,message:'正在逐帧核验'},'正在逐帧核验 · 67/100 帧'],
+  [{status:'validating',validationPhase:'source-hash',validationDone:256,validationTotal:1024,message:'正在校验源视频'},'正在校验源视频 · 25%'],
+  [{status:'validating',validationPhase:'proxy-hash',validationProgress:.758,message:'正在校验代理文件'},'正在校验代理文件 · 75%'],
+  [{status:'validating',validationPhase:'publish',validationProgress:1,message:'正在发布整片代理'},'正在发布整片代理'],
+  [{status:'validating',validationPhase:'metadata',validationProgress:.99,message:'正在核验代理元数据'},'正在核验代理元数据'],
+  [{status:'validating'},'正在校验完整代理']
+ ];
+ h.win.setTimeout=()=>1;h.win.clearTimeout=()=>{};
+ for(const [fields,label] of cases){h.ui.update({...native,proxyPreparation:{stage:'preparing',progress:.99,speed:8,remainingSeconds:0,...fields}});assert.equal(h.el('proxyState').textContent,label);assert.equal(h.el('cacheStatus').textContent,label);}
+ h.ui.update({...native,playback:{...h.state.playback,proxyActive:false},proxyPreparation:{stage:'complete',status:'ready'}});assert.equal(h.el('proxyState').textContent,'整片代理已就绪');assert(!h.el('proxyState').textContent.includes('已切换'));h.ui.destroy();
+});
+test('E44 missing or invalid validation counters never fabricate progress',()=>{
+ const h=harness(),native={...h.state,playbackBackend:'proxy'};
+ for(const fields of [{validationDone:12,validationTotal:0},{validationDone:101,validationTotal:100},{validationDone:-1,validationTotal:100},{validationProgress:NaN}]){
+  h.ui.update({...native,proxyPreparation:{stage:'preparing',status:'validating',validationPhase:'frames',progress:.99,remainingSeconds:0,...fields}});assert.equal(h.el('proxyState').textContent,'正在逐帧核验');assert.equal(h.el('cacheStatus').textContent,'正在逐帧核验');
+ }h.ui.destroy();
+});
+test('E44 held older image cannot enter text or drawing annotation while transport remains available',()=>{
+ const h=harness(),calls=[];h.ui.bindSession({beginComment(){calls.push('note');},beginDrawing(){calls.push('drawing');return Promise.resolve();},step(n){calls.push(['step',n]);}});
+ const ready={...h.state,comments:{status:'ready',items:[]},drawings:{status:'ready',records:[]}};
+ h.ui.update({...ready,playback:{...ready.playback,frameHeld:true}});assert.equal(h.el('commentAdd').disabled,true);assert.equal(h.el('drawingNew').disabled,true);
+ h.el('commentAdd').fire('click');h.el('drawingNew').fire('click');h.win.fire('keydown',{code:'KeyN',key:'n'});assert.deepEqual(calls,[]);
+ h.win.fire('keydown',{code:'BracketRight',key:']'});assert.deepEqual(calls,[['step',1]]);
+ h.ui.update({...ready,playback:{...ready.playback,frameHeld:false}});assert.equal(h.el('commentAdd').disabled,false);assert.equal(h.el('drawingNew').disabled,false);h.el('drawingNew').fire('click');assert.deepEqual(calls,[['step',1],'drawing']);h.ui.destroy();
+});
+test('E41 a new screen drag starts from the outstanding target, never the older displayed frame',()=>{
+ const h=harness();h.win.requestAnimationFrame=fn=>{fn();return 1;};h.win.cancelAnimationFrame=()=>{};
+ h.ui.update({...h.state,state:'seeking',playback:{time:2,targetTime:7,pendingTargets:1,frameId:120,frameOrdinal:120,frameCount:600}});
+ h.el('screen').fire('pointerdown',{clientX:100,clientY:100});h.win.fire('pointermove',{clientX:120,clientY:100});
+ const seeks=h.calls.filter(c=>c[0]==='seek');assert(seeks.length);assert.equal(seeks.at(-1)[1],422/60);assert.equal(seeks.at(-1)[2].index,422);h.ui.destroy();
+});
+test('E41 close keeps a black teardown curtain and reports cleanup errors on it',()=>{
+ const h=harness(),children=[];h.doc.createElement=()=>target();h.doc.body={appendChild:n=>children.push(n)};
+ h.ui.destroy({closing:true});assert.equal(children.length,1);assert(children[0].style.cssText.includes('background:#000'));
+ h.ui.update({...h.state,error:{message:'cleanup failed'}});assert.equal(children[0].textContent,'cleanup failed');
+});
 test('settings remain enabled throughout initial or replacement media preparation',()=>{
  const h=harness();h.ui.update({...h.state,state:'preparing',playback:null,memorySettings:{ramMiB:1024,optionsMiB:[512,1024,2048]}});
  assert.equal(h.el('memoryApply').disabled,false);assert.equal(h.el('qualitySelect').disabled,false);h.ui.destroy();
@@ -232,7 +287,7 @@ test('E03 quality selection remains pending until unified apply, label uses actu
     sourceWidth:1920,sourceHeight:1080,sampleAspectRatio:'1:1',originalResolution:false}});
   assert.equal(h.el('qualitySelect').options[1].textContent,'1080p（原始分辨率）');
   h.el('qualitySelect').value='1080p';h.el('qualitySelect').fire('change');assert.equal(applied,null);
-  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'1080p',forwardPredecode:false,wheelFrames:1,showCacheStrip:true,rateStep:.1,drawingFadeSeconds:.25});
+  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'1080p',forwardPredecode:true,proxyDiskGiB:5,wheelFrames:1,showCacheStrip:true,showProxyStrip:false,rateStep:.1,drawingFadeSeconds:.25});
   assert.equal(h.el('qualitySelect').disabled,true);h.ui.destroy();
 });
 test('E05 strip is sampled separately; unchanged residency and frame updates do not repaint or scan',()=>{
@@ -252,13 +307,13 @@ test('E05 strip is sampled separately; unchanged residency and frame updates do 
   timers.get(50)();assert.equal(strip.paints.length,cleared,'Stale source coverage cannot reappear.');
   h.ui.destroy();assert.equal(timers.size,0);
 });
-test('E04 switch keeps pending edits across frame updates and applies with unified settings',()=>{
+test('E46 predecode stays enabled when applying other settings despite obsolete control edits',()=>{
   const h=harness();let applied;
   h.ui.bindSession({setPlaybackSettings(value){applied=value;return Promise.resolve({status:'applied'});}});
   const settings={...h.state,memorySettings:{ramMiB:1024,ramBytes:1024**3},previewQuality:'720p',forwardPredecode:true};
   h.ui.update(settings);assert.equal(h.el('forwardPredecode').checked,true);
   h.el('forwardPredecode').checked=false;h.ui.update({...settings,playback:{time:3}});assert.equal(h.el('forwardPredecode').checked,false);
-  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:false,wheelFrames:1,showCacheStrip:true,rateStep:.1,drawingFadeSeconds:.25});h.ui.destroy();
+  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:true,proxyDiskGiB:5,wheelFrames:1,showCacheStrip:true,showProxyStrip:false,rateStep:.1,drawingFadeSeconds:.25});h.ui.destroy();
 });
 test('E05 fractional scaling fills the full rail; changing residency avoids repeated layout queries',()=>{
   const fs=require('fs'),path=require('path'),css=fs.readFileSync(path.join(__dirname,'../plugin/styles.css'),'utf8');
@@ -314,15 +369,13 @@ test('Wheel/strip settings stay pending until apply; hidden green cache stops pa
   h.ui.bindSession({setPlaybackSettings(v){applied=v;return Promise.resolve({status:'applied'});},cacheCoverageSnapshot:()=>({sessionEpoch:1,epoch:1,revision,duration:10,
     decodedFrames:2,totalFrames:10,ranges:[{start:0,end:2}],enabled:true,phase:'preparing'})});
   const state={...h.state,memorySettings:{ramMiB:1024,ramBytes:1024**3},previewQuality:'720p',forwardPredecode:true,interactionSettings:{wheelFrames:1,showCacheStrip:true}};
-  h.ui.update(state);h.el('wheelFrames').value='5';h.el('showCacheStrip').checked=false;h.ui.update({...state,playback:{time:3}});
-  assert.equal(h.el('wheelFrames').value,'5');assert.equal(h.el('showCacheStrip').checked,false);assert.equal(h.el('decodedCache').hidden,false);
-  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:true,wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25});
+  h.ui.update(state);h.el('wheelFrames').value='5';h.el('showCacheStrip').checked=false;h.el('showProxyStrip').checked=true;h.ui.update({...state,playback:{time:3}});
+  assert.equal(h.el('wheelFrames').value,'5');assert.equal(h.el('showCacheStrip').checked,false);assert.equal(h.el('showProxyStrip').checked,true);assert.equal(h.el('decodedCache').hidden,false);
+  h.el('memoryApply').fire('click');assert.deepEqual(applied,{ramMiB:1024,previewQuality:'720p',forwardPredecode:true,proxyDiskGiB:5,wheelFrames:5,showCacheStrip:false,showProxyStrip:true,rateStep:.1,drawingFadeSeconds:.25});
   h.ui.update({...state,interactionSettings:{wheelFrames:5,showCacheStrip:false}});const before=h.el('decodedCache').paints.length;
   revision++;timers.get(50)();assert.equal(h.el('decodedCache').paints.length,before);assert(h.el('cacheStatus').textContent.includes('2 / 10'));
   h.ui.update({...state,interactionSettings:{wheelFrames:5,showCacheStrip:true}});timers.get(50)();assert(h.el('decodedCache').paints.length>before);assert(!h.el('decodedCache').hidden);h.ui.destroy();
 });
-console.log('T1 UI: ' + checks + ' in-memory checks passed; real layout/input experience not tested.');
-
 test('2K profile label and fade controls remain pending until apply',()=>{
  const h=harness();let applied=null;
  h.el('qualitySelect').options=[{value:'720p'},{value:'1080p'},{value:'1440p'}];h.ui.bindSession({setPlaybackSettings(v){applied=v;return Promise.resolve({status:'applied'});}});
@@ -331,3 +384,18 @@ test('2K profile label and fade controls remain pending until apply',()=>{
  h.el('qualitySelect').value='1440p';h.el('drawingFadeSeconds').value='0';h.ui.update({...state,playback:{time:3}});assert.equal(applied,null);assert.equal(h.el('drawingFadeSeconds').value,'0');
  h.el('memoryApply').fire('click');assert.equal(applied.previewQuality,'1440p');assert.equal(applied.drawingFadeSeconds,0);assert.equal(applied.ramMiB,1024);h.ui.destroy();
 });
+test('E46 JPEG preparation shows current progress in the lower-left status and retires on ready',()=>{
+ const h=harness(),base={...h.state,playbackBackend:'jpeg',state:'preparing',playback:null};
+ h.ui.update({...base,progress:{stage:'decode',message:'正在生成JPEG序列',frames:12}});assert.equal(h.el('proxyState').hidden,false);assert.equal(h.el('proxyState').textContent,'正在生成JPEG序列 · 已准备12帧');
+ h.ui.update({...base,progress:{stage:'decode',frames:37}});assert.equal(h.el('proxyState').textContent,'生成JPEG序列 · 已准备37帧');
+ h.ui.update({...base,progress:{stage:'verify',frames:NaN}});assert.equal(h.el('proxyState').textContent,'核验JPEG序列');
+ h.ui.update({...h.state,playbackBackend:'jpeg'});assert.equal(h.el('proxyState').hidden,true);h.ui.destroy();
+});
+test('E46 the real GPU checkbox keeps edits pending and submits one unified acceleration flag',()=>{
+ for(const enabled of [true,false]){
+  const h=harness({gpuCheckbox:true});let applied=null;h.ui.bindSession({setPlaybackSettings(v){applied=v;return Promise.resolve({status:'applied'});}});
+  const base={...h.state,memorySettings:{ramMiB:1024,ramBytes:1024**3},gpuAcceleration:!enabled};h.ui.update(base);assert.equal(h.el('gpuAcceleration').checked,!enabled);h.el('gpuAcceleration').checked=enabled;h.el('gpuAcceleration').fire('change');h.ui.update({...base,playback:{...base.playback,time:3}});assert.equal(applied,null);assert.equal(h.el('gpuAcceleration').checked,enabled);
+  h.el('memoryApply').fire('click');assert.equal(applied.gpuAcceleration,enabled);assert.equal(applied.forwardPredecode,true);for(const id of ['gpuDrawing','decoderPreference','proxyEncoder','autoProxy'])assert.equal(Object.hasOwn(applied,id),false);h.ui.destroy();
+ }
+});
+console.log('T1 UI: ' + checks + ' in-memory checks passed; real layout/input experience not tested.');
