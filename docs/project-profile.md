@@ -1,6 +1,6 @@
 # 项目说明
 
-当前：E-49 已修独立原声与续播启动：避免取声时恢复原4K视频，原声无损复制到有界RAM；本地/真实音频浏览器检查通过，Eagle手感待验。代理保持现状。见[记录](experiments/E49/report.md)。E48及更早为历史。
+当前：E-49 已按用户要求于2026-10-30冻结，标签 `e49-frozen-2026-10-30`；运行代码固定503e0a6，只补文档。独立原声与续播修复的本地/真实音频浏览器检查通过，Eagle手感仍待验；不自动继续开发。见[冻结记录](releases/e49-frozen-2026-10-30.md)及[阶段记录](experiments/E49/report.md)。下方E48及更早为历史。
 
 当前：E-48 已补齐热拖动/暂停提前解压并统一清缓存按钮；本地回归及真实解码联通检查通过，Eagle手感待验。代理暂不调整；已撤下时间轴聚焦蓝框。见[本轮记录](experiments/E48/report.md)。E47及更早为历史。
 
@@ -37,8 +37,8 @@
 | 任务、清理规则 | docs/development-plan.md；E45修复/清理与未验关卡、历史T/E任务及F-01～F-07 |
 | 验证协议 | docs/verification.md；协议、真实运行和人工反馈分开 |
 | 当前状态 | docs/progress.md；先读顶部当前交接，后段为历史 |
-| 专项结果 | docs/experiments/E46/report.md当前修复/验证/缺口，E44体验数据为历史，E38～E43按历史范围保留 |
-| 发布交接 | docs/releases/v0.1.0-beta.2.md；当前已发布版本清单/风险/授权入口，开发版另见进度 |
+| 专项结果 | docs/experiments/E49/report.md当前冻结代码的修复/验证/缺口，E48及更早按历史范围保留 |
+| 发布交接 | docs/releases/e49-frozen-2026-10-30.md当前源码冻结；docs/releases/v0.1.0-beta.2.md为旧安装包发布记录 |
 | 旧发行与过程 | docs/releases/旧版本、docs/progress/、demos/standalone-preview/；历史说明不冒充下载或新授权 |
 | 私人原始证据/配置 | verification-runs/和原型evidence/等Git忽略路径；不公开、不覆盖 |
 
@@ -49,7 +49,7 @@
 - Windows守护源码变更或新检出时，由Codex用node scripts/build-task-host.cjs构建并核对本机指纹，再提供可运行包；用户不需安装Node或输入命令。
 - Beta2打包器：node scripts/package-release.cjs build、verify、extract、verify-install分别显式执行。build要求干净来源、不覆盖旧输出；21运行文件＋README/CHANGELOG/BUILD-INFO，目录和ZIP各≤2MiB。verify/verify-install依赖尚存在的构建/独立目录；清理后只可按保全回执核对ZIP，复跑需明确重建来源，不能假设旧目录仍存在。
 - 已人工验证包来源9e2fd0d，ZIP SHA256及验收见发布记录；不因文档更新覆盖此包。BUILD-INFO内布尔值是构建时状态，后续用户人工结果记录在报告，不改冻结包冒充构建时已验收。
-- scripts/audit-publication.cjs只读扫描当前内容和待推历史，报警不代表删除许可；旧提交路径与当前包隐私分开。历史路径公开已由用户接受，实际推送仍待最新确认。
+- scripts/audit-publication.cjs只读扫描当前内容和待推历史，报警不代表删除许可；旧提交路径与当前包隐私分开。历史路径公开已由用户接受；2026-10-30用户授权推送本次冻结标签，具体范围见冻结记录。
 - 技术计量/命令由Codex执行。正常产品页面无测试按钮；不重跑认可拖动体验或专门一小时测量，不以后台/模型通过冒充Eagle窗口操作。
 - 具体历史媒体/关窗/计量工具及副作用见各实验计划/报告，须按具体范围显式调用，不从旧命令中自动恢复已消费授权。
 
