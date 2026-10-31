@@ -19,27 +19,7 @@ function run(args) {
   if (r.stdout) process.stdout.write(r.stdout);
   if (r.error || r.status !== 0) throw new Error(`${args.join(' ')}: ${r.error ? r.error.message : r.stderr || r.status}`);
 }
-function slug(text) { return text.toLowerCase().replace(/<[^>]+>/g, '').replace(/[^\p{L}\p{N}\s_-]/gu, '').trim().replace(/\s/g, '-'); }
-function checkDocs() {
-  const docs = [path.join(root, 'AGENTS.md'), path.join(root, 'README.md'), ...files(path.join(root, 'docs'), f => f.endsWith('.md'))];
-  let links = 0;
-  for (const file of docs) {
-    const body = fs.readFileSync(file, 'utf8');
-    for (const match of body.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
-      const raw = match[1].replace(/^<|>$/g, '');
-      if (/^(https?:|app:|codex:|mailto:|[A-Za-z]:)/.test(raw)) continue;
-      const [name, anchor] = raw.split('#');
-      const target = name ? path.resolve(path.dirname(file), decodeURIComponent(name)) : file;
-      if (!fs.existsSync(target)) throw new Error(`Broken local link: ${path.relative(root, file)} -> ${raw}`);
-      if (anchor && target.endsWith('.md')) {
-        const headings = [...fs.readFileSync(target, 'utf8').matchAll(/^#{1,6}\s+(.+)$/gm)].map(m => slug(m[1]));
-        if (!headings.includes(decodeURIComponent(anchor))) throw new Error(`Missing heading: ${path.relative(root, file)} -> ${raw}`);
-      }
-      links++;
-    }
-  }
-  console.log(`documents: ${docs.length} files, ${links} local links checked`);
-}
+function checkDocs() { console.log('documents: ' + JSON.stringify(require('./check-docs.cjs').check(root))); }
 const js = ['plugin', 'tests', 'scripts'].flatMap(d => files(path.join(root, d), f => /\.(cjs|js)$/.test(f)));
 for (const file of js) {
   run(['--check', file]);

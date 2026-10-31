@@ -1,636 +1,85 @@
-# 技术架构与模块边界
+# 现行架构与模块边界
 
-## E51 画质与准备选择边界
+本页按职责维护运行链；完成情况见[当前交接](progress.md)，批准行为见[产品](product.md)。源码主线只有plugin；旧原型和退休模块存在不表示仍运行。
 
-preview-profile为4K共用几何入口，UI/缓存/偏好/原生桥统一2160p；native-reader协议像素边界扩至3840×2160及竖屏，协议版本不变。旧画质身份不变，新2160p按既有质量字段形成独立JPEG缓存。整片代理保持H.264全I和原编码配方；4K由编码器选level，旧尺寸继续5.1。桥源码与重编译EXE/指纹同时交付。
+## 运行链与数据边界
+app装配/宿主生命周期 → UI发操作 → Session持有库/源快照和任务代次 → Eagle适配、媒体/缓存、播放器分别执行 → UI显示状态。
+只有eagle调用素材/标注API；UI不直接读写素材或媒体目录，媒体不自行淘汰文件，缓存不调UI/素材API。入口不承载这些业务。
+原片及完整代理统一FilmCraft原生读者，整数源PTS/序号及实际帧回执；音频是唯一播放时钟，YUV/WebGL准确绘制并可同帧CPU回退。JPEG保持独立整片准备/Canvas/Web Audio路径，不作为隐式低清补位。
 
-load-decisions由Session持有，一次一个选择，绑定请求代次和任务AbortSignal；答复仅当前ID/合法选项生效，换素材/模式或关闭使旧请求失效。app只协调格式路由与模式选择；media-policy负责格式清单、时长门槛与体积范围，不访问Eagle或写媒体。长JPEG选择在守护任务启动前，改模式复用既有安全重载。whole-proxy先验证完整缓存，未命中且达到阈值才await选择，尚未建立写锁/临时代理；取消可结束等待，不留下后台挂起。
-
-JPEG缺少流级时间边界时，额外有界读取视频packet的整数PTS/末包duration；无末帧时长、重复PTS或超量拒绝，不用平均FPS猜测。原生非MP4容器没有完整的实际PTS回执，当前UI入口转为明确JPEG兼容选择，不更换上游读者架构、不篡改源帧身份。数据/标注访问边界和持久化schema保持；2160p偏好与缓存复用/重开已列测试。
-
-UI决策区沿半透明直角/淡蓝按钮，不挤动视频；待选择时暂隐藏首次帮助避免叠层。toast对budget及已确认cleanupComplete错误使用明确寿命标记，graphite-shell协调普通通知替换，清理失败不淡出。没有恢复旧性能report或代理条。
-
-## E50 监测与失败回收隔离
-
-proxy-storage.usage以异步lstat/realpath与opendir逐文件读取代替renderer上的同步递归；保持链接/文件身份约束，扫描中消失的单文件只跳过该文件，不把已累计目录归零。支持AbortSignal，不创建缓存目录。measure异步读取归属元数据，分别统计当前源各画质与pending；仍不放宽实际删除候选。
-
-live-resources保持2.5秒资源采样与至少5秒磁盘校准，不并发堆积扫描。关闭监测中断扫描与自有采样进程；源切换后旧结果不更新当前视频占用，失败显示未知。JPEG分类只扫一次并复用总和，代理/临时/JPEG/其它口径交给监测窗口悬停说明。performance-runtime只在新事件/源变化后重新快照与汇总，等待累计时间仍每100ms更新；没有Worker或额外依赖。此统计仍是采样，后台写入跨次统计不承诺严格同时刻一致。
-
-whole-proxy失败路径新增cleaning状态，等待受管子进程结束后核对临时目录真实路径、owner token/pid、文件身份与白名单，再删除当前任务临时文件；核实回收后才发布failed/cancelled。失败时保留归属锁、记录WHOLE_CLEANUP_FAILED；不能把owner.json不存在当作整个目录已清空。NVENC回退CPU也必须确认前次回收完成。清理期间startProxy复用同一任务，避免重复生产。既有dead-owner恢复与读者租约、完整代理清理规则不变。
-
-Session在资源释放成功后把SELECTION_EMPTY映射empty，清除旧source/playback/error；真正SDK或释放错误仍保持error。UI复用retry操作但空态命名“读取选中视频”，不新增Eagle访问路径。没有持久化格式/协议、编解码、画质、预算或标注改动。
-
-## E49 原声与原片视频解码分离
-
-当前Lightning的独立Chrome Media证据表明，HTMLAudio直接加载原MP4仍实例化4K AV1视频解码器，长暂停恢复时音频已缓冲足够仍等视频。修正不改变代理：native-audio.cjs仅用FFmpeg复制原压缩音轨到有界stdout Buffer，以流式ffprobe逐包/编码/时序指纹验证，无音频重编码、磁盘缓存或Worker。元数据/单行/总时长有上限，源压缩包累计已超额度时早停；源与拷贝都只有可核实的音轨。
-
-native-backend保留inspect已核验的运行时source.nativeStamp，创建音轨任务前后强制同身份，不以新文件自认领；该字段不写入代理manifest或偏好。后台管进程、PID、取消/等待close，释放后不准再创建任务。native-player管实际RAM峰值预留、Blob URL与音频对象，关闭先取消准备、卸载音频再撤销URL/预算。返回音轨的包时间基准不变，继续用既有sourceVideoOrigin；当前仅启用已验证的零起点形态，其它回原声，不猜映射。
-
-原生play接上音频时钟后即安排画面循环，Promise只处理成功/失败/过期，不能再阻挡已在前进的时钟，也不能创建双rAF。启动中的静止音频时钟保持静止；成功锚点取当时实际音频位置，防止尾段倒退。暂停游标由已确认操作归属，而非1ms数值相等判定；任何显式seek均清除旧续播归属。JPEG、代理存储/生产、核心原生解码和标注格式均未改变。
-
-## E48 闲时前读补齐
-
-JPEG沿用现有准备窗口、预算与单次forward-fill；仅已完成且cacheStateAtInput为decoded的目标豁免80ms连续拖动静默期。未完成/冷拖动仍保留保护，旧分段实验分支不复活。
-
-native-player原先仅播放_tick有短前读，暂停/拖动没有通用邻域填充，记录缩略图读取可能顺带增长缓存。现以同一reader的带kind所有权及单次延后任务补附近源时间窗口，复用player.preparationWindow可选循环上下限。热命中不取消forward-fill，冷目标/播放立即抢占，代理接管/关闭令旧结果失效；后台只入RAM、不绘制、不改变源序号。预留在途及前台像素空间，最多4096邻域帧、受原RAM预算约束；仅淘汰窗口外帧，窗口收敛后停止，失败帧不无限重试。缩略图优先且异常也归还reader所有权。
-
-不新增解码器、线程、设置或持久化字段。代理配方与硬件播放链未变；GPU编码并不代表转码全程GPU，[本轮研究](experiments/E48/proxy-options.md)独立于当前架构批准。
-
-## E47 热路径小范围优化
-
-Budget以kind增量统计reserve/shrink/release，snapshot只复制类别汇总而不遍历每个缓存token；返回值可修改但不影响内部账本。native-player同步热帧不再先发seeking通知，仅提交一次，重复源帧不上传/绘制，非空闲读取才发取消；未命中与JPEG异步路径仍及时公开未就绪状态。
-
-timeline-strip宽度与screen-gesture-ui同手势几何缓存，仅resize/scroll/布局及范围变化失效，零宽隐藏可恢复；drawing-ui只写变化DOM属性，保留淡入淡出与工具行为。UI在绿条关闭时不再50ms读取全缓存覆盖，设置应用清空旧提示而不添加“正在应用”。screen-gestures在begin按时长一次计算轻量灵敏度，后续仍按准确源帧累计，不增加解码/调度架构。
-
-## E46 模块变更
-
-native-player移除阻塞启动的4张前读，最终定位并行预定位音频，暂停同步取消读者；JPEG Player只等待当前帧，暂停立即进入paused，后台对齐保持代次保护。screen-gestures累计像素对应源帧，screen-gesture-ui及ui完整透传ordinal，由session.loopFrameAt完成准确时间映射。
-
-preferences新增gpuAcceleration布尔值，新字段优先，旧编码/解码/绘制字段校验后统一迁移。session/app保持统一派生值并按硬件开关重建；autoProxy和forwardPredecode读取/保存/运行均固定true。settings-view只展示一个高级GPU开关。ui/graphite-shell将设置与维护反馈纳入统一左下角提示，用消息序号避免相同文案重复后常亮。
-
-whole-proxy允许合法奇数预览，以偶数编码+SAR恢复比例，CPU/GPU配方、完整校验、缓存身份与原生读者都核对。NVENC仅明确不支持时结束GPU事务，按CPU配方/新key重试一次。native-backend清理JPEG通过既有task-client/guard/worker后台执行，cache的independentWholeProxy仅验证独立代理根，不把它计入JPEG5GiB；proxy-storage异步分项扫描并保留原归属/读者保护。
-
-当前：E-45 已实现高画质原片取帧修复、代理磁盘额度和旧代理淘汰、即时监测与资源读数；记录/标测/代理条撤下。适用本地检查通过，真实Eagle高画质体验未验；旧文件清理因工具策略拒绝尚未执行。见[本轮记录](experiments/E45/report.md)。E44及更早段落为历史，冲突项以E45为准。
-
-## E45 现行模块变更
-
-延续原片直读＋后台完整整片代理。native-player允许迟到但仍有效的播放帧按时钟显示，使用有界前读；暂停、跳转代次仍拦截过期回调。native/filmcraft/bridge.rs把非整数尺寸缩放留在YUV平面，避免4K先扩展成RGBA再缩放；兼容色彩之外仍回退RGBA。代理格式及准确PTS协议不变。
-
-proxy-storage.cjs负责本插件整片资产的读者租约、容量分配锁、最近使用时间和安全淘汰；whole-proxy在生成前申请空间，在读者关闭后释放租约。额度独立于旧JPEG缓存；运行中/当前源/身份不明资产禁止删除。preferences/session/app传递可持久化proxyDiskGiB，旧配置默认为5。
-
-performance-runtime/core/stages与live-resources只做有界内存观察；performance-view/window是独立即时窗口。资源采样仅监测开启时执行，进程约2.5秒、磁盘约5秒，关闭停止。原performance-dashboard/explainer/inbox/protocol/report/runner不再被运行入口或发行清单引用；旧源码文件等待获准的清理实际完成。
-
-历史E-44：已接入正式plugin，原片/完整整片代理共用FilmCraft原生读者及唯一播放器/绘制出口，JPEG独立旧链。真实Eagle正式媒体模块已测，完整UI/全部素材/长稳未最终验收。见[交付](experiments/E44/experience.md)、[阶段记录](experiments/E44/report.md)。
-
-## E44 历史运行架构
-
-| 模块 | 职责与边界 |
+## 现行模块地图
+| 文件 | 职责与边界 |
 | --- | --- |
-| app / session | 选择原生或JPEG，源info绑定对应cache owner，切换释放旧者 |
-| native-backend / frame-index | 异步packet索引、源SHA/整数PTS/几何与取消 |
-| native-reader / native-wire / bin/filmcraft-media.exe | 常驻原生媒体、有界像素协议、真实缓存PTS、单调取消；等进程close回执 |
-| native-player | 原音频时钟、精确源帧、前向预读/循环、RAM与缩略图租约；目标/显示帧分离 |
-| native-renderer | YUV420p经WebGL准确转换，CPU同式回退，其它像素RGBA；销毁纹理/缓冲/程序 |
-| whole-proxy | 独立整片H.264全I生产、全帧映射验证、原子发布/复用/取消及死owner恢复 |
-| preferences / settings-view / UI | 现有交互、自动整片、生成/取消、独立编码/解码/GPU绘制 |
-| 原media/task/cache/player等 | JPEG及共享安全/导出所需，原生不运行分段/稀疏链 |
+| plugin/manifest.json、index.html | Eagle Window 与页面入口 |
+| native/filmcraft/、plugin/bin/ | 固定FilmCraft来源/补丁/许可与本机原生运行EXE；开发源码不成为日常依赖 |
+| plugin/native-backend.cjs、native-reader.cjs、native-wire.cjs | 原片异步索引/身份、常驻原生解码进程、有界协议、实际PTS与关闭回执 |
+| plugin/native-audio.cjs | 有界压缩音轨复制、逐包内容/时序核对、源身份及取消，无磁盘缓存 |
+| plugin/native-player.js、native-renderer.js | 原生播放/音频时钟、最新目标/缓存/闲时邻域/缩略图、YUV准确GPU绘制及CPU回退 |
+| plugin/whole-proxy.cjs | 独立整片生产、完整校验/原子发布、取消/复用/容量及死owner恢复 |
+| plugin/app.js | 宿主生命周期、依赖装配和事件接线，不承载媒体、缓存、标注业务 |
+| plugin/ui.js、styles.css | 原始控件/输入路由、会话状态；正式可见布局由graphite模块承载，默认不显示帧数/秒数、带输入焦点保护的空格操作；只向会话发出操作，不直接访问文件或 Eagle 素材/标注 API；正式页面无测试控制 |
+| plugin/graphite-shell.js、graphite.css、interface-icons.js | 视频优先布局、直角透明材质、图标、左工具/右记录、缩略图租约和标注输入位置；不访问素材库 |
+| plugin/settings-view.js | 原设置控件的分级展示；子菜单中心跟随父项并在视口边缘限位，保留原应用/即时生效写入端 |
+| plugin/timeline-strip.js | 灰色带、蓝光标、白标注、内嵌片段、真实帧刻度；已撤下代理条 |
+| plugin/window-drag.cjs | 宿主窗口恢复和拖动调度，不改播放核心 |
+| plugin/loop-selection.js | UI层短/长按与端点草稿，只通过Session预览/确认；无文件、缓存或Eagle API访问 |
+| plugin/timeline-view.js | UI纯显示映射：整段/循环片段范围、自适应刻度、时间坐标及绿条/标注裁切；不解码或分配视频缓存 |
+| plugin/drawing-model.js、drawing-erase.js、drawing-ui.js | 绘图对象/擦除覆盖/淡化计算及SVG显示、文字编辑；通过Session发操作，不直接访问Eagle或媒体缓存 |
+| plugin/drawing-session.cjs、drawing-store.cjs、annotation-data/ | 同帧关联、草稿与永久图形/文字/样式存储；独立于会淘汰的预览缓存 |
+| plugin/screen-gestures.js、screen-gesture-ui.js | 纯手势识别、指针/时钟和反馈展示；通过原Session定位/调速，不接入媒体解码 |
+| plugin/context-wheel.js | 观看/圈画右键方向选择、单次打开预建并复用类型/颜色外圈、悬停取消及销毁；通过UI调用既有操作，无媒体或Eagle访问 |
+| plugin/preview-profile.cjs | 720p/1080p/1440p/2160p预览尺寸与身份；共用原缓存预算，不放大小源 |
+| plugin/session.cjs | 素材/库快照、状态与任务所有权，协调适配、准备、缓存和播放 |
+| plugin/eagle.cjs | 唯一素材/标注 API 边界；独立读回，不直接写 metadata.json |
+| plugin/export.cjs、export-work/ | 源视频图片/片段导出、本次暂存及本地保存；由既有后台任务执行，暂存累计1GiB、正常结束清本次，异常/导入未知保留核对，不受预览缓存清理器删除 |
+| plugin/media.cjs | 只读源媒体、分析和 FFmpeg；转发proxyBudget/closeProxyBatch，通过缓存句柄受限写入，不自行淘汰目录 |
+| plugin/media-wire.cjs | 整数PTS/共同时间基准/显式结束时间的紧凑控制协议，≤6MiB/120000帧、摘要/版本检查及无损重建；不读素材或改源SHA |
+| plugin/cache.cjs | 文件所有权、路径、预算、锁、完整提交、淘汰与清理；openBatch/beginSegment/snapshot/close、双槽目标记录、失败退款与原计划恢复；完整manifest备忘仍每次SHA核对字节，不备忘可变归属记录，不操作UI或素材元数据 |
+| plugin/preferences.cjs | RAM档位/物理上限、画质、JPEG/代理方式与交互偏好、旧格式只读兼容和本地原子保存；不访问素材库或清理媒体缓存 |
+| plugin/process-identity.cjs | Windows进程出生/后代只读证明；独占句柄核对后接管空writer记录；未知时保留，不终止进程、不调用Eagle API |
+| plugin/task-client.cjs、task-worker.cjs、native/task-host.cs | 窗口与后台请求、按回执合并最新位置/记录意图、Windows互斥与任务组；worker单队列处理同源抢占及维护/换源/关闭时batch收尾，客户端原租约借读；控制消息不传图片，历史基础见A-07 |
+| plugin/frame-pack.cjs | 校验集中JPEG/AVC帧包的纯布局及videoEncoding；物理文件读写仍归cache |
+| plugin/frame-index.cjs | 纯时间/源帧映射；整数 PTS、呈现编号与源时间关系 |
+| plugin/player.js | JPEG及历史播放器；当前proxy模式使用native-player。Canvas、Web Audio、旧代理解码注入与调度；通过缓存读取/预算句柄取得资源，不调用标注API |
+| tests/、scripts/check.cjs | 隔离测试与统一检查；正式代码不依赖 prototypes，开发检查不进入产品 UI |
 
-源帧身份为原片整数PTS/ordinal，不能用近似帧写标注。整片验证数量、全I、PTS映射、几何/哈希后才开放。接管验证同一源帧，新play/seek使旧候选失效。按用户最新决定，同源未就绪保留上次准确画面，frameId/time不冒充新目标，targetTime独立；frameHeld在等待及失败时保护文字/圈画/单帧导出，成功准确提交才解除。新源首帧前仍隐藏，光标保持最新意图，不叠加低清层。
+| plugin/media-policy.cjs、load-decisions.cjs | 纯格式/时长/体积策略与Session持有的可取消选择；不写媒体/Eagle，绑定任务代次 |
+| plugin/proxy-storage.cjs | 整片代理独立预算、文件归属、读者租约、最近使用和安全淘汰；不碰原视频或标注 |
+| plugin/performance-runtime.cjs、performance-core.cjs、performance-stages.cjs、live-resources.cjs | 有界即时等待/资源观察与采样生命周期；关闭取消，旧源结果不发布 |
+| plugin/performance-view.js、performance-window.html/js、performance.css | 独立即时监测界面；无旧记录/报告/标准测试产品流程 |
 
-原片HTMLAudioElement是唯一声音时钟，seek就绪/预读后再发声，暂停/新意图可取消。RAM预留原生GOP、YUV/RGBA、缩略图和表面；原生读者128～192MiB，接管第二读者另占额，不承诺驱动/音频/OS硬上限。磁盘旧+新5GiB，容量不足继续原片，不擅删不明/活跃资产。
+## 媒体、音频与调度
+- native-backend管理源身份/异步packet索引，native-reader/wire管理常驻原生进程、有界协议及关闭回执。重复/缺失PTS不猜测；定位/逐帧/标注基于实际源帧，旧代次不能覆盖。
+- 原片先可播放，whole-proxy后台连续生产一份H.264全I，完整帧数/时间映射/尺寸/内容核验后原子发布并同帧接管；不随鼠标重启。CPU/NVENC保留原配方，奇数尺寸用偶数编码/SAR恢复；2160p由编码器选level，旧尺寸维持5.1。
+- native-audio无损复制压缩音轨到有界stdout，逐包内容/PTS/DTS/有效边界/编码初始化核对；任务前后核对inspect的source.nativeStamp。零起点已验，其它形态保守回原声，源改变/取消不能静默回退。
+- Player先为收集/合并/Blob峰值预留，音轨上限剩余额度1/3且≤32MiB，完成按实际字节×2计费；关闭卸载、撤销URL、释放预算。播放不等待audio.play承诺才启动绘图，静止时钟不抢跑；暂停复用有效音频游标，显式seek清旧续播归属。
+- 原生热帧单次通知/绘制，预算按kind增量统计；暂停/热拖动用同一reader闲时补邻域，冷目标抢占。最多4096邻域帧、受RAM/像素/在途额度限制；后台不画面、不改标注身份、不无限重试。JPEG仅已完成热目标豁免80ms静默期。
 
-FilmCraft固定0.13.0/176e6a9c，MIT OR Apache-2.0；[native维护](../native/filmcraft/README.md)保留来源/补丁/许可。正式不读取开发工具或原型。冻结Beta配方不变。
+## 准备选择与取消
+preview-profile统一720p～2160p几何/身份，原生桥像素边界支持UHD及竖屏；格式与阈值的单一参数入口见[能力表](releases/motionote-capabilities.md)。
+media-policy只算策略，load-decisions一次一个选择并绑定请求ID/代次/AbortSignal，只有当前合法答复生效。换源/切模式/关闭使旧选择失效。
+JPEG选择在守护任务启动前，whole-proxy在完整复用核验后、取得写锁前确认大任务；拒绝/取消不留下挂起任务。非原生准确PTS容器显式转JPEG兼容选择；JPEG缺流级边界时有界读取整数packet PTS/末包duration，仍缺信息拒绝，不用平均FPS猜。
 
-下方E43至早期是历史实现/失败证据，其中分段生产/WebCodecs/PCM及低清不再用于proxy。共享旧模块未证明无引用前不整份删除。
+## 缓存、持久化与退出
+- cache负责JPEG文件所有权、真实路径、锁、预算和完整提交；proxy-storage独立管理整片资产租约/容量锁/LRU，不将独立代理计入JPEG5GiB。受管额度与OS/驱动进程占用不同。
+- 原生单读者GOP约128～192MiB，接管预留第二读者；帧、缩略图、YUV/RGBA、绘制表面及在途纳入账本。管道/驱动边界与采样另报，不假称程序硬上限。
+- whole-proxy失败先进入cleaning，等待受管进程停止，再核对realpath、owner token/pid、文件身份与白名单，只回收本任务未完成产物；确认后发布终态。失败保留锁及WHOLE_CLEANUP_FAILED，不把缺owner误当已清空；NVENC回退CPU前同样确认回收。
+- 清理保护当前源所有画质、活动读写和未知文件；进程归属以出生/后代/独占访问证明，不凭PID消失或锁年龄删除。文件整理见[F规则](development-plan.md#文件整理f-01f-07)。
+- Session等待实际取消、子进程/流/读者/租约/缓存收尾，宿主关闭请求不等同完成；未知结果/草稿保留。偏好、圈画和永久标注独立于可淘汰缓存；偏好原子保存、旧格式兼容和全部读写端见验证协议。
 
-## E43 低清供图与准确代理分离（历史，被E44替代）
+## 即时监测
+usage用异步lstat/realpath/opendir逐文件扫描，支持AbortSignal；单文件消失只跳过该文件，不归零既有累计。
+资源约2.5秒采样、磁盘至少5秒校准，不堆积扫描；关监测取消扫描/自有采样进程，源切换旧结果失效。相同事件不重算快照，等待时间仍每100ms更新。分类口径和验证见[工作流](performance/WORKFLOW.md)。
+Session仅在释放成功后将SELECTION_EMPTY映射正常empty；SDK/释放故障保持error，不隐藏故障。
 
-scrub-producer仅从现有FFmpeg管道连续读取最多15个原分段，校验原PTS/时间基，不写磁盘；scrub-background保留一个窗口及一个小批次，long-media.scrubSegment复用原cache独占批次写入、散列校验和租约。低清缓存使用独立scrub-fit-no-upscale-v1尺寸版本与scrub-preview-v1用途键；旧cache读写格式不迁移。新读者兼容旧普通版本，旧读者不能误读新尺寸版本。
-
-task-worker首个准确段完成后启动低清顺序覆盖，在低清preparing期间暂让完整代理闲时任务让位；前台准确请求不受该idle门槛阻止。低清结束/预算停止/失败后原完整代理后台继续。最多两个视频生产进程，只有一个缓存写入队列，64MiB稀疏缓存计入5GiB；非任意长片无限缓存。完整高画质仍逐段生成，本轮没有宣称其已变成全片常驻编码器。
-
-task-client只传播已校验租约元数据，读取经原cache-read-client，不通过守护JSON管道传图片；描述符与源租约绑定，关闭撤销读取能力。scrub-preview使用独立CPU Canvas及有界位图LRU，quick-preview仅在快速移动且非final时选它；原视频预览画布不强制CPU回读。准确画面提交立即取消/隐藏临时覆盖。输入队列最新优先，旧完成不能跨源/跨代次绘制。
-
-关闭顺序：stopScrub/quiesce立即停止管道生产→读取排空/本地detach→worker归还稀疏与准确租约→源释放。取消读取不删除已完成缓存，重开可验证复用。模块、失败及实际链路验证见[E43报告](experiments/E43/report.md)。
-
-
-## E42 历史调度与生命周期
-
-quick-preview以源帧区间定位最终请求，requestVideoFrameCallback在seek前注册；确认的mediaTime若先于可绘制状态，保留到seeked。最终目标拒绝未确认时间及邻近缓存，快拖近似策略保留。最终预览期限3秒、移动1.5秒，过期不阻塞正式画面；新目标80ms后可重定向。代理解码器原2秒限制不变。
-
-app通过Eagle hide先撤下窗口，performanceView销毁与session回收重叠；task-client beginClose发quiesce并取消读者，task-worker只停止生产，不释放借用。旧会话/隐藏回执完成后才能重开；失败重新显示。没有以kill/隐藏冒充成功释放。avc-access-units使用Buffer原生搜索，保持相同包字节与边界检查。
-
-自动冷区实验入口run-cold-performance使用独立自有缓存及运行快照；report-cold-performance只复算完整数据并导航到report总入口，不修改标准记录格式、基准或源素材。仍按段启动生成进程；常驻生产器未接入。见[E42报告](experiments/E42/report.md)。
-
-## E41 通路与兼容（历史，上节优先）
-
-proxy-decoder的flush只允许一个在途。新请求的8ms定时器若碰到在途flush，完成回调会为仍在decode阶段的请求补排，包括已经取消但仍占原生槽的工作；关闭/失败后不得补发。最多两个解码/转换槽、原2秒超时及帧身份/尺寸核对保持。具体回归见[GPU超时修复](experiments/E41/decoder-fix.md)。
-
-`ui.cursorTime`统一最新意图/Player目标；session将最终seek/step接入quick-preview，准确提交清除临时层。临时图仍在同一Budget内，重试有界；快拖近邻≤250ms且≤2秒，最终远跳拒绝旧位置，性能事件附targetDeltaMs。HTMLVideo仍解码原片，不宣称已经是低分辨率原生解码。
-
-新增`proxy-encoding.cjs`集中CPU/GPU配方与兼容条件。CPU旧身份不变，GPU recipe `nvenc-p1-qp20-v1`进入缓存身份；CUDA仅用于兼容色彩/几何源。NVENC全IDR输出走原AVC解析、源PTS/SHA、原子分段发布和租约。task-client/worker透传proxyEncoder；frame-pack精确白名单。preferences旧字段默认CPU/优先硬件，session释放旧owner后重开；app按解码偏好创建原常驻VideoDecoder。打包器纳入新模块。
-
-performance-core软上限触发drain，只收尾已有请求；采样前在途操作按明确边界排除，未知新身份仍无效。runtime和run-performance为写入端；save写自有pending目录、校验后发布，再由inbox换指针、index重绘。取消/截断/不完整路线不发布；IO失败内存重试，索引失败不重复发布。validate/entries/previous/import统一有效性检查，旧完整证据可读，旧不完整不入图。死进程临时文件仅凭确切owner回收。
-
-固定协议条件新增proxyEncoder，旧缺省视为CPU，字段补全只新建协议组而不修改旧manifest。工作区comparisons.json仅由报告生成脚本写本地导航，index限长/限同目录HTML读取，不创建标准记录、不混算独立实验与Eagle。原始事件/请求不随图表改写。
-
-关闭先放黑色遮盖再回收新布局；监测window.open请求frame=false/autoHideMenuBar，页头保留拖动区和关闭按钮，不使用全局Eagle菜单API。实际宿主、兼容盘点及实测限制见[E41记录](experiments/E41/report.md)。下方旧模块说明按历史条件理解。
-
-## E40 观测细化与窗口边界
-
-performance-view.js仅管理独立窗口及白名单消息；performance-window.html/js和performance.css在子窗口内渲染。监测关闭时不创建窗口、采样或检查定时器。子页不访问Eagle、文件或播放器，只以窗口来源和随机令牌校验动作。原app持有唯一monitor；退出等待保存并关闭子窗口。
-
-Player可选计时关联原请求及复用中的图像任务；session/task-client透传可选trace，segment-reader测分段租约等待，cache-read-client测读取往返与收到后的字节复制，proxy-decoder分原生解码与位图转换。原有两任务槽、校验/租约/清理和编解码参数不改。performance-stages按真实区间做排他分摊，避免父子计时相加；读取仍含内部校验/往返，传输仅Buffer复制，不能伪称纯磁盘或GPU上传。
-
-performance-inbox.cjs独立持久化pending.json版本1：两槽、递增修订、排他.next和原子替换，旧运行目录不可变。runtime为生产写入端；report/index、脚本latest/import/analyze为读取/归档入口，analyze只核销匹配槽。首次从旧完整未分析记录各取最新一项；重开读索引，不从被归档运行复活已清空槽。DEFINITION主版本1保留，request.detailVersion=2为可选明细，旧证据仍可复算。
-
-ready-review-v3只在预热后持有performanceIdleHold，排空已开始任务再记录RAM指纹；前台读帧/拖动预读保持，终止、失败、关闭恢复。旧v2单列，不能用协议改变宣称性能提升。正常播放与代理后台生成策略未改。
-
-
-## E-39 解释层、固定条件与范围显示（2026-10-27）
-
-performance-explainer.cjs只把同一时钟域的事件解释为当前现象和真实阶段时长；stage-begin补足在途等待，未覆盖部分以区间并集计算，不把重叠阶段加成总时长。performance-dashboard.cjs只生成面向用户的HTML/SVG/PNG视图；performance-report.cjs继续管理原始证据、校验、独立运行目录与聚合入口。工程追踪保存在原文件，报告页面不嵌入JSON或内部请求编号。
-
-performance-protocol.cjs保存test-conditions.json（version 1，最多32组），锁定源/配置/环境，使用独占暂存文件后原子替换。runtime先检查代理全部就绪，按固定轨迹准备一轮，再记录三轮；准备期间取消、关闭或条件改变不得继续进入计时。预热后要求任务归零、缓存300毫秒稳定，最多等待10秒；应用缓存的实际帧集合与顺序生成指纹参与分组，OS缓存与全机负载明确未受控。固定测试校验器核对288次实际输入的目标/场景/松手标记，缺失或夹入其它输入不能作为完整固定测试。
-
-报告schema 2增加可选benchmark/initialCache元数据，旧schema 1/2只读兼容，不改旧文件/hash。写入端为runtime、run-performance.cjs；读取端为report、dashboard、performance.cjs。新独立入口run-standard-performance.cjs锁定既有视频和工具配置的哈希，独立缓存全部准备后测量，与Eagle测试分组隔离，不复用已封存E38预算。
-
-proxy-background只导出published租约的readyRanges（起止秒），不加入帧字节；timeline-strip按当前显示范围绘制蓝条。prefs新showProxyStrip默认false；settings/ui与Session应用写入，工具栏写入保留该字段，普通旧偏好不重写也能读。媒体缓存格式、永久标注格式、播放调度与编码未改。
-
-## E-38 独立性能观察层（2026-10-27）
-
-performance-core.cjs只接收正式Player事件，不持有播放/文件能力；复用requestId/epoch并附会话代次、原PTS和提交身份。读取与浏览器解码阶段沿renderer单调时钟观察，已有调度/缓存/编码不改；quick-preview携带同次请求身份，低清提交单列。app.js只接线，按需加载performance-runtime.cjs；关闭状态不启用采样或文件操作。
-
-performance-runtime.cjs负责监测状态/333ms采样、配置与代码快照；performance-runner.cjs只在显式测试时按固定节奏调用既有seek/pause。performance-view.js/performance.css呈现黑底直角淡蓝界面；performance-report.cjs负责本地报告、可比性、容量、摘要与完整性校验。报告使用独立schema 2，首轮schema 1保留只读兼容，不改变媒体缓存或永久标注格式。当前写入端为runtime与run-performance.cjs；读取端为离线HTML及performance.cjs，analysis.md唯一由显式分析登记写入。
-
-安装环境仅写自身performance-reports；scripts/performance.cjs导入后写工作区artifacts/performance与docs/performance状态，不假设安装环境可写源码。不存在AI常驻进程/外传/自动接受基准。文件指纹包含实际运行源码，commit/dirty补充身份。完整性通过不是性能达标或AI原因正确。详见[工作流](performance/WORKFLOW.md)。
-
-## E-37 菜单定位（2026-10-26）
-
-颜色与橡皮交换方向，类型外圈在上、颜色外圈在下；显示与方向命中一致。圈画属性/颜色面板以各自触发按钮垂直中心定位到右侧；设置各级子菜单以父项中心定位，上下边缘限位并保留滚动。仅UI呈现，不改变保存/媒体/资源规则；真实Eagle待验。
-
-
-当前E-36拖动断连修复：用户确认“任务负责人异常退出：0”发生于拖动；隔离真实Windows管道复现密集位置消息使32项队列超时断开。位置/两类记录优先级改为各通道一条在途＋一条最新替代，worker接收后回执，不等待媒体完成；准确帧和取消请求保持原路径。5000次突发及Eagle纯Node16协议检查通过，真实Eagle窗口拖动仍待确认。此前取消/末帧与JPEG整片策略修复保留。
-
-E36宿主兼容：上一轮修复后用户仍遇到灰屏，实际日志确认renderer原生崩溃（0x80000003），尚未确定具体原生触发函数。现改为Electron renderer直接选有界兼容读取队列，不再试建Node Worker，元数据复制移除v8序列化。普通Node保留线程；校验、2并发/64请求和租约关闭屏障保持。兼容分支同步元数据检查仍在renderer，旧线程性能不代表此分支；真实Eagle恢复与流畅度仍待验。
-
-## E-36 跟手光标、临时预览与分层准备（本地完成，宿主待验）
-
-用户确认E35代理就绪后流畅，但未就绪等待与光标阻塞仍不合格，批准整体优化。E36已沿正式plugin接入意图光标、独立临时预览、准确记录静帧、只读线程及按预算分层预取。基础媒体和播放中记录定点复验通过，最终宿主体验待验。范围与证据见[E36计划](experiments/E36/plan.md)及[报告](experiments/E36/report.md)。下方E35/E34保留历史结果，不按旧缺口理解当前全部行为。
-
-### 正式模块与数据边界
-
-| 模块 | E36职责与边界 |
+## JPEG保留与退休模块
+| 模块 | 保留用途 |
 | --- | --- |
-| ui.js / session.cjs | UI持有最新意图光标，取帧及松手确认不使光标回弹；Session分别装配准确Player、quick及records服务，合并临时预览状态但不改准确帧/原SHA。构造中先register的能力即使后续工厂失败也须收尾；关闭等待Player和全部服务，再释放源租约 |
-| cache-read-client.cjs / cache-read-worker.cjs | 普通Node使用内置worker_threads；Electron renderer不探测构造Worker，直接复用createReadHost以setImmediate兼容队列执行。请求仅复制JSON元数据，不调用v8序列化；其它宿主仍保留明确能力错误的兼容分支。两路径都执行客户端缓存接入、文件身份/租约/守护核对及读取，最多2项并发/64请求；线程路径转移独立ArrayBuffer，兼容路径本机消息保留返回字节，均不走守护控制管。兼容路径的同步核验仍在renderer，不承诺线程隔离。detach等待读完，失败保留归属并报错，不降低原cache校验 |
-| quick-preview.js | 原视频HTMLVideo提供独立、可取消的近似预览，显示Canvas最大480×270；最多64张240×135小图，缓存上限min(8MiB, RAM/64)，与显示/在途资源先向同一全局Budget预留。精确提交、换源或关闭清除浮层，近似画面不成为保存/标注帧 |
-| record-previews.js / long-media.cjs | records独立于主Player解码槽，先可见记录再其它标注；最多96张240×135位图、上限min(16MiB, RAM/32)，读取/解码先预留在途与全帧资源，共用全局Budget。long-media按源ordinal制作准确单JPEG帧、不含PCM，原PTS及metrics.sourceSha256验证后提交 |
-| task-client.cjs / task-worker.cjs / proxy-background.cjs | target与记录优先级按素材＋类型分通道，每通道最多一条已发送消息与一条最新替代；worker接收即回control-ack再发最新值，回执不是媒体就绪。释放/关闭丢弃尚未发送的旧意图，可靠请求与取消独立；不逐次进入媒体任务队列；同段不反复中止。后台顺序为当前位置/方向近邻→可见及其它标注静帧/标注段→剩余顺序。记录优先级用每条≤20KiB的位图传输，适配32768字符管道上限；静帧最多32个保留租约，借读未归还不能淘汰或关闭 |
-| player.js / segment-reader.cjs | 保留原准确源索引、常驻播放解码器与最终提交守卫；压缩热点池最多8192项且≤RAM/8。扣除固定及在途余量后，将可用解码容量的75%用于方向近邻，最多4096帧，其余留给已访问热点；Player的RAM推测预读只接入已完成只读核验的就绪段，未就绪代理仍由后台调度准备 |
-
-准确记录静帧使用`record-still-jpeg-v1`派生键，含原SHA、preview、源帧编号/整数PTS/时间基准/结束值及颜色版本；同源proxybatch子事务、原子提交、租约及重开验证继续沿用，静帧与整段共用5GiB，后台保留128MiB余量。静帧采用普通JPEG缓存格式，不新增manifest/profile/永久标注格式，派生键不替代原素材SHA。JPEG播放方式与已准备资产读取仍保留；主动后台静帧预备当前在proxy会话运行。
-
-原视频原生预览不必先完成该位置的整段代理或PCM，但完整源SHA与源索引仍先核对，不能宣称所有素材秒开。快速预览按最新源epoch/请求归属提交，松手后仍由准确Player确认真实源帧；正非零源PTS按首帧PTS换算原生时间，不以metadata.duration猜测归零。显示/小图Canvas字节计入Budget，HTMLVideo内部解码、GPU及浏览器/进程开销未由该账本穷尽，RAM设置不是全进程硬上限。
-
-### 本轮实测、修复与剩余边界
-
-取消归属修复：segment-reader先等取消的旧acquire实际结束，再为新frame/PCM请求共用一个新租约；只对本地已中止且仍被需要的请求接管一次，不再对任意MEDIA_CANCELLED递归重试。segment-audio用播放generation区分旧PCM在途任务，新播放可在旧取消落定后重新读一次，停止/关闭后不继续预备下一音频段。task-worker将无独立code的AbortError规范为MEDIA_CANCELLED，已有清理/解码错误码优先保留；Player首帧失败不再丢失code。持久化格式、预算和界面均不变。
-
-四轮基础媒体保留两次VFR快速预览失败、第三轮基础关通过和第四轮新增记录并行失败。第三轮准确图延迟1500ms时240次输入光标P95为10.5ms、最长无更新36.5ms；CFR/VFR冷临时图120.9/88.2ms，实际条码正确。单独补充关f1c854d93642682d修复已有记录仍等writer的borrow/return队列，三图583.4ms就绪，播放5.2秒零缓冲；120次真实Player RAM未命中定位P95为21.1ms，RAM58.53Hz。读线程逐次验证和借用全部归还仍保持。
-
-已就绪bg静帧的纯借用/归还在控制入口即时计数；未就绪制作及需要文件释放的路径保留串行队列，淘汰开始前标记retiring，避免借出正在释放能力。独立浏览器的就绪信号装配曾遗漏，补成采样元数据后本地同步查询，与正式app直接查询契约对应；不能单凭此或快速借用修复唯一归因旧173.6ms缺口。详见E36报告及全部原始事件。
-
-原生预览的正源PTS换算、初始不匹配回调和最新目标保留已修；Canvas受管计费、record并发完成裁切及失败回收有单独模型。完整SHA/索引仍在准确操作前；原生编码兼容、真实Eagle Chrome108、物理音画和全进程/GPU资源尚待实际验收，不以合成短片推导长片全部性能。
-
-## E-35 缓存长会话（实现基础与阶段验证）
-
-E34的30分钟后台规模关两次失败后，按既有持续开发授权完成结构修复。E35自动关已通过：Node24及Node16各完整18项真实Windows Job中断/恢复，30秒、5分钟、30分钟有声对照及30分钟素材内10分钟连续播放；必要的真实Eagle集中体验、实际硬解和最终验收仍待完成。常驻播放解码器、Canvas、源索引/标注身份和JPEG模式保持，详见[E35计划](experiments/E35/plan.md)及[结果与限制](experiments/E35/report.md)。
-
-cache将根writer与分段子事务分离：同一排他锁内先完整恢复/盘点一次，各段保留原原子发布、哈希和租约，统一增量账本及递增使用序号，最终全根复核后释放。批量能力只在worker/long-media内部传递，不通过IPC或修改manifest。后台账本快照仅用于额度判断，不冒充全盘inventory、资产验证或删除授权。
-
-根batch-v1 writer保持不可变；两个各≤4KiB的current/next记录绑定真实当前段、原writer摘要、守护身份及先前current摘要，先落盘读回并原子替换，再允许新段输出。旧writer/恢复回执兼容，全部新记录的写、读、容量、恢复与清理入口一起盘点；缺少可验证current时不能猜目标或误删原件。实现及中断闭环以E35报告为准。
-
-恢复顺序先完整校验pending原reap及其中封存的current原字节/SHA、原writer/停止guard/文件身份，再续作该原计划，随后才收集新的孤儿；因此恢复自身已删current或writer后再中断也可重开。没有有效原计划而current坏/缺且有产物，仍保留并失败，不用firstkey猜目标。租约/current/partial/owner/ledger的预扣及实际失败退款计入同一账本，关闭失败不丢弃能力。
-
-前台缺失目标先取消后台并等待真实输出结束，可复用同源batch；已有段继续客户端本地读取。新source、JPEG切换、维护、背景完整/预算停止和关闭都由同一队列直接等待batch关闭，不能在队列内排入关闭后再等待自己。所有权未知或关闭失败不伪报完成。
-
-long-media在音频预热位置等于真实音轨绝对起点时省略第二输入seek，保留copyts/精确trim；后续仍提前两秒解码。此处修复AAC首576样本的实测差异，不改变阈值。带音轨的JPEG/AVC派生key追加audio-preroll-v2，旧错误PCM不复用；无音轨key不变，原recipe、manifest和永久标注身份保持。
-
-最终冻结cache为aa8ad2ea、long-media为b58d71a2。简单720p60重复合成源的30分钟场景完成源身份/索引prepare约2.812秒、后台整片准备约9分08秒；已就绪代理读取至提交P95约7.1ms、RAM拖动59.75Hz。10分钟观察零缓冲，300次PCM读取无空洞，四处PCM与完整解码逐字节一致。上述prepare不是完整播放器首帧时间；未生成位置的压缩帧字节返还仍约0.50～0.56秒，≤250ms低清预览尚未实现。10秒间隔的47次外部进程树RSS抽样峰值约1.29GiB，缺前三分钟且共享页可能重复，未测GPU或Eagle，不能据此宣称全进程硬上限、复杂VFX性能或P-03/P-04全项通过。
-
-## E-34 常驻播放解码与渐进磁盘代理（实现基础与历史验证）
-
-2026-10-25沿正式plugin接入H.264全IDR帧内代理与常驻WebCodecs播放解码器，保留JPEG可切换。源文件、永久标注与Eagle适配边界不变；E34当时范围、短/5分钟成绩及两次30分钟失败保留在[计划](experiments/E34/plan.md)和[报告](experiments/E34/report.md)，不由E35结果改写。下列模块基础继续沿用，批量writer及当前验证状态以上节E35为准；下方E-33及更早章节保留当时设计。
-
-### 新增模块与数据通路
-
-| 模块 | 职责与边界 |
-| --- | --- |
-| avc-access-units.cjs | 纯流拆分Annex-B访问单元，核对AUD、SPS/PPS、IDR及单帧8MiB上限；不访问文件或素材库，不冒称完整H.264解码器，实际图片有效性仍由原生解码确认 |
-| media-wire.cjs | 将完整源帧表无损压缩为整数PTS、共同时间基准和显式末帧结束值后通过控制通道传输；最多120000源帧、控制消息6MiB，恢复后重新验证，不降采样、不用平均FPS猜帧，不经控制通道传图像字节 |
-| proxy-decoder.js | 为Player复用Chromium VideoDecoder常驻实例，最多两项在途；原生输出转为ImageBitmap交原Canvas与RAM账本，取消或换源后的输出释放且不能覆盖新目标；必要时8ms后flush，关闭等待真实解码/转换收尾 |
-| proxy-background.cjs | 在worker内调度前台优先、可取消的后台分段准备；提交段后保留原缓存租约及小型描述，通过受守护核验的增量消息通知客户端；只管理生成和租约生命周期，不保留整片压缩图片字节或自行写入/删除缓存 |
-
-media在完整源SHA256、元信息及原始整数PTS核验后建立long-media会话：代理模式对短片和长片均使用分段路径，JPEG模式保留短片完整准备及长片分段路径。整片索引上限120000帧、64MiB，通信表示另受6MiB限制；两者均不是整片解码图像的内存承诺。原SHA继续作为圈画身份，派生段键不能替代它。
-
-long-media按约两秒/最多120帧制作baseline 5.1全IDR AVC，重复SPS/PPS及AUD，使用现有FFmpeg、CRF20/ultrafast、8bit 4:2:0与BT709处理；逐帧输出PTS仍须匹配源表。**常驻的是播放用的VideoDecoder，代理生产目前仍为每段启动的FFmpeg任务**，尚未采用整片单进程连续转码。首片就绪后后台独立逐段继续，不要求先播放一遍；声音继续使用原分段PCM与同一Web Audio时钟。前台定位取消后台准备后，须等原输出及任务真正结束再接续，不能并发遗留写事务。
-
-### 缓存格式、借用与关闭
-
-cache/frame-pack可选声明`videoEncoding={format:'annexb-idr-v1',codec:'avc1.xxxxxx'}`，对应逻辑帧名为数字`.avc`，物理字节仍通过原`frames.pack`、事务、逐帧摘要和偏移受限读取；缺省声明继续按旧JPEG格式读取，不将AVC伪装JPEG，也不改原recipe所有权命名空间。派生段记录原`metrics.sourceSha256`，仅在完整校验后用于保护当前源的JPEG/AVC段不被“清其它”移除。旧缓存兼容、异常恢复、原生文字及永久圈画格式保持。
-
-代理会话在同一5GiB磁盘总账本内保留所有已生成段的**原租约**，worker持有至整源关闭或模式切换，客户端以原任务负责人身份核验并借读；段字节留在磁盘，仅需要的压缩帧、解码位图和音频进入原有界RAM池。segment-reader目标3项的LRU在代理模式下只是借用读取窗口，淘汰窗口项不释放整源持有的租约、不重新发起写事务；JPEG分段仍沿原窗口租约释放规则。前台与后台同段结果合并，重复的新租约必须释放，晚到或过期段不能接入另一源。
-
-后台在可用磁盘余量不足128MiB时停止扩展并报告容量状态；代理和JPEG共用5GiB，不能各占一份预算，也不反复淘汰已准备开头制造“整片完成”。只有所有段均保留才报告完整。关闭/换源/模式切换先取消背景，再等借读、实际解码/位图转换、分段生产及全部原租约释放；清理失败保留失败状态与归属，不能虚报成功。浏览器/原生解码器、整片索引及进程/GPU内存另记，RAM缓存额度不等于全进程硬上限。
-
-preferences追加兼容可选`playbackBackend='proxy'|'jpeg'`，旧设置缺字段默认proxy；设置高级的“播放方式”支持选择帧内代理或JPEG序列。统一应用后依原源SHA恢复当前帧、圈画坐标及循环状态，设置区显示后台准备进度，不新增常驻提示或测试入口。
-
-### 完整清单解析备忘与安全检查
-
-cache只为完整缓存目录保留已验证manifest的冻结解析结果及资产表，按LRU最多4096项、对应原始manifest字节合计32MiB；返回的info及顶层metrics为浅拷贝，准备阶段可补计量，不能污染冻结canonical数据。每次仍完整读取manifest全部原始字节并做SHA256，核对同一打开文件及路径的精确身份、长度和前后时间戳；只有同路径、同预期源SHA、相同原始字节摘要且文件/目录身份一致才复用解析。内容改变、替换/重建或读取异常失效后回到完整校验，不以mtime或长度代替内容摘要。
-
-备忘不缓存writer、lease、partial或清理计划等可变记录，不赋予删除权限。每次仍核对owner、实际叶子清单、每个叶子的普通文件/唯一链接/路径与长度，以及当前磁盘总预算；资产读取时的逐帧摘要、租约与守护身份检查继续执行。已登记删除或重新发布会失效对应路径，格式和预算不因解析优化改变。
-
-inventory在同一次同步盘点中建立directory→已捕获叶子和directory→cache映射，避免每目录过滤全文件表、每lease遍历全cache；末尾逐叶子身份/长度、各目录及根readdir、预算与所有权重验保留。该关联修复当时没有消除每段begin/inventory/touch的全根I/O，E34的30分钟两轮均失败；后续由文首E35的长会话结构解决，不能将E35通过回填为E34逐段事务架构通过。
-
-### 尚未验证或实现的边界
-
-原生播放解码器配置`prefer-hardware`只是偏好，没有验证实际硬解/NVDEC生效；独立Chrome、本地Node与合成媒体检查不能替代真实Eagle/Chrome108运行或实际GPU性能验收。已就绪代理的磁盘读取测量包含Windows文件缓存，不称物理冷SSD性能。未生成位置仍须等待分段准备，**尚未实现冷定位≤250ms低清预览**；不能将就绪区域拖动结果外推到未准备区域、复杂长片或任意时长。E34历史证据保留，当前规模关、资源结果及宿主待验边界见[E35报告](experiments/E35/report.md)。
-
-## E-33 首版正式分段架构（历史，JPEG路径保留）
-
-2026-10-25分段JPEG未达到用户跟手目标，随后依[可行性评审](experiments/E33/decoder-review.md)开发上节E-34代理架构。以下保留E-33当时模块与生命周期；其中3段租约窗口不适用于E-34整源保留的代理租约，JPEG分支继续沿用。
-
-### 正式模块与数据生命周期
-
-app的延迟后台cache适配须完整转发readAudioSegment、target、cancelReads以及旧接口；后台在media.prepare时创建，不能提前捕获空backend。Session向Player绑定原始info身份，不能以复制后的帧清单替代租约持有者。
-
-- media保留短片原管线；长片在全文件SHA256及MP4元信息后转long-media。完整轻量包PTS排序建立源帧表，每一段解码PTS必须逐一匹配；不匹配拒绝显示。保留原SHA作为绘图身份，不用分段键替代源身份。
-- long-media按约两秒/最多120帧分段（VFR可因相邻帧间隔略长）；音频先有界解码尾部确认实际结束，分段输入预滚2秒并用绝对PTS显式裁切。每段最多64MiB/30秒准备，PCM输出4MiB保护。短片缓存30秒校验不移除，新长会话不冒充完整磁盘缓存。
-- 每个实际分段复用cache事务/帧包/占用租约，键包含源SHA、画质、段范围与颜色版本；分段清单的source.sha256是派生缓存键，metrics另记原源SHA，绝不作为持久标注身份。磁盘共享原5GiB账本/过期淘汰，正式源/标注格式不变。新worker长会话是内存句柄；关闭或进程退出即失效，重开重新验证源并复用完整分段。
-- task-worker串行执行；task-client通过segment-reader合并同段请求，本地校验读字节，控制管道不传图片。保留当前与后两段的播放窗口，闲置租约池目标3段；有读取者的段直到读完才释放。释放回执不阻塞已读帧交付，但关闭必须等待读取和释放全部结束。新定位取消不相关在途段，关闭取消且不重新提交；旧返回值不得覆盖当前帧。
-- 播放时经app/session/client提前准备后两段，不依赖可选的位图提前解压开关；循环只预取范围内的段。音频从实际播放位置而非已排程游标预取，避免超前挤掉下一段；推测加载失败不按每次动画帧重试。跳转取消后的过时后台帧不显示为业务错误。
-- Player保留原Canvas、索引、目标归属和RAM账本。长片不整片压缩预热；已有预解压开关下准备最多48个附近源帧，并按循环边界回绕。segment-audio最多保留6个可淘汰PCM段，实际播放中的音频源持有至结束；预留内存后读/解码，共用48000Hz AudioContext，按绝对时钟接续。供给不足暂停音画共同等待，不让声音独跑。
-- 旧完整缓存写入/读取/释放路径保持；新增分段写入端仅worker媒体事务，读取端仅客户端受限句柄与Player。旧绘图、原生文字、偏好和冻结发行无需迁移。Node模型、真实文件/工具、普通Node守护和独立Chrome验证见E33报告；Eagle Node16.17.1命令行模型与新模块语法通过；真实宿主体验另验。
-
-### 第一关历史候选说明
-
-候选window-cache注入load(signal,maxBytes)，最多一项在途；新目标取消旧请求但等待其真实结束，旧晚到结果释放；可见块保护，预留下一块额度后再启动，不够则淘汰非当前块，失败不无限重试。该模型没有接入正式cache账本/磁盘租约，不能宣称全进程资源有界。分段JPEG暂为后续候选，原始帧管道同样准确且部分完成时间更短，但传输量高；缺真实宿主解压/提交成本，未定性能胜负。
-
-第一关当时保留完整JPEG/PCM管线。当前按上节已接入，选择JPEG是复用已有颜色/解压与缓存路径，非性能对比胜出结论；全文件身份核验仍保留。参见[计划](experiments/E33/plan.md)。
-
-
-E-32界面迭代沿原模块边界：context-wheel在一次打开时构建两种外圈并复用节点，切换仅更新显隐/高亮，不重播根动画；drawing-ui分离工具选择和主动属性展开，graphite-shell先关闭设置再派发功能动作。共享轨宽/材质/高亮在graphite.css统一。该轮无新增数据写入端、媒体或资源预算变更。见[E-32报告](experiments/E32/report.md)。历史阶段说明保留。
-
-## E-19正式界面接入
-
-graphite-shell.js仅组合DOM、面板状态和缩略图租约；interface-icons.js提供静态SVG，graphite.css提供局部轻模糊的透明表面与短动效（E30替代无模糊决定）。UI依旧分发原手势和选区命令，app集中调用Eagle窗控，manifest使用无边框窗口。Session在原drawing draft中协调文字与圈画，文字提交确认后才保存圈画；部分成功重试不重复文字写入，结果未知沿原verifyComment核对。新增字段仅在内存草稿，原生文字、永久圈画格式不变。
-
-Player.paintThumbnail使用原帧索引和解码池，只在暂停且无待处理定位/解码时为缺失缩略图解码；播放时只用已有缓存。每张240×135画布占129600字节，视口最多10张，纳入原Budget；E30关闭记录保留最近预览，活动加保留最多20张且仍受原Budget约束；换源、标注变化和关闭播放器释放租约。缩略图包含图形及原擦除遮罩，不改变当前播放帧。此项不证明真实宿主响应提升。
-
-2026-10-22 E-16沿原边界：context-wheel承载模式短点/层级/输入取消，ui分发选择端点/确认和标注保存，菜单活动依赖只用于Esc优先级。loop-selection允许同帧草稿但不提交同帧循环，完整未改旧范围也确认，未齐取消/同帧清除。drawing-ui仅暴露四项/类型子项和原编辑事务，HTML/CSS移动文字框并由ui镜像草稿，不额外写原生标注。Preferences兼容可选drawingToolbar，Session新增纯设置入口、其它设置入口保留字段；不重建播放器/改变标注固定帧。圈画数据/媒体缓存/预算与SDK边界不变；完整读写/中断盘点及证据见[E-16记录](experiments/E16/report.md)。
-
-2026-10-22 E-15：drawing-erase是无DOM/文件/SDK的纯几何辅助模块，由drawing-model验证输入/输出；按实际长宽比计算线条与圆头擦除胶囊的接触/覆盖，压缩新轨迹并保守证明完全擦除。drawing-ui只提供SVG文字getBBox、显示比例和原有Session提交；无法证明擦净时保留，计算超过有界工作量则拒绝该预览并保留最后有效状态。HTML及未来打包白名单同步，原erasures格式/存储限额/Store原子修订与读写边界不变，见[E-15计划](experiments/E15/plan.md)和[报告](experiments/E15/report.md)。
-
-2026-10-22最新：E-14沿原边界接续：新增context-wheel纯右键输入/DOM模块，由ui分发既有选区/标注/圈画/循环命令；drawing-ui暴露菜单操作并默认折叠原工具条。screen-gestures/ui支持仅水平的选区模式，ui把画面输入交给原loop-selection。高倍速Player继续音画时钟、从同轮已解码帧选择不晚于当前时刻的最新画面；开始的快放读取可完成并进入原有界池，暂停/逐帧仍走准确请求。画质过滤仅为UI规则，不改持久数据/缓存格式或媒体架构。 范围与结果见[E-14计划](experiments/E14/plan.md)及[报告](experiments/E14/report.md)。下方为此前记录。
-
-2026-10-22 E-13局部补充：Player按刷新间隔/倍速映射预读源帧，150ms欠载改为停止声音与时钟/固定目标/到位恢复；恢复受原epoch/playToken保护，准确逐帧/两任务/RAM账本不变。preview-profile新增1440p，共用动态缓存身份/限额；preferences新增兼容可选drawingFadeSeconds，Session控制应用但纯显示不重建媒体。drawing-ui复用画布测字、nowrap输入/局部删除，drawing-model按实际帧支持零淡化；screen-gestures/UI区分短点、拖动、长按并摆放反馈。没有Eagle/媒体逻辑混入UI，未改永久标注格式、颜色处理或冻结发行版，见[E-13记录](experiments/E13/report.md)。
-
-2026-10-22实现：drawing-model增加有界erasures及源帧/淡化计算；drawing-store兼容可选nativeLinks，drawing-session同帧共享组、删文字保图。Session核对原生文字再提交本地，未知只核对；本地丢回执独立读回，不覆盖竞争版本。screen-gestures/screen-gesture-ui只连接既有Session；Player仅将步长算术扩为千分位，媒体/缓存/预算不改。新文件纳入后续打包白名单但未重建冻结包。验证见[E-11](experiments/E11/report.md)/[E-12](experiments/E12/report.md)。
-
-2026-10-22获准局部演进：E-11保留drawing-model/ui/session/store职责，引入对象局部擦除及同帧多原生关联的兼容格式，Session通过Eagle适配层核对原生写入，不能声称跨库与本地存储原子提交。E-12另设手势状态机/输入展示层，不接入解码缓存；边界见[E-11](experiments/E11/plan.md)、[E-12](experiments/E12/plan.md)。冻结版本不改。
-
-2026-10-20产品约束同步：以[当前产品定位与设计原则](product.md#当前产品定位与设计原则)指导后续设计。产品是“给特效师的播放器”，缓存、解码和资源预算是实现手段；模块与数据依赖不等于强制用户按固定流程使用工具。当前仍以plugin为唯一正式实现，本次不修改阶段3B架构、模块边界或技术选型。独立版及远期AI仅沿用既有愿景/计划边界，不新增实现或数据上传授权。
-
-2026-10-20 E-10交互补充：同类命中/四角及箭头端点、无重做的有界历史和样式校验放drawing-model；瞬态空文字/拖动预览不混入已提交对象，drawing-ui只经Session发操作。drawing-session协调共享颜色/逐工具宽度及字号，drawing-store新增独立styles修订（color/widths/size，严格校验、默认懒读、原子提交），仍用现有owner协议；旧视频记录/visibility格式原样兼容，不重写旧数据。工具设置失败保留旧版并提示，不重建视频缓存。坐标换算使用CSS实际显示矩形，工具栏/属性与就地文本绝对定位不改变picture布局；侧栏只控制展开状态。真实文件/Session/DOM验证见[E-10报告](experiments/E10/report.md)。
-
-2026-10-19 E-10实施边界：新增纯绘图模型、独立SVG透明绘图UI、Session协调与注入的永久存储；Eagle SDK仍只在eagle.cjs。annotation-data与cache/export-work分离，发布/Git排除。持久记录以库上下文+itemID隔离，绑定源SHA及源帧，不将平均FPS或请求时间当显示帧；更换源内容保留旧记录而不套新画面。不更改既有颜色/播放器/导出管线。持久化owner=eva-drawing-store-v1，严格字段/源帧与原生时间分开校验，以排他硬链接提交修订并保留最新两份，无长期写锁；文档和显隐配置均由drawing-store唯一读取/写入。绘图、移库/重载/关闭和未知删除均有保护，实际结果见[E-10报告](experiments/E10/report.md)。 详见[实施计划](experiments/E10/plan.md)。
-
-2026-10-19：加速键V改为C，仅调整UI键位/帮助及测试；无Session/Player/缓存/偏好结构变化。上下视频要求读取Eagle当前视图及排序，公开接口不足以保证，内部读取方案经说明后用户明确暂缓；未引入该依赖或更改既有适配边界，详见[E-09记录](experiments/E09/report.md)。
-
-## E-08追加实施边界（2026-10-19）
-
-倍速校验/整数单位步进由Player公开纯辅助函数复用，UI仅通过Session调用setPlaybackRate；连续速率意图有界合并，沿Session/Player代次保护，不新增媒体队列或缓存预算。偏好仅追加可选rateStep字段，读旧值默认0.1、原子保存与文件边界不变；Session仅控制设置应用路径保留位置/范围/速度且不重建媒体。N及S/E复用按钮相同的Session入口和禁用/未知结果/目的地规则，不直接从UI访问素材或文件。具体结果见E-08报告，不把新的4×控制范围当成全素材性能通过。
-
-## E-08时间轴显示边界（2026-10-19）
-
-本轮按[E-08计划](experiments/E08/plan.md)在UI层统一可见时间映射、裁切和自适应刻度。循环真值及源帧定位仍由Session/Player负责；L显示联动、R编辑临时整段不修改源索引、缓存/导出范围或音视频时间。页面辅助模块按HTML顺序加载，不能用宿主相对require。拖动固定映射，显示范围切换只重画有限刻度、标注位置及既有绿条，不增加媒体任务/轮询或修改持久记录。具体检查与实际结果另记E-08报告。
-
-区外标注关闭循环的追加批准在Player既有annotation定位中同步判断真实目标ordinal并关闭loopEnabled，保留端点；不由UI先await关闭再发定位，因此仍受同一次Session控制和Player代次取消保护，不会自动恢复播放或对新视频发迟到操作。transport新增只读endBoundary来自既有真实循环结束边界，供UI包含最后源帧；不新增缓存字段/格式或估算固定FPS。
-
-## E-07源导出与标注完善边界（2026-10-19）
-
-用户追加批准原生标注自动同步与Enter保存。Session拥有当前素材的只读串行读取/一个最新待载入请求、可见性和1秒调度；app仅接Eagle显示/隐藏，UI仅传窗口可见/返回事件及键盘操作。适配层仍独占SDK读取。初始/后台读取共用同一在途槽，15秒只报告等待，不假装取消SDK后重复派发；失败按2/4/8/16/30秒退避。隐藏停派发且丢弃后台晚到数据，关闭清调度/超时提醒、不等待不可取消的只读IPC；换片/换库由epoch及源ID/路径保护，最多保留最新一次载入读请求。无需媒体/缓存变更或新增持久记录。
-
-比较ID/时间/文字/可用版本，未变保留原列表引用；同步保留草稿，原目标发生外部冲突时转为不可保存但可复制的状态。保存/核对前后增加写操作代次，丢弃写入前拍到的旧读取快照；当前素材的已发出/未知写入期间不自动读回判成功，仍须原只读核对流程。UI保护组合输入与刚结束的选字事件，冲突到达时不覆盖正在组合的文字；保存成功恢复时间轴焦点且不抢其他窗口或新素材的焦点。其余全局焦点策略留功能包3。
-
-复用A-07同一守护/worker及既有串行队列；新增export/publishExport/discardExport控制请求只带当前lease、源帧ordinal/范围与目的地，不经IPC传图片/整段视频。export.cjs负责只读源文件、源SHA/身份复核、原尺寸PNG或高质量MP4、有限暂存与本地原子不替换发布；Frame/PCM缓存仍由cache独占管理，UI不增加文件/FFmpeg访问。新模块的输出职责仅限本次用户导出，不取得预览缓存或素材库任意删除权限。media只额外公开既有RGB换算，预览配方与缓存格式不变。
-
-eagle适配层扩展官方文件夹读取、保存对话框、addFromPath及标注updateComment/removeComment；导入新取Item核对目标文件夹/名称/内容SHA，超时或响应丢失先读回、不重发。标注按ID及原文字/时间/可用lastModified版本预检，仅发送目标文字字段或指定ID删除；SDK未提供跨程序原子比较更新，不能承诺消除第三方恰在预检后改写的竞态。新增导入/改删的真实库写入测试仍需具体授权。
-
-Session固定实际显示帧与已确认范围、暂停、管理可取消任务与已发出写入的区别，过期结果不恢复新素材/关闭UI。取消会等待原有任务组内FFmpeg退出和流关闭后清本次输出；保存已发往Eagle只能等读回/核对。已确认保存后的清理失败单独提示，不重复保存。plugin/export-work归属/每次job与结果独立，累计1GiB，未知中断保留，不能接入预览缓存清理事务或成为视频打开门禁。输出兼容/强退及实际宿主结果见[E-07记录](experiments/E07/report.md)；冻结Beta、A-01～A-08和已验范围不变。
-
-## 当前演进范围与架构边界（2026-10-18）
-
-用户确认后续主线按功能包推进：**1 导出当前画面/所选片段与标注修改删除 → 2 时间轴刻度、可读性与快捷键 → 3 自动半隐藏悬浮侧栏/设置及底部时间轴UI → 4 画质、准备速度、资源稳定性与兼容性 → 5 远期AI片段分析与节奏时间轴**。方向与依赖见[路线图](roadmap.md)，执行及集中验证见[开发计划](development-plan.md)和[验证协议](verification.md)。本次仅更新规划，不表示上述功能已经实现、验证或选定技术方案；下方既有架构与A编号决策保持。
-
-继续维护plugin/唯一正式实现，UI经Session协调操作，素材库调用仍只由Eagle适配层执行，媒体处理、缓存文件管理、设置持久化及播放调度沿既有职责分离。后续导出与标注改删必须在这些边界内设计；导出来源/格式/位置、精确片段处理及标注并发更新等未协定行为在实施前及时沟通，不由本段选定实现或扩展素材库写入权限。界面重排不能把媒体准备、文件写入和Eagle API重新混入UI，也不因极简删除已要求保留的当前视频RAM信息。
-
-局部放大与平移移出开发主线；附近原始像素预读仅保留候选，不等同于当前JPEG周围解压。整段无损暂停，拖动轻量/停下补高保真暂不开发。远期AI未选服务、模型或数据发送方式，不能视为获准引入依赖、上传素材或增加常驻后台。重大模块/持久格式/资源或测量边界变化按原规则先说明原因、证据及替代方案；遇重复失败或更优路径主动与用户商讨，不为赶进度默默变更。
-
-功能包集中交付不改变内部按小范围检查的要求，也不将性能优化排后解释为延期处理数据安全、资源失控或影响正常使用的阻断问题。冻结MVP Beta及原始实验/发布记录不改写；下方旧日期的“下一步/待接入/未授权”仅对应当时，当前范围以上述路线和progress为准。
-
-## E-06播放控制扩展（2026-10-18）
-
-UX-01～03：提示在screen内绝对定位，控制栏不因编辑态换行，避免占用视频布局高度；滚轮只由ui在画面/时间轴接收并复用Session.step或选区step，不读帧文件或创建新调度。显示/输入设置沿preferences（4KiB原子文件）→Session快照→UI，新增wheelFrames/showCacheStrip两个可选字段，旧记录默认1帧/显示绿条，旧save调用保留当前新字段。正式文件读写仍只在preferences，Session转发统一应用；仅UI/绿条/主动解压且RAM/画质不变时暂停并原位应用，不重载Player或重置未变的预读。隐藏只停绿条绘制，缓存准备/范围/标注保持。封存原型/外部Beta不共享正式开发设置，不为本轮改写。
-
-选区交互修订：loop-selection.js为UI层临时输入状态机，管理R短/长按、未确认端点和取消，不读文件/素材；ui.js仅做DOM/指针接线，经过Session调用Player.loopFrameAt映射真实源帧，再复用seek预览。双端确认调用applyLoopRange，一次性提交范围并从起点播放，不逐端修改正式范围；起点画面就绪前保留旧范围，会话/播放代次失效不提交、不续播。取消通过显示帧定位取代未完成请求，不能只调用不取消定位的pause。草稿不入偏好/磁盘，旧缓存/音频核心与模块依赖方向不变。
-
-同一Player管理源帧范围、播放倍率和音画时钟；UI只调用Session，Session保护素材epoch/标注编辑，应用RAM或画质后按同源SHA恢复传输控制。循环按源帧end边界映射时钟，前向预读跨范围末端；原欠载停声、两图像槽和周围缓存预算不变。
-
-沿既有Web Audio使用source.playbackRate与原生loop，不引入依赖或每轮重启进程/生成缓存。音频覆盖范围完整时复用原AudioBuffer；循环包含原音频前后静音区时才建立单个有界补静音缓冲，计入原Budget，在暂停/改速/改范围/换片/关闭时释放；绝不每次循环新增缓冲。视频与音频同倍率，偏移等待按倍率换算，不做保音调。循环后的时间映射仍以音频时钟为准，无音频用原单调时钟。
-
-API依据：[Web Audio 1.0](https://www.w3.org/TR/webaudio-1.0/)、[AudioBuffer](https://developer.mozilla.org/en-US/docs/Web/API/AudioBuffer)、[原生循环](https://developer.mozilla.org/en-US/docs/Web/API/AudioBufferSourceNode/loop)。规范支持不等于当前Eagle真实音频验收，最后集中体验。
-
-## E-04/E-05中心窗口调度修正（2026-10-18）
-
-同一Player按实际源时间规划最近的连续帧窗口，保留原固定资源/压缩池/两个前台工作余量。后台仍最多一个任务，空闲时每次有限替换窗口外最远位图；当前显示/目标及近期播放供帧受保护。光标变化使旧计划失效，前台不等后台，固定中心不形成替换循环；关闭开关保留按需策略/已有位图。不新增进程、预算、磁盘格式或媒体处理。
-
-细绿条显式object-fit:fill以覆盖视频canvas的contain继承；UI独立50ms采样，未变不画，尺寸只在初始化/resize重算，正常画面快照不扫描缓存。范围仍按真实帧时间、不跨越实际未缓存空洞。以上替代上一版仅向后填充及250ms采样实现，不改冻结Beta。
-
-## E-04/E-05实施边界（2026-10-18）
-
-沿用同一个Player/预算与两个图像在途槽；前台目标优先，额外铺帧最多一个任务且不得为铺帧连续淘汰旧帧。默认开启的主动准备在播放器就绪后执行，不阻塞首帧；JPEG预读也须让出前台任务，配置同一preferences原子记录。绿条只读Player的实际位图集合与源帧时间区间，UI不读取磁盘/像素，单独限频采样，不将整套位图状态塞进每次绘制快照。中断仍按原epoch/真实任务结束释放。新配置字段须兼容原百分比/额度/画质记录并验证保存重开；缓存磁盘清单不新增格式。
-
-
-持久化新增forwardPredecode的唯一读写端为preferences，app创建Player时注入，session只改开关时就地暂停应用；兼容旧百分比/ramMiB/previewQuality记录，失败保存不得改变当前值。磁盘清单/像素版本不变。1080p H.264/VP9的filter_threads分别4/2，其他保持原值；依据见[E-04对照](experiments/E04/report.md#首次生成小对照)。绿条版本仅随位图新增/释放改变，UI独立250ms采样，普通画面快照不枚举位图。
-
-## E-03 批准行为的实现约束（2026-10-18）
-
-EV-10～12接入沿用现有模块、JPEG和停止交接架构：尺寸计算为纯规则，preferences持久化设置，session负责暂停/释放/恢复源帧，media生成对应尺寸，cache统一负责双档身份、5GiB计量、占用/清理/恢复，UI只提交设置。配置格式需兼容旧RAM/百分比记录；缓存新变体必须与旧720p隔离且仍可安全识别、盘点及清理，不能建独立预算或第二个任务负责人。具体实现与验证见[E-03记录](experiments/E03/report.md)；不改已发Beta，不重新选择渲染架构。
-
-| 持久化内容 | 写入端与读取/恢复端 | 兼容与边界 |
-| --- | --- | --- |
-| memory-settings.json新增previewQuality | preferences单一原子写入/读取，app注入session | 旧百分比/ramMiB仍只读兼容；新格式旧代码不保证可读，代码回退不自动回退用户设置，外部冻结Beta不共享此文件 |
-| manifest.preview及变体目录 | media生成，cache提交/复用/盘点，task-client跨进程接入，session/UI读取尺寸 | 老recipe字符串保留为所有权命名空间；新的尺寸规则版本＋档位生成不同目录后缀，绝非两个独立5GiB预算 |
-| writer.previewQuality | cache.begin写入；recencyRepair/verifyReapRecord恢复最近使用事务 | 旧writer缺此字段按旧目录；新旧lease路径、清理计划/回执、根盘点均识别三种合法后缀，未知仍保护 |
-
-双档不同时驻留RAM；切换仍先释放旧Player，再按同一RAM设置建立当前档。回退实现时须保留新格式识别/安全清理，不能直接用旧程序打开混有新变体的开发缓存，或删整个缓存来掩盖兼容问题。
-
-
-2026-10-17 EV-09局部颜色缺陷修复，2026-10-18限定验收收尾：仍由media负责源转图、cache负责文件、player负责显示，不更换播放/缓存架构。颜色字段缺失时沿用Chromium108的SDR推断，显式字段优先；先形成RGB，再按JPEG601全范围编码；sRGB画布明确声明。manifest新增colorVersion，不改owner/recipe/锁格式；当前素材旧版本在核对清单/指纹/占用后使用现有事务清理重建，未知/在用保留，新原因obsolete-color-cache沿全部清理恢复入口读取。详情与限制见[Evolution收尾](experiments/Evolution/report.md#颜色专项最终收尾2026-10-18)。保留JPEG q3/420及Canvas；不采用实验captureStream输出、调色/锐化或精细JPEG默认。颜色前置关卡已解除，E-03具体规格已由EV-10～12确认，不修改已发Beta。
-
-## 发布后重评边界（2026-10-17，历史）
-
-本节保留当时的重评与实验边界；整段无损暂停、E-03接入及后续实现以本文上方已采用记录和当前范围为准，不据本节重新启动旧实验。
-
-已发布实现仍为C及A-01～A-08，不因[路线图](roadmap.md)讨论改变技术选择。用户当时批准优先验证整段无损预览、保留有损轻量方式及条件成立时的模式选择；后续已授权E-01/E-02隔离实验，结果见[实验记录](experiments/Evolution/report.md)。当时正式实现未改，尚未选择PNG/WebP作为正式格式、修改正式缓存格式或批准E-03接入新的播放链。
-
-E-02比较同一源帧、尺寸和颜色输入的编码质量与资源；E-03前依据结果明确处理配方、源帧映射、格式/尺寸/方向/色彩标识、旧缓存读写/清理兼容、设置及资源分配。当前生成/校验/读取的JPEG和720p假设需完整盘点，不能只改扩展名、像素尺寸或RECIPE常量；旧记录不认识新格式时不能靠全删缓存回避迁移。继续沿用窗口/后台交接、唯一素材API入口和帧调度边界，无证据不大规模重构。
-
-如果实际选择新的无损编码或双画面来源，再新增正式架构决策，包含收益、代价、回退及批准状态。当前“停下补高保真”及附近原始帧预读仅候选，不是新的A编号决策；后者可局部缓存源解码像素，与当前JPEG相邻帧预读不同。公开AE/PR实践支持思路，不证明Eagle实现、缓存算法或性能达标。较高画质的RAM配比/预算与性能必须实测，不从像素数或文件压缩比直接外推。
-
-## 已发布架构与演进历史
-
-2026-10-16随后HEVC模块内优化：真实只读管道的1/2/4缩放并行度比较显示4线程更快且全部JPEG/PCM/PTS摘要不变，因此仅HEVC缩放1→4，输入8/编码2及H.264/VP9原参数保持。不是增加视频并发、RAM额度、降画质或改变架构；完整窗口随后在喜多郁代三组首次/复用及实际Canvas核对限定通过，见[结果与边界](experiments/T4/report.md#2026-10-16-hevc完整准备与实际画布核对通过)。三种代表编码完整P-03已补，当时后续计划新后台长期验证，现按批准的短回归/长期待验边界收尾，未因此宣布整体架构资源验收通过。
-
-2026-10-16模块内修复：stream声明结束不晚于末帧PTS时，media用同一解码管道显式末帧duration定末尾，缺少可靠duration报错，不按FPS猜；正常有效声明/旧完整缓存规则不变。Player暂停时前后各3帧预读、优先最近逐帧方向，仍一个后台槽、两个图像任务及原RAM账本。UI经session发逐帧请求，帧数取实际已提交ordinal。用户批准【/】及当前/总帧数，见product；属于既有C/A-08内修复，不另选架构。证据/反馈及未验边界见[T4记录](experiments/T4/report.md#2026-10-16-末帧边界修复与逐帧体验)。
-
-架构基线：v1，2026-10-10。用户批准本对话中的“3B 最终架构总审版”，并在批准前修正缓存目录为**实际插件目录下的 cache，完整和临时缓存均不得位于 C 盘**。本文件落实批准结果；产品行为以 [product.md v1 及已批准补充](product.md) 为准，阶段状态见 [progress.md](progress.md#阶段-3b-架构收尾)。
-
-本次批准的是设计与验证边界。3C 的[测试协议](verification.md)与[开发计划](development-plan.md)已获用户验收；2026-10-11 用户另行整体授权阶段 4，当前从 T0 建立可复用核心与独立测试入口。正式缓存管理、有限并行性能、淘汰、锁及异常恢复仍以实际验证记录为准；旧原型和原始证据保留，不改变架构 v1 或 A-01～A-03。
-
-2026-10-11 用户批准的空格播放／暂停、拖动时间数字和极简主画面与侧栏属于界面补充：沿用 UI → 会话 → 播放的数据边界，时间提示读取实际已提交帧，输入保护及验收在上述 3C 文档中落实。常驻秒刻度后续再考虑，媒体、缓存、音频方案及下方已批准架构核心保持不变；3C 完成条件自查见 [进度](progress.md#阶段-3c-交互补充与最终自查)。
-
-## 总体方案与决策依据
-
-2026-10-11 采纳补充 A-04：用户完成三项短对照及两候选人工操作，明确认为流畅度合格、批准采用并继续阶段4。依据同素材完整短记录，采用 `compressed-ram`：最多64MiB的已校验JPEG预载池与解码图像、音频、复制/在途资源共用512MiB。仍仅在rAF提交最新目标，不叠加`ready-submit`。本素材全池60.87MiB，其他素材允许部分覆盖；超出池容量的图片仍经受限磁盘读取。池在首帧就绪前准备，成本纳入P-03，切换/退出等待真实任务后释放。正式UI无模式开关。证据与局限见[T0采纳记录](experiments/T0/report.md#两项对照核对与用户人工验收)。短对照和用户体验验收不替代正式多轮量化关卡；下段保留此前试验授权的历史状态。
-
-2026-10-12，T1修正部分覆盖时的池内替换实现：首备仍在原预算内预读；后续经受限读取及内容校验的JPEG，在真实解码结束、在途预留缩减后进入同一字节计量池，按最近使用替换。已完成读取但目标过期且未进入解码器时，同步转移该读取预留并保留JPEG，不执行过期绘制；跨素材仍先失效任务。保持≤64MiB、合计≤512MiB、两个图像任务及rAF提交，不更换格式或提高预算；首次访问未驻留帧仍需读取及解码，不承诺全段即时命中。[本轮修复与诊断](experiments/T1/report.md#完整缓存关闭与后段拖动修复)区分实现回归、独立浏览器测量和Eagle人工验收。
-
-T2额外UE素材回归发现首轮部分覆盖的连续冷尾段：在A-04原预算/数据流内调整预读集合，优先首末帧，再逐层细分帧区间，按实际字节纳入；选定后按源顺序读取。整段能容纳时仍顺序全载，不等大小或过大单帧不突破容量。此为池内选择的实现调优，不保证未覆盖帧即时读取或改变VFR时间映射。会话只读快照另直接取当前就绪Player，避免后台任务结束后诊断仍持有旧资源状态；切换/关闭代次保护保持。旧真实失败、模型检查及新宿主待验见[T2专项记录](experiments/T2/report.md#新增真实宿主回归失败与定向修复)，不将代码完成写成性能通过。
-
-T0试验补充（2026-10-11用户批准）：在512MiB内分别对照压缩JPEG内存池与就绪受控提交；后者仅在显式试验模式下可偏离基线仅rAF提交。默认及正式架构选择不变，尚未取得宿主改善/正式采纳结论。范围、测量差异、回退与证据见[T0定向对照](experiments/T0/plan.md#待审定向对照固定512mib区分读取与提交时机)。
-
-采用 C：**统一 720p JPEG 缓存画面 + 实际 PTS 帧索引 + PCM 音频 + Web Audio 音频输出时钟**。自动准备整段素材，完成后显示第一帧并暂停；播放、拖动、逐帧和标注定位使用同一 Canvas（画布）。JPEG 在磁盘保存，读取后仍需解压为像素，已解码图像放入有上限的 RAM 缓存。
-
-保留 Windows Eagle Window 环境、HTML/CSS/JavaScript、Node 内置模块和现有 FFmpeg/ffprobe；不新增 TypeScript、前端框架、构建工具或第三方依赖。兼容已测 Eagle Node 16.17.1 / Chrome 108，缺少现有媒体工具时提示，不自动安装。
-
-预处理沿用 S1 已验证的一次视频解码链，同步生成 JPEG 与 PTS 索引；音轨按共同时间关系提取为 PCM，不为索引和图片分别重复解码视频。
-
-以下是本文件内的核心决策记录，统一保留问题、候选、证据、推荐、风险和重评条件，不另建重复 ADR 文件。
-
-| 决策 / 问题 | 候选及取舍 | 已有证据与正式选择 | 风险 / 重新评估条件 |
-| --- | --- | --- | --- |
-| A-01 播放、音频和逐帧如何统一 | 原视频播放 + 缓存分析可复用浏览器播放，但需处理两个画面来源和时间切换；C 共用画布，帧身份统一，但增加图像解码、调度和音频时钟责任 | S1 已在真实 Eagle 输出缓存画面/音频，用户本次未观察到不同步；采用 C | 慢解码可能长时间无更新；完整声画/编码验证不达标且无法解决时重评，不静默改为普通播放器 |
-| A-02 缓存格式 | JPEG 可独立访问每帧，已有测量；WebP 值得比较压缩率与解码成本，但无本项目数据；全帧内视频仍需解码和准确取帧验证 | 采用 720p JPEG，q=3 为初始内部参数；不维护多策略框架 | JPEG 有损且仍需解码/上传画面；颜色、细节、生成或播放成本不满足验收时，先定位瓶颈再重评格式 |
-| A-03 资源与取消 | 全帧解码常驻 RAM 容易超预算；保存残缺结果以续建增加完整性和恢复复杂度 | 采用持久完整缓存 + 有界 RAM 淘汰；未完成任务取消后清理，下次重建，完整有效缓存复用 | 正式淘汰/锁/恢复尚未实测；无法容纳时明确失败，不放宽预算、误删或后台继续旧素材任务 |
-| A-04 拖动读取与提交优化 | 分别比较原基线、压缩JPEG驻RAM、就绪受控提交，不叠加 | 2026-10-11用户人工认可并批准采纳；同素材短测压缩池86.33有效观察/秒、最长34.90ms，采用最多64MiB池且共用512MiB，保持仅rAF提交 | 预载增加准备成本，其他素材可能仅部分覆盖；完整多轮/P-03和正式UI回归仍待验，不以短测认定全项性能通过 |
-
-预览保留画面比例、方向并处理色彩元数据；帧身份与 JPEG 压缩产生的视觉差异分别验收。特殊色彩/HDR、高位深、复杂 MP4 编辑时间线等列入验证风险，不据此擅自增加产品输入硬限制。
-
-## 模块、依赖与数据流
-
-### A-06：固定RAM档位与空写锁恢复（2026-10-14）
-
-用户随后确定完整缓存闲置1天自动清理及侧栏“清除其他视频缓存”，独立设置页留后续。begin在恢复/盘点后，沿原排他事务与cleanup-plan/result链执行过期清理；当前target和全部有效lease保护，未知/未来最近使用时间保留。clearOther经session暂停/固定当前sourceSha256后调用同一事务，清理其他可安全处理的完整缓存。先核对全根、全部候选及清单/回执空间再删除，仍计5GiB，不能删除缓存来腾出自身清理记录空间；清理中断沿原计划恢复。不存在插件未运行时的定时后台删除；实际在下次载入/重试触发。最近使用记录由成功复用/发布touch更新，lease存续期间始终保护，不以磁盘mtime代替使用记录。
-
-用户明确将A-05百分比设置改为512MiB及1～10GiB下拉档位，默认1GiB；preferences保存owner/ramMiB，只读兼容旧percent并提示最接近档位。UI经session.setMemoryMiB调用；旧暂停/固定当前素材与时间/等待真实释放/重载/保持暂停和1/8池比例不变。高额度仅为可选配置，不代表已测性能或允许改变测试观察停止线。
-
-再次发现0字节writer.lock；旧begin在创建空锁后先usage扫描再写归属，存在较长匿名窗口。新begin立即写入并fsync完整owner后才盘点。既有空锁由process-identity的Windows FileShare.None独占句柄核对最终路径、卷号/文件ID、单链接普通文件和0长度，再在同一独占句柄内写入本事务完整归属。无当前进程身份、不支持平台、共享冲突、非空或身份改变均不能接管；年龄不是依据。接管后沿原写事务、预算和退出清理；不删除完整缓存、不取消跨窗口互斥，不清除未知非空/恢复锁。实现与真实Windows文件检查记录见T2报告，实际Eagle退出/重开仍须当前候选验证。
-
-### A-05：用户确认的可调RAM预算（2026-10-14）
-
-用户确认缓存额度为整机物理RAM×百分比，JPEG池上限随总池按1/8同比扩大；在1GiB/128MiB真实宿主六轮通过后，另接受默认等效1GiB、修改后暂停/保留位置/重新准备/保持暂停、设置持久化。此变更取代A-04固定512MiB/64MiB数值，其JPEG格式、rAF最新目标守卫、两个图像任务、整段缓存及磁盘路径策略不变。百分比自然范围0<p≤100，字节向下取整，池实际用量仍登记在同一账本，账本不计浏览器/GPU/辅助进程内部开销。
-
-新增preferences.cjs仅管理本地设置及os.totalmem换算，不访问Eagle/素材库/缓存资产。app装配设置能力并向Player注入每次额度；UI仅经session.setMemoryPercent提交操作。session先校验/暂停，保存成功后固定当前素材/已显示时间，走现有取消/释放/媒体验证/Player载入流程，再精确定位并保持暂停；不选择另一素材、不修改源或标注。原磁盘完整缓存正常复用校验，此实现可能等待，不能承诺设置即时应用或秒开。配置仅plugin根memory-settings.json（owner＋percent，≤4KiB），同目录唯一next文件wx排他、fsync/身份核对后rename；异常保全既有设置及未知占用，不清除缓存。范围变化和资源释放失败沿原会话门禁处理。设置作用于本机所有后续视频，默认不自动写文件，用户应用时持久化。
-
-1GiB单素材通过不代表可调设置/高额度/高画质全通过；1.5GiB真实宿主观察线仍为测试保护，测试更高预算需独立核对执行边界。原512MiB、旧阶段证据不改写。新增设置及当前新源码须独立Eagle验收。
-
-以下是逻辑职责，不要求各自拆成目录或引入复杂框架。文件拆分与测试任务已经 3C 确定；阶段 4 按 development-plan 逐步实现，当前 T0 仅建立必要核心及独立验证入口。
-
-```mermaid
-flowchart TD
-    E[Eagle 素材与标注适配] --> S[会话控制与任务所有权]
-    U[界面与时间轴] --> S
-    S --> P[媒体分析与预处理]
-    P --> C[磁盘及 RAM 缓存管理]
-    S --> R[帧索引、调度与播放]
-    C --> R
-    R --> V[统一画布与音频输出]
-    R --> U
-    S --> E
-```
-
-| 模块 | 输入 → 输出 / 职责 | 依赖边界 | 失败与验证重点 |
-| --- | --- | --- | --- |
-| Eagle 适配 | 选中项 → 素材身份/路径；标注读取、添加及独立读回 | 仅本层调用素材/标注 API；结果交会话控制 | 空选、多选、权限、API 失败、结果未知；真实 Eagle 单独验证 |
-| 会话控制 | 用户操作 → 播放状态、素材快照、目标及任务令牌；汇总错误与资源生命周期 | 调用适配、准备、缓存、播放；UI 不越过本层写数据 | 旧回调、库变化、切换/关闭、标注竞态；状态与事件顺序检查 |
-| 媒体准备 | 只读源文件 → JPEG或全IDR AVC代理、音频、精确源帧索引与完整性清单 | 使用现有工具，经缓存管理受限写入，不自行淘汰文件；E-34分段及播放解码边界见文首 | 超时/退出异常、原文件变化、时间信息或输出不完整；合成预期值和实际媒体检查 |
-| 缓存管理 | 内容键/资源请求 → 有效资源、预算账本和释放句柄 | 使用 Node 文件能力；不调用 UI/素材写入；向准备和播放提供资源 | 配额、锁、残缺缓存、未知文件、越界；容量故障与安全清理检查 |
-| 播放与帧调度 | 时间/源帧目标、音频时钟 → 当前帧、画面提交和状态快照 | 读索引与缓存，使用 Canvas/Web Audio；不调用标注 API | 过时结果、慢解码、音频偏移、欠载；独立画面参考、日志及人工声画观察 |
-| 界面 | 状态/标注 → 显示；输入 → 用户操作 | 仅向会话控制发操作，不直接写文件或调用标注 API | 未就绪误操作、错误反馈不明确；接线检查与真实操作 |
-
-最小关键数据：素材快照保存库上下文代次、itemId、文件路径及内容身份；帧索引保存呈现编号、原始整数 PTS、时间基准、显示区间与缓存文件；缓存清单保存处理版本、源内容指纹、帧/音频信息、文件清单与完成状态；请求保存会话代次、目标帧/时间、请求号与原始输入时间。整数 PTS 持久化须避免 JavaScript 数值精度丢失，不能只存平均帧率。
-
-关键拖动数据流：鼠标原始输入 → 会话固定素材/请求 → 索引选择目标源帧 → RAM 命中或有限读图解码 → 绘制前再次检查最新目标 → drawImage 提交 → 更新已显示帧和 UI。分别记录输入、目标就绪和提交时刻。
-
-2026-10-15模块内优化：同向连续拖动用最近最多5个目标时间估计下一目标，避免直接重复末次帧取整步长而反复预取邻帧；预测仅占原两个图像任务之一、从实际PTS查帧，换向/停顿/释放清除旧轨迹，真实目标及绘制守卫不变。H.264输入解码最多8线程、缩放2线程，JPEG编码仍2线程；HEVC/VP9原参数不变，单视频任务、输出配方及缓存键保持。真实索尼克管道的图片/音频/时间信息摘要一致，后续同素材/default1GiB六轮真实短回归通过；用户批准沿用既有体验验收，完整首次P-03仍未通过。同步小JPEG预载因实际变慢撤回，正式读图接口不变。详见[T4收尾](experiments/T4/report.md#2026-10-15-最后一轮真实短回归通过与体验验收复用)，不是新架构决策或全样本/全部P项通过证明。
-
-原型复用评估：A/B 的 Eagle 调用边界、特殊路径处理与独立读回，S1 的实际帧索引、受限写入、音频偏移和提交守卫可作为正式模块的复用依据；对应合成输入与证据继续作为回归参考。实验 UI、硬编码路径、授权文件、实验上限和测量接线不直接作为正式产品流程；会话组织、并行预取、正式淘汰/锁/恢复须按本架构整理与验证，不覆盖原 prototypes。
-
-## 播放状态、索引与调度
-
-```mermaid
-stateDiagram-v2
-    [*] --> Empty
-    Empty --> Preparing: 调用插件并读取素材
-    Preparing --> Paused: 完整缓存、音频与首帧就绪
-    Preparing --> Error: 准备失败
-    Paused --> Playing: 用户播放
-    Playing --> Seeking: 暂停、拖动、逐帧或标注定位并停声
-    Paused --> Seeking: 请求新目标帧
-    Seeking --> Paused: 确切目标已提交绘制
-    Playing --> Paused: 播放结束
-    Playing --> Error: 供应不足或输出失败并停声
-    Seeking --> Error: 定位失败
-    Error --> Preparing: 用户重试准备
-    Error --> Seeking: 用户重试定位
-```
-
-切换素材、库变化或关闭适用于所有状态：先使旧会话/播放令牌失效并停止旧声音；切换等待旧生成任务停止后准备新素材，关闭释放当前资源。Preparing 禁止播放/拖动；Seeking 未完成前不能依据尚未显示的目标播放或添加标注。标注输入和提交状态由固定提案管理，不能用播放状态替代写入状态。
-
-- **源帧映射**：按实际呈现顺序和 PTS 建立显示区间，时间定位查区间，逐帧按相邻编号；保留首末帧、音频尾部和共同时间原点。相同时间戳的帧仍保留各自编号；时间定位使用确定规则，逐帧不得丢帧。缺失/矛盾信息无法可靠恢复时说明失败，不用平均帧率猜测。
-- **音频协作**：有音轨时采用 Web Audio 输出时间估计驱动画面，保留实际解码的音频偏移；无音轨时使用单调时钟。数字静音的音轨不等于没有音轨。音频先结束时媒体时钟继续；暂停/拖动/逐帧先停声，恢复从已确认帧时间开始，旧音频结束回调不能影响新播放。
-- **最新目标**：每次浏览器刷新合并输入，同帧复用已有工作；每次提交前同步核对库/素材代次、当前目标与请求身份。过时结果可在预算内留作缓存，但不得提交画面；被替换请求明确结束，不悬挂 Promise。
-- **有限并行**：只针对同一视频，最多两个 JPEG 读取/解码任务在途、一个最新待处理目标；优先级为最新目标、播放前瞻、邻帧预取。预取受预算和窗口限制，不能占满当前目标资源。全局视频预处理仅一个任务，不同时生成两个视频缓存，也不继续旧视频后台完成。
-- **释放与欠载**：释放后稳定目标获最高优先级，实际提交后才进入 Paused 并允许播放/标注。正常播放供应不足时停止声音并说明问题；S1 的 150ms 是实验保护阈值，不作为已批准的产品性能豁免。
-
-并行、预取和 RAM 命中只能作为缓解慢解码的设计，尚未实测证明消除饥饿；目标持续变化且处理持续较慢时，仍可能没有新画面提交。不得提交旧目标来凑更新率，须保留连续更新、最新目标与末次准确性的联合验收。
-
-## 缓存根目录、容量与生命周期
-
-正式目录为 **实际 `plugin.path` 下的 `cache/`**，无需用户设置页；路径发现沿用已验证的启动事件，不从页面 URL 反推磁盘目录，也不依赖未验证的 userData API。
-
-启动/写入前解析实际路径，核对与插件同盘、实际目标非 C 盘、可写、空间和插件所有权；完整缓存及 partial/临时文件都留在此根。插件本身位于 C 盘时提示先迁至非 C 盘，目录不可用时失败，不回退 AppData、C 盘或系统 TEMP。本次不创建该目录、不迁移插件；S1 runtime 原位置和限额保持原样。源视频和既有工具的所在盘不由“缓存非 C”要求扩大限制。
-
-| 环节 | 已批准规则 |
-| --- | --- |
-| 身份与复用 | SHA256 + 处理版本为内容键；版本涵盖画质、尺寸/方向/色彩、音频和时间映射。同内容可复用画面，但 itemId、路径、库上下文与标注独立绑定；源内容变化后重建，仅重命名尽量复用 |
-| 准备与提交 | 单生成任务，排他锁覆盖重复窗口/进程；先在同根临时目录受限写入，完整校验帧/音频/清单，再以同盘目录 rename（重命名）原子发布完整缓存，避免逐文件复制暴露残缺结果。全局索引可由完整清单恢复，残缺缓存不参与播放 |
-| 磁盘预算 | 5 GiB 计入完整与临时产物、JPEG、PCM、索引及清单；写入前预留，按最近使用记录淘汰最久未使用且未占用的缓存。保护当前素材和在途任务；无法腾出空间则说明失败 |
-| RAM 预算 | 512 MiB 计入已解码帧、音频、压缩读取缓冲、复制和在途预留；保护当前帧/目标，淘汰旧图像时释放对应资源。不可取消的已开始解码占额至真实结束，不提前虚报释放 |
-| 正常取消 | 失效令牌、停止并等待 FFmpeg 和流退出，再清理本任务未完成文件；下次从头重建，不做断点续建。已经完成且有效的缓存保留供跨次复用，直到正常淘汰 |
-| 强制退出与恢复 | 不能保证退出瞬间清完；下一次启动只回收所有权与任务终止均可确认的残留。陈旧锁处理保守，不清理其他活跃任务，不借恢复删除完整有效缓存 |
-| 删除边界 | 核对所有权标记、实际路径和文件清单；不跟随链接，不删除未知内容或越界路径。遇不确定内容停止该项清理并提示，不为满足配额强删 |
-
-插件/Chromium、FFmpeg、GPU 总内存另采样；512 MiB 是登记缓存数据预算，不保证总进程内存低于它。诊断/性能记录单独有界，不把 S1 的 32 MiB 证据上限作为正式产品缓存额度。容量故障、并发锁、崩溃恢复及目录可写性须在正式实现后验证。
-
-## Eagle 与标注边界
-
-启动及再次调用取得单选 MP4 的 ID/路径快照，复用已有窗口；仅改变 Eagle 选中项不换片，不扫描库。读取路径要覆盖中文、空格和特殊字符；缓存身份不替代当前素材身份。
-
-载入读取标注并映射到同一时间轴；点击标注停声定位。添加时暂停，固定库上下文、itemId、**实际显示帧及其源时间**和文字；不能用尚未显示的请求时间。用户主动保存后调用一次 API，并独立读回核对。
-
-写入区分成功、明确失败和结果未知：成功才显示已保存；失败/未知保留输入，不自动重发；未知结果恢复或再次保存前先核对原尝试，避免重复标注。已发出的 API 写入不能假装被取消；切换后旧结果不得更新新素材界面，仍按原提案身份完成核对。
-
-素材、原文件和标注属于 Eagle；缓存、索引、处理清单属于插件；未保存文字、当前目标和任务令牌属于临时 UI/会话状态。原MVP将修改/删除留给Eagle，外部修改下次载入读取；开发版E-07已扩展官方SDK改删/独立读回及上述可见窗口自动同步，冻结MVP行为不改。不保证Eagle原生界面自身的即时刷新，不引入原生播放位置同步。真实库写入测试继续使用专用素材及具体授权。
-
-## 需求覆盖、证据与后续验证
-
-| 需求 | 架构机制 | 已有依据 / 待验证边界 |
-| --- | --- | --- |
-| R-01 | Eagle 适配、窗口复用、素材快照、会话代次 | A/S1 支持单素材读取；正式再次调用、窗口复用和切换隔离需验收 |
-| R-02 | 帧索引、共同时间原点、音频时钟与明确播放状态 | S1 合成条码及用户同步观察；真实源帧独立参考、显式逐帧和全部边界仍需验证 |
-| R-03 | 最新目标守卫、有限并行、RAM 缓存、释放后提交 | S1 所测脚本未见旧请求覆盖且最终目标达成；新并行/预取及慢解码饥饿仍待验证 |
-| R-04 | 自动整段 720p 准备、就绪门禁、统一画布 | S1 自动准备和首帧暂停；正式极简流程及完整首次等待需验收 |
-| R-05 | 标注读取/时间映射、固定提案、单次保存和独立读回 | A 一次专用添加/回退支持 API；正式与帧状态结合、未知结果/切换竞态需验收 |
-| R-06 | 内容键、完整提交、5 GiB/512 MiB 预算、淘汰/锁/取消恢复、非 C 根 | 本地 S1 有受限写入与取消证据；正式目录、淘汰、锁和崩溃恢复尚未实测 |
-| R-07 | 现有 Windows Eagle/工具链、实际 PTS，≤30 秒 MP4 | 已测合成 H.264/H.265/VP9 及真实 HEVC；完整最高 4K/60fps 首批矩阵未覆盖，不继承实验硬上限 |
-| R-08 | 明确失败状态、源文件只读、所有权删除、固定标注身份与未知结果处理 | A/B/S1 有部分依据；正式资源不足、异常退出和标注竞态需故障验证 |
-
-性能基于 [S1 实际窗口报告](experiments/S1/report.md#真实窗口证据与用户人工验收)，不重复生成报告或重跑实验。S1 的用户反馈独立保留为“本次未观察到不同步”；合成条码核对不作为真实素材像素准确性证明。
-
-| 指标 | 测量机制 / 起止 | 已有支持 | 待验证与瓶颈定位 |
-| --- | --- | --- | --- |
-| P-01 更新率 | 播放层按实际 drawImage 提交统计，另记刷新机会；不能用输入频率代替 | 真实 HEVC 0ms 注入轮 61.77 次/秒 | 25/60ms 压力轮 32.39/18.04 次/秒，最长无提交 180.3/444.2ms；分查读取、解码、调度及绘制，不称已解决 |
-| P-02 响应 | 原始输入至目标画面提交，包含该已完成请求排队；分记图像就绪 | 同一 0ms 轮完成请求 P95 8.0ms | 同时报告被取代/未完成请求、最长无提交、最终请求及人工跟手；提交不是物理呈现，不能用条件 P95 掩盖停顿 |
-| P-03 首次等待 | 会话收到加载至音频/索引/首帧可用；分记读取/哈希、分析、生成、浏览器初始化 | 真实 HEVC 首次 2478.2ms / 10.031 秒，所测合成首次也满足相应目标 | 首次生成与复用分开；原 4K 只有复用窗口记录，完整 4K/60fps 矩阵仍待测。Eagle 回调前启动不冒充已测 |
-| P-04 资源 | 缓存层连续预算与容量记录；另采样插件/FFmpeg RSS，注明进程/时间窗口 | S1 受管峰值 510.06MiB，插件 RSS 观测峰值 737.46MiB，最长单会话采样约168秒 | 正式5GiB淘汰/耗尽、长时拖动/切换、关闭/崩溃恢复需验收；账本不等于RSS，采样不保证捕获全部峰值 |
-
-3C 已将以上模块边界、状态不变量、数据结构及测量起止映射到[测试协议](verification.md)和[开发计划](development-plan.md)：独立编号帧与真实参考、VFR/首末边界/音频偏移、相同目标压力对比、源内容变化与重命名、锁/取消/残留/容量故障、标注未知结果和长期资源趋势。用户于 2026-10-11 批准性能协议及真实样本优先原则；具体阈值集中在验证文档，不重写本架构或产品目标。3C 已结束，阶段 4 来自后续整体授权，按 T0 技术关卡开始执行。
-
-若后续不能满足产品目标，先依据阶段计时定位瓶颈并重新评估架构；不得自行降低画质、丢失源帧、取消声音、扩大产品硬限制或改成普通播放器。3B、3C 已完成，阶段 4 来自用户后续独立授权；执行状态与真实验证见 progress 和各任务记录。
-
-## 既有 A/B 原型架构（历史说明）
-
-以下保留已存在 PoC 的文件与数据流说明。它解释历史实现，不表示该原型已经实现上述正式架构。
-
-```text
-Eagle → manifest.json → index.html
-                           ↓ 启动事件
-                        app.js
-                  素材、播放、标注、证据保存
-                           ↓
-                    experiment-b.js
-                  队列、画布、计时、资源采样
-                           ↓
-                       cache-b.cjs
-                  ffprobe / FFmpeg / PTS 索引
-                           ↓
-                帧缓存目录与本机 evidence/
-```
-
-| 文件 | 职责与主要入口 |
-| --- | --- |
-| manifest.json | Eagle 窗口入口；插件 ID 保持原身份，名称不再绑定 A |
-| index.html | A/B 实验控件、video 播放元素与共用 canvas 画布 |
-| app.js | eagle.onPluginCreate 启动；loadSelected 读素材；seek 定位；标注授权保护及证据保存 |
-| experiment-b.js | init 接线；LatestQueue 控制请求积压；render 显示帧；save 保存测量 |
-| cache-b.cjs | probe 读编码/PTS；build 提取 JPEG；frameAt 按时间戳选帧；cleanup 安全清理 |
-| check.cjs / check-b.cjs | 本地与合成输入验证，不代替真实窗口 |
-| assess-b.cjs | 复核已保存窗口证据，verify-only 不写新评估 |
-
-HTML 放置控件，JavaScript 响应事件；Node 内置模块负责本机文件和子进程，FFmpeg 负责视频解码/帧提取。PTS 是帧的呈现时间戳。
-
-直接模式让 video 寻帧后绘到 canvas；缓存模式读取并解码 JPEG 后绘到同一画布。两者共用请求队列，只有一个在处理请求和一个最新待处理请求。
-
-Eagle 启动事件的 plugin.path 用于核对磁盘目录；app.js 的批准路径已更新到新原型位置，迁移时不扩大加载范围。页面 URL 可能不是 file 协议，不能据此反推目录。
-
-原生播放进度不参与同步。标注数据读写、自定义播放器操作和原生界面刷新分别验证。像素级帧准确性、缓存长期策略、完整内存管理尚未完成验证，见 B 报告。
-
-已发布MVP Beta2的实现基线为批准的C及A-01～A-08，发行包冻结，用户已完成该包独立安装验收；当前开发版另按文首E-35演进，不能用旧包验收替代新架构验证。长期内存/完整矩阵限制保留，发行状态见[Beta2记录](releases/v0.1.0-beta.2.md)。R2长路径最小修复仅给Windows native realpath传扩展路径，原规范路径比较、归属及链接保护不变。
-
-以下日期进度是历史，待验证安排以当前发布记录为准。
-
-## A-08 JPEG集中存储与批量预载（2026-10-16）
-
-用户授权首次准备优化，先隔离对照，实测有收益后接入。两组正序/反序对照均改善媒体准备及压缩图片预载，采用以下存储布局；产品要求、A-01时间索引、JPEG-q3/720p、PCM、A-07关闭交接、默认1GiB及1/8压缩池、5GiB磁盘上限不变。后端数据见[T4报告](experiments/T4/report.md#2026-10-16-首次准备优化jpeg集中存储与批量预载)。随后真实Eagle索尼克/720p/默认1GiB完成三次首次＋三次复用，完整readyAt计时限定通过，范围与副本/采样局限见[实际结果](experiments/T4/report.md#2026-10-16-索尼克完整准备计时限定通过)；其他素材/独立帧参考/长期资源不外推，此为验证状态更新，不改架构决定。
-
-- 新生成缓存将原JPEG字节顺序写入`frames.pack`，不再次压缩。`frame-pack.cjs`只校验布局；manifest仍为schema=1/同一编码recipe，增加可选`framePack:{schema:1,file,bytes,sha256}`，逻辑帧增加offset并保留原长度、逐帧SHA和PTS。偏移须安全整数、连续、无重复/重叠/空洞并完全覆盖包；物理资产和逻辑帧分别登记。旧完整散图继续原样校验和复用，不自动转换；同根不同素材可使用两种布局。
-- media写帧→cache写包/完成实际磁盘指纹核对→完整校验/原子发布→worker登记lease→窗口本地读取。session绑定原登记句柄，Player无需知道物理路径。`readAsset`继续按逻辑帧返回JPEG；可选`readFrameBatch`一次读连续且已登记的≤1MiB范围，各帧单独校验并返回独立缓冲区，不把大文件整体读入RAM。包文件受磁盘总上限约束，单帧仍受原256MiB安全上限约束。
-- Player仅在准备时按连续帧批量预载，单批原始读取和返回副本均提前记入同一RAM账本；JPEG池上限不变，帧淘汰可独立释放底层存储。任务仍纳入原≤2在途槽、代次守卫和真实I/O完成门禁；拖动/播放/音频调度规则不变，超过单批的合法帧回到单帧读取。
-- 盘点、复用校验、租用、手动/过期/容量/损坏清理、取消、普通残留恢复及已停止Job恢复均按物理资产处理。包流关闭后才允许清partial/交接；系统已证明旧任务组停止且归属/目录/文件清单一致时可恢复已知frames.pack，未知文件继续保留报错。不以缓存年龄判断任务死亡。
-- 回退优先反向提交本轮写入/预载变更，同时保留新布局只读/清理兼容；直接运行不认识图片包的旧代码会拒绝新缓存，不能称无条件git切换即可恢复。若要完整退到旧格式，应另列精确新布局缓存清单并按原安全清理流程处理，不删旧完整缓存或源。当前未执行回退/转换。
-
-只改正式plugin和必要接线/指纹检查，原生守护源码/二进制不变；没有发行新包。未来打包须包含frame-pack及已有任务守护模块，旧冻结展示包不自动更新。源码、模型、真实Eagle Node/Windows隔离媒体验证各自列证据，不能用后端计时冒充实际窗口完整就绪。
-
-## A-07 任务生命周期与快速关闭交接（2026-10-15 用户批准整改）
-
-问题：普通writer文件可残留；starting尚未登记身份永远拒绝恢复；关闭中run被丢弃；取消的真实清理错误可被superseded吞掉。2026-10-15实际545B writer（SHA5119d1bcaa189723f3f7212dfbed056ecc040eedd08b1b2231ba79c35e91058e）父PID19956已不存在、子记录starting/identity=null、系统快照无FFmpeg；实际拒绝原因missing-process-birth-or-child-registration，不是容量或RAM问题。
-
-决定：由插件自有短生命周期任务负责人统一持有缓存变更权限并启动/停止媒体子程序，窗口与它通过本机管道通信。Windows命名互斥承担真实跨窗口独占，Job Object统一控制本次辅助进程，硬盘账本仅描述/恢复状态。启动子程序前即纳入任务组，不能留下先运行后登记的空档。负责人异常结束后，新负责人须确认前任务组停止，才处理旧记录；不得只凭获得锁就删文件。只结束归属本插件任务的程序，不结束Eagle或其他应用。
-
-工作程序复用现有Eagle内置Node（优先核对ELECTRON_RUN_AS_NODE支持，不依赖用户另装Node）；Windows守护源码用已有系统编译器构建，不安装依赖。UI与Eagle数据API保持原位，Player仍在窗口中，以本地读取验证后的缓存lease，不跨管道传输帧图片。新请求在旧任务收尾时自动交接，单视频任务保持；取消结果不能代替清理成功，真实清理错误不得隐藏。已缓存视频仍验证完整性，普通图片读取不长期占全局变更权限；本次不删完整缓存换启动速度。
-
-依据：HandBrake视频worker隔离、VS Code移出窗口的子任务管理、Chromium Windows任务组退出兜底均有公开实践；它们不等于Eagle适配已验证。来源见本对话已核对官方文档，实施与关卡见[整改流程](development-plan.md#关闭与交接整改-l-01l-032026-10-15-已授权)。不改A-01～A-06或既定产品预算。
-
-2026-10-15实现：`task-client.cjs`启动隐藏、detached的Windows守护程序，stdio仅交换控制/清单；`native/task-host.cs`先获取按插件规范路径划分的命名Mutex，确认同名旧Job成员已全部退出，再将自身加入Job并启动`task-worker.cjs`。detached使其不被Node父进程的自动子进程回收提前结束；Job控制其后代退出。工作程序使用Eagle自身Node16，独占缓存变更，writer/lease附任务epoch；writer不再反复原地改写子进程身份，子程序归属由启动前已建立的Job保证。客户端确认任务key/epoch/guard PID及lease标记后，本地直接读取图片/PCM；读完/Player释放后再要求工作程序释放lease。
-
-关闭开始即给守护程序发送独立关闭期限通知，再等待session和工作程序清理。窗口断连或已请求关闭但任务无响应，15秒后终止本任务组；这属于异常退出，需要下次接管验证和恢复，不报告即时清理成功。正常退出先等子程序和管道关闭，释放占用后才销毁窗口；新实例等待交接上限30秒，同窗口重开保留最新选中快照并取消旧的延迟关窗。缓存生命周期、720p与内存额度未改变。
-
-恢复只在系统独占与旧Job已停止的前提下，核对本插件任务key/epoch、目录/文件身份及清单。半成品用writer token绑定目录；输出/账本尚未完整或清理中断时保存严格快照，恢复仅处理相符的已知生成文件。未知目录/文件、被替换文件、无法确认的旧记录、磁盘写入故障仍保留并明确报错，不能承诺任意损坏均自动修好。旧无partial的starting记录采用额外任务死亡证明迁移，原内容/摘要进既有reap记录。系统隔离、真实媒体取消与接线检查已通过，实际Eagle窗口体验待验；新工作程序资源应单列，旧P-04/性能成绩不自动适用于本候选。
-
-首次体验反馈的清理后重开失败属于持久化格式回归：所有清理计划的目录身份统一经`captureDirectoryIdentity`从BigInt写为十进制字符串，覆盖手动/过期、容量、损坏重建及两种恢复；不能只修改恢复端。写盘后先由同一读取规则验证，再进入删除。旧记录若数字已失真，只允许有归属/原计划摘要相符completed回执的历史只读核验，不改原字节、不把失真ID用于新删除或未完成恢复；路径被重新生成也不改变此边界。此为A-07实现修复，不新增产品行为；实际窗口关窗验收仍未通过。
-
-最终候选补齐：等待Mutex交接时收到关闭通知，守护立即取消本实例等待并报告cancelled，客户端把未启动准备结算为MEDIA_CANCELLED且正常结束关闭；原持有者不受影响。完整缓存复用的临时标记改为`owner.next-<writerToken>.json`，完整/截断/零字节均可在原writer及任务终止证据充分时定点恢复，原owner/manifest/资产不改；回收前保存既有reap-plan中的受限recency快照，目录精确ID、owner/manifest SHA、缓存token及临时文件身份/摘要须再次匹配。恢复自己中断也沿同一原计划继续，禁止跨cache根或追踪链接。旧固定owner.next.json只接受内容完整且不可变owner字段一致的旧标记，未知/失真旧临时文件不猜测删除。cleanup与reap记录写出均以读取规则自校验。两项旧候选人工反馈通过保留为局部结果。2026-10-15用户认可bd7481f集中体验，来源与范围见[T2记录](experiments/T2/report.md#2026-10-15-用户集中体验认可与后续证据盘点)；这不改变A-07架构，也不代替新进程资源与T4全项技术验证。
-
-## E-26 设置呈现边界
-
-`settings-view.js`只重排原设置DOM、分组、延迟说明与主次面板位置，保留原控件ID和`ui.js`写入监听器，销毁时还原。设置应用结果在主次面板同步，观察器及事件随UI销毁清理；隐藏时跳过面板几何读取。`graphite-shell.js`处理顶栏拖动识别，仍由`app.js`调用既有`eagle.window.setFullScreen(false)`；不引入移窗API、不修改Player/Session/存储格式。
-
-## E-27 窗口拖动适配
-
-用户要求恢复后仍跟随鼠标，替代E26仅setFullScreen(false)的实现边界。window-drag.cjs是SDK移窗适配层，由app按已核实插件路径加载；恢复后用getSize计算标题栏抓取锚点，setPosition串行使用最新坐标，结束/取消释放状态，重复坐标去重。graphite-shell仅负责指针捕获与手势分发，保持窗口模式原生拖动区域；不引入操作系统原生调用，不改变播放器/存储架构。真实宿主行为见E27待验边界。
-
-## E-28/E-29 当前补充
-
-E28原生删除确认成功后，drawing-session依据同源帧最新剩余文字决定保留共享圈画或删除最后关联组；结果未知不重复写。E29仅索引该查找、减少重复DOM写入与按需调度缩略图，存储格式与Player缓存账本不变。窗口仍使用官方SDK真全屏和setPosition；app注入requestAnimationFrame调度，替代固定16ms额外等待。详见[E29](experiments/E29/report.md)。
-
-## E-30 界面职责补充
-
-settings-view.js只负责逐级展示和转交原控件事件，不新增偏好写入端；原bool即时/应用语义不变。context-wheel.js当前沿E32的100ms悬停与节点复用，E37将类型/颜色外圈分为上/下半圈并同步方向命中，跨一级项取消旧分支。app.js在创建和主动调用时依次show/focus，不设置永久置顶。缩略图取消逐张250ms等待，每次解码后让出浏览器绘制帧，失败延迟重试；播放时依旧不抢占解码。见[E-30报告](experiments/E30/report.md)。
-
-### E36末帧与JPEG恢复补充
-long-media.packetIndex现在查询packet duration；原声明结束不晚于最大展示PTS时，使用该packet明确正时长，绝不以平均FPS/前帧间隔补值。sourceEnd贯穿prepare与segment及media-wire。media.prepare仅proxy走long-media，JPEG单次整片FFmpeg生成、完成校验后交付，旧缓存recipe/文件格式不变。cache清单解除30秒数值门槛但要求有限正时长，原摘要/身份/原子提交规则不变；旧清单读入、写入、接入远端租约均经manifestAssets。prepare watchdog在输出进展时续期；Session设置可打断准备，沿epoch/串行释放；UI应用序号隔离旧完成回调。
+| plugin/long-media.cjs | JPEG及历史分段共享实现（原生不调用分段链）；源帧索引、JPEG或全IDR AVC/PCM分段与源身份核对；120000帧/64MiB索引上限，持有同源batch、分段取消与统一关闭；音轨起点/两秒预热及audio-preroll-v2派生键 |
+| plugin/avc-access-units.cjs | Annex-B流拆分、AUD/SPS/PPS/IDR框架与8MiB单帧保护；不负责证明完整H264语法或像素正确 |
+| plugin/proxy-decoder.js | 常驻WebCodecs解码、两项在途、受控flush、ImageBitmap所有权及关闭等待；无文件或Eagle访问，硬件偏好不等于实测加速 |
+| plugin/proxy-background.cjs | 前台优先的渐进代理准备、段描述/租约保留及writer账本额度判断；背景完整/容量停止先等batch核对关闭，不把整片图像常驻RAM |
+| plugin/segment-reader.cjs、segment-audio.cjs | 受限分段读取/借用归还、共享时钟音频排程；关闭等待实际读取与释放 |
+
+上表分段/AVC/WebCodecs实现仅供JPEG共享或历史追溯，不在当前原生代理前台链调用。旧性能dashboard/explainer/inbox/protocol/report/runner及标准测试脚本已退役，不进现行模块地图或发行清单；残留文件不是删除许可。
+A-01～A-08、双槽记录/维护事务、关闭互斥与旧JPEG细节按任务查[原架构条款](history/2026-10-31/architecture.md#模块依赖与数据流)、[A-07生命周期](history/2026-10-31/architecture.md#a-07-任务生命周期与快速关闭交接2026-10-15-用户批准整改)、[A-08帧包](history/2026-10-31/architecture.md#a-08-jpeg集中存储与批量预载2026-10-16)。未被现行链明确替代的安全约束继续有效，历史限额/授权不自动恢复。
