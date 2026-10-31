@@ -43,4 +43,13 @@ assert.deepEqual(selectScope(changed, inherited, ['docs/product.md']), ['docs/pr
 assert.throws(() => selectScope(changed, inherited, ['old-probe.txt']), /other-task file included/);
 assert.throws(() => selectScope(changed, inherited, ['docs/progress.md']), /unregistered changes outside/);
 cases += 9;
+const { retiredPreservation } = require('../scripts/check-docs.cjs');
+const archiveManifestPath = 'docs/history/retired-performance-2026-10-31/manifest.json';
+const archiveManifest = JSON.parse(fs.readFileSync(path.join(root, archiveManifestPath), 'utf8'));
+const archiveRead = f => fs.readFileSync(path.join(root, f));
+assert.equal(retiredPreservation(root), 40);
+assert.throws(() => retiredPreservation(root, f => f === archiveManifest.files[0].archive ? Buffer.from('corrupted') : archiveRead(f)), /content mismatch/);
+assert.throws(() => retiredPreservation(root, f => f === archiveManifestPath ? Buffer.from(JSON.stringify({...archiveManifest, files:archiveManifest.files.slice(1)})) : archiveRead(f)), /inventory mismatch/);
+assert.throws(() => retiredPreservation(root, f => f === archiveManifestPath ? Buffer.from(JSON.stringify({...archiveManifest, originalsRemoved:true})) : archiveRead(f), () => true), /restored in active tree/);
+cases += 4;
 console.log('document governance: ' + cases + ' cases passed');

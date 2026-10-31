@@ -124,13 +124,29 @@ function preservation(root) {
   if (fs.existsSync(path.join(root, 'docs/performance/STATUS.md'))) fail('obsolete STATUS entry restored; use history');
   return manifest.sources.length;
 }
+function retiredPreservation(root = ROOT, read = f => fs.readFileSync(inside(root, f)), exists = f => fs.existsSync(inside(root, f))) {
+  const prefix = 'docs/history/retired-performance-2026-10-31/';
+  const prior = JSON.parse(read('docs/history/2026-10-31/source-manifest.json'));
+  const manifest = JSON.parse(read(prefix + 'manifest.json'));
+  const expected = new Map(prior.inheritedDetails.filter(r => !r.index).map(r => [r.path, r.sha256]));
+  if (manifest.files.length !== expected.size || new Set(manifest.files.map(r => r.source)).size !== expected.size || typeof manifest.originalsRemoved !== 'boolean') fail('retired archive inventory mismatch');
+  let bytes = 0;
+  for (const row of manifest.files) {
+    if (row.archive !== prefix + row.source || row.sha256 !== expected.get(row.source)) fail('retired archive identity mismatch: ' + row.source);
+    const data = read(row.archive); bytes += data.length;
+    if (sha(data) !== row.sha256 || data.length !== row.bytes) fail('retired archive content mismatch: ' + row.source);
+    if (manifest.originalsRemoved && exists(row.source)) fail('retired source restored in active tree: ' + row.source);
+  }
+  if (bytes !== manifest.totalBytes) fail('retired archive byte count mismatch');
+  return manifest.files.length;
+}
 function check(root = ROOT) {
   const read = f => fs.readFileSync(inside(root, f), 'utf8'), exists = f => fs.existsSync(inside(root, f));
   const current = governance(read, exists), navigation = checkLinks(root, read), archives = preservation(root);
-  return { ...current, ...navigation, archives };
+  return { ...current, ...navigation, archives, retiredSources: retiredPreservation(root) };
 }
 if (require.main === module) {
   try { console.log('documents: ' + JSON.stringify(check())); }
   catch (e) { console.error(e.message); process.exitCode = 1; }
 }
-module.exports = { check, governance, checkLinks, preservation, inside, roles };
+module.exports = { check, governance, checkLinks, preservation, retiredPreservation, inside, roles };

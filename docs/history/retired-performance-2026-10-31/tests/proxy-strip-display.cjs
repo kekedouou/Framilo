@@ -1,0 +1,17 @@
+'use strict';
+const assert=require('assert'),{create}=require('../plugin/timeline-strip.js');
+const rects=[],context={scale(){},fillRect(x,y,width,height){rects.push({x,y,width,height,color:this.fillStyle});}};
+const canvas={dataset:{},setAttribute(){},getContext:()=>context,remove(){},set width(v){rects.length=0;}};
+const document={getElementById:()=>({prepend(){},getBoundingClientRect:()=>({width:200})}),createElement:()=>canvas};
+const window={devicePixelRatio:1,addEventListener(){},removeEventListener(){}};
+const frames=Array.from({length:91},(_,i)=>({time:i/30}));
+let state={state:'paused',epoch:1,duration:3,playbackBackend:'proxy',interactionSettings:{showProxyStrip:false,showCacheStrip:true},proxyPreparation:{readyRanges:[{start:0,end:1},{start:2,end:3}]}},range={start:0,end:3};
+const strip=create({document,window,getState:()=>state,getSession:()=>({timelineFrames:()=>frames}),getRange:()=>range});
+const blue=()=>rects.filter(r=>r.color==='#7199b3');
+strip.update();assert.equal(blue().length,0,'RAM strip on does not enable proxy strip');
+state.interactionSettings.showProxyStrip=true;strip.update();assert.equal(blue().length,2);assert(blue()[0].x+blue()[0].width<blue()[1].x,'unprepared gap stays visible');
+state.interactionSettings.showCacheStrip=false;range={start:.5,end:2.5};strip.update();assert.deepEqual(blue().map(({x,width})=>({x,width})),[{x:0,width:50},{x:150,width:50}]);
+state.playbackBackend='jpeg';strip.update();assert.equal(blue().length,0);
+state.playbackBackend='proxy';state.state='preparing';strip.update();assert.equal(blue().length,0,'old source coverage hidden while preparing');
+state={...state,state:'paused',epoch:2,proxyPreparation:{readyRanges:[]}};strip.update();assert.equal(blue().length,0);
+strip.destroy();console.log('Proxy strip: independent toggle, real gaps, loop-range clipping, JPEG/preparation/source-change hiding; canvas model only.');

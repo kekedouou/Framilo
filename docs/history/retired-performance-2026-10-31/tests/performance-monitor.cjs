@@ -1,0 +1,38 @@
+'use strict';
+const assert=require('assert'),fs=require('fs'),path=require('path');
+const {createCollector,metrics}=require('../plugin/performance-core.cjs'),report=require('../plugin/performance-report.cjs');
+const {run}=require('../plugin/performance-runner.cjs'),{createMonitor}=require('../plugin/performance-runtime.cjs');
+const {scratch}=require('./support/annotation-scratch.cjs');
+async function main(){
+ const temp=scratch('performance');let clock=0;const c=createCollector({now:()=>clock});
+ const input=(id,time=0)=>({type:'request',phase:'input',epoch:1,requestId:id,at:clock,inputAt:clock,kind:'drag',frameId:'f'+id,targetTime:time,sourceTime:time,final:true,cacheStateAtInput:'disk'});
+ c.observe(input(1));clock=10;c.observe({type:'stage',phase:'asset',at:clock,startedAt:2,epoch:1,requestId:1});clock=20;c.observe({type:'draw',at:clock,drawAt:18,epoch:1,requestId:1,frameId:'f1',time:0});
+ assert.equal(metrics(c.snapshot()).latency.p50,18);
+ c.observe(input(2));clock=25;c.pause();clock=100;c.resume();assert.equal(c.snapshot().activeMs,25);assert.equal(c.snapshot().requests[1].status,'incomplete');
+ c.observe(input(3));clock=105;c.observe({type:'draw',at:clock,epoch:1,requestId:3,frameId:'old',time:0});assert.equal(metrics(c.snapshot()).outcomes['wrong-frame'],1);
+ c.observe(input(4));clock=106;c.end('cancelled');assert.equal(metrics(c.snapshot()).outcomes.cancelled,1);
+ const data=c.snapshot();const manifest={runId:report.runId(),createdAt:new Date().toISOString(),mode:'manual',status:'completed',source:{sha256:'fixture',duration:2},config:{quality:'fixed'},environment:{runtime:'model'},code:{commit:'fixture',workspaceHash:'fixture'},protocol:null,measurementScope:'测试夹具；不是播放器性能'};
+ const manual=createCollector({now:()=>clock});manual.observe({...input(20),kind:'rapid',final:false});clock+=10;manual.observe({type:'superseded',at:clock,epoch:1,requestId:20});manual.observe({...input(21),kind:'release',final:true});clock+=20;manual.observe({type:'draw',at:clock,epoch:1,requestId:21,frameId:'f21',time:0});manual.end();assert.equal(Object.values(metrics(manual.snapshot()).drags)[0].releaseToExact.n,1);
+ await assert.rejects(report.save(temp.root,manifest,data),/未完成/);
+ const saved=await report.save(temp.root,manifest,manual.snapshot());assert((await report.validate(saved.dir)).evidenceComplete);assert(!saved.metrics.comparison.eligible);
+ const html=fs.readFileSync(path.join(saved.dir,'report.html'),'utf8');assert(html.includes('体验记录'));assert(html.includes('id="stages"'));
+ fs.writeFileSync(path.join(temp.root,'comparison.html'),'<!doctype html><title>measured</title>');
+ fs.writeFileSync(path.join(temp.root,'comparisons.json'),JSON.stringify([{file:'comparison.html',title:'CPU < GPU',scope:'independent browser'},{file:'../external.html',title:'escape',scope:'invalid'},{file:'https://remote.invalid',title:'remote',scope:'invalid'}]));
+ await report.index(temp.root);const index=fs.readFileSync(path.join(temp.root,'report.html'),'utf8');
+ assert(index.includes('href="comparison.html"')&&index.includes('CPU &lt; GPU'));assert(!index.includes('remote.invalid')&&!index.includes('../external.html'));assert.equal((await report.entries(temp.root)).length,1);
+ await assert.rejects(report.validate(saved.dir,{optimization:true}));
+ const originalMetrics=fs.readFileSync(path.join(saved.dir,'metrics.json'));fs.writeFileSync(path.join(saved.dir,'metrics.json'),originalMetrics.toString().replace('"p50": 20','"p50": 1'));await assert.rejects(report.validate(saved.dir));fs.writeFileSync(path.join(saved.dir,'metrics.json'),originalMetrics);
+ fs.renameSync(path.join(saved.dir,'metrics.json'),path.join(saved.dir,'metrics.missing'));await assert.rejects(report.validate(saved.dir));fs.renameSync(path.join(saved.dir,'metrics.missing'),path.join(saved.dir,'metrics.json'));
+ const short=createCollector({now:()=>clock,limits:{events:10,requests:10,bytes:10000}});
+ for(let n=1;n<=10;n++){short.observe(input(n));clock++;short.observe({type:'draw',at:clock,epoch:1,requestId:n,frameId:'f'+n,time:0});}short.end();
+ assert(!short.snapshot().capacity.truncated);assert.equal(short.snapshot().requests.length,4);assert(short.snapshot().draining);
+ const damaged={...manual.snapshot(),capacity:{...manual.snapshot().capacity,truncated:true,dropped:1}};
+ await assert.rejects(report.save(temp.root,{...manifest,runId:report.runId()},damaged),/截断/);
+ const a={manifest:{...manifest,status:'completed'},metrics:saved.metrics},b={manifest:{...manifest,status:'completed',source:{sha256:'other'}},metrics:saved.metrics};assert.equal(report.compare(a,b).eligible,false);
+ const stopped=new AbortController();stopped.abort();await assert.rejects(run({seek:()=>{},pause:()=>{},context:()=>({source:{sha256:'fixed',duration:1}}),collector:c,signal:stopped.signal}),e=>e.code==='CANCELLED');
+ const runtime=createMonitor({root:path.resolve(__dirname,'../plugin'),outputRoot:path.join(temp.root,'runtime'),context:()=>({source:null}),seek:()=>{},pause:()=>{}});
+ assert.equal(runtime.view().state,'off');runtime.enable();assert.equal(runtime.view().state,'observing');
+ await assert.rejects(runtime.standard(),/先打开视频/);assert.equal(runtime.view().state,'observing');assert.equal(runtime.view().last,null);await runtime.disable();assert.equal(runtime.view().state,'off');
+ await runtime.destroy();temp.clean();console.log('Performance: measured stages/identity, pause, cancellation, incomplete, failure/missing source, truncation, no comparison, validation refusal, default-off lifecycle passed (fixtures only).');
+}
+main().catch(e=>{console.error(e);process.exitCode=1;});
