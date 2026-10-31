@@ -242,3 +242,13 @@
 
 /* E46: settings and maintenance feedback share the bottom-left fading notices. */
 .shell-alerts #memoryStatus,.shell-alerts #cacheClearStatus{transition:opacity 260ms ease,visibility 260ms}.shell-alerts #memoryStatus,.shell-alerts #cacheClearStatus{max-height:90px;overflow:hidden}
+/* Preparation choices keep playback and the settings dock reachable. */
+.shell-load-decision {position:absolute;z-index:30;left:84px;bottom:84px;width:min(400px,calc(100% - 110px));padding:18px;background:rgba(16,20,23,.93);backdrop-filter:blur(8px);border:1px solid #303a40;color:#c5cfd5;font-size:13px;line-height:1.6;box-sizing:border-box;}
+.shell-load-decision[hidden]{display:none;}
+.shell-load-decision strong {font-size:14px;color:#d8e1e6;font-weight:500;}
+.shell-load-decision p {margin:10px 0 16px;color:#9caab3;}
+.shell-decision-actions {display:flex;gap:8px;}
+.shell-decision-actions button {flex:1;border:1px solid #354650;background:#202d35;color:#b6d6e8;padding:9px 10px;cursor:pointer;border-radius:0;}
+.shell-decision-actions button:hover,.shell-decision-actions button:focus-visible {background:#2b4050;outline:none;}
+.shell-capability-note {margin:6px 8px;color:#a5b3bd;font-size:12px;line-height:1.8;white-space:normal;}
+.workspace[data-decision="true"] .shell-guide {visibility:hidden;}

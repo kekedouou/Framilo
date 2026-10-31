@@ -28,6 +28,7 @@ function harness(settings = {}) {
     'session.cjs': { createSession(options) { config = options; return settings.realSession ? require('../plugin/session.cjs').createSession(options) : session; } },
     'diagnostics.cjs': { createDiagnostics: require('../plugin/diagnostics.cjs').createDiagnostics },
     'media.cjs': { createMedia(options) { assert.strictEqual(options.tools.ffmpeg, 'existing-only'); return { prepare(snapshot, options) { prepared++; assert.strictEqual(snapshot.id, 'fixed'); return { snapshot, options }; } }; } },
+    'media-policy.cjs': {createJpegGate:()=>async()=>{}},
     'frame-index.cjs': {}
   };
   modules['task-client.cjs'] = { createTaskClient: options => require('./support/task-client-model.cjs').createModel(modules, options) };

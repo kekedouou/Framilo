@@ -43,7 +43,7 @@ class FilmcraftClient {
     if(h.event==='error'){this.stats.errors++;this.finish('error',{error:h.message});return;}
     if(h.event!=='frame')throw Error('Unexpected native event');
     this.stats.lastReceived=h;
-    if(!Number.isInteger(h.width)||!Number.isInteger(h.height)||h.width<1||h.height<1||h.width*h.height>2560*1440)throw Error('Invalid native image shape');
+    if(!Number.isInteger(h.width)||!Number.isInteger(h.height)||h.width<1||h.height<1||Math.max(h.width,h.height)>3840||Math.min(h.width,h.height)>2160)throw Error('Invalid native image shape');
     const yuv=h.pixelFormat==='yuv420p';
     if(yuv&&(!['bt709','bt601'].includes(h.colorMatrix)||typeof h.fullRange!=='boolean'))throw Error('Invalid native color metadata');
     if(!yuv&&h.pixelFormat&&!['rgba','rgba8'].includes(h.pixelFormat))throw Error('Unknown native pixel format');

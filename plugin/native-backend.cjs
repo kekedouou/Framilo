@@ -22,7 +22,8 @@ async function inspect(source,tools,quality,signal,onProgress=()=>{}){
  const video=raw.streams?.find(x=>x.codec_type==='video');if(!video||!raw.packets?.length)throw Error('未找到可靠的视频源帧。');
  const tb=String(video.time_base).split('/').map(Number);if(tb.length!==2||tb.some(x=>!Number.isSafeInteger(x)||x<=0))throw Error('源时间基无效。');
  const packets=raw.packets.map(x=>{if(!Number.isSafeInteger(x.pts))throw Error('源帧时间缺失或超出整数精度。');return x;}).sort((a,b)=>a.pts-b.pts);
- if(packets.length>120000||packets.some((x,n)=>n&&x.pts===packets[n-1].pts))throw Error('源帧数量超过120000或存在重复源时间。');
+ if(packets.length>120000)throw Error('超过120,000源帧安全上限（30fps约66分钟、60fps约33分钟）。请先截取所需部分；源文件未修改。');
+ if(packets.some((x,n)=>n&&x.pts===packets[n-1].pts))throw Error('源帧时间重复，无法保证逐帧标注定位。');
  const last=packets[packets.length-1];let end;
  if(Number.isSafeInteger(last.duration)&&last.duration>0)end=BigInt(last.pts)+BigInt(last.duration);
  else if(Number.isSafeInteger(video.duration_ts)&&Number.isSafeInteger(video.start_pts))end=BigInt(video.start_pts)+BigInt(video.duration_ts);
@@ -66,8 +67,8 @@ function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024
    resourcePids:()=>[...readers].map(r=>r.proc?.pid).concat(producer.pids(),...[...audioJobs].map(t=>t.pids())).filter(Number.isSafeInteger),
    diskUsage:async options=>{const proxy=await producer.measure(info.source.sha256,options);return {...proxy,scope:'proxy'};},
    status(){return job?.snapshot()||{stage:'idle',status:'idle',ready:0,total:info.frames.length,readyRanges:[]};},
-   startProxy(){if(released)return null;if(job&&['queued','checking','encoding','validating','cleaning','ready'].includes(job.snapshot().status))return job;
-    try{job=producer.start({source:info.source,frames:info.frames,width:info.width,height:info.height,duration:info.frames[info.frames.length-1].end,encoder:settings.proxyEncoder||proxyEncoder,video:info.sourceVideo,validationHardware:(settings.decoderPreference||decoderPreference)!=='prefer-software'});}
+   startProxy(){if(released)return null;if(job&&['queued','checking','awaiting','encoding','validating','cleaning','ready'].includes(job.snapshot().status))return job;
+    try{job=producer.start({requestDecision:settings.requestDecision,source:info.source,frames:info.frames,width:info.width,height:info.height,duration:info.frames[info.frames.length-1].end,encoder:settings.proxyEncoder||proxyEncoder,video:info.sourceVideo,validationHardware:(settings.decoderPreference||decoderPreference)!=='prefer-software'});}
     catch(failure){const state={status:'failed',stage:'error',ready:0,total:info.frames.length,readyRanges:[],message:failure.message,error:{code:failure.code||'WHOLE_START',message:failure.message}};job={ready:Promise.resolve(null),snapshot:()=>state,cancel:async()=>null};try{onBackground();}catch(_){}return job;}
     job.ready.then(value=>{if(!value||released||closing)return;asset=value;try{onBackground();}catch(_){}for(const fn of listeners)try{fn(value);}catch(_){}}).catch(()=>{});try{onBackground();}catch(_){}return job;},
    async cancelProxy(){if(job)await job.cancel();try{onBackground();}catch(_){}return runtime.status();},

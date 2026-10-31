@@ -297,9 +297,9 @@ function validateSnapshot(value) {
   diagnostics.fieldTypes = { id: typeof id, filePath: typeof filePath, name: typeof name, ext: typeof declaredExt };
   if (typeof id !== 'string' || !id.trim()) throw selectionError('SELECTION_ID_INVALID', '选中视频缺少 Eagle 素材 ID。', diagnostics);
   if (typeof filePath !== 'string' || !filePath.trim() || !path.isAbsolute(filePath) || filePath.includes('\0')) throw selectionError('SELECTION_PATH_INVALID', '选中视频缺少有效的本地绝对路径。', diagnostics);
-  const ext = declaredExt == null ? 'mp4' : String(declaredExt).replace(/^\./, '').toLowerCase();
-  if (ext !== 'mp4' || path.extname(filePath).toLowerCase() !== '.mp4') throw selectionError('SELECTION_NOT_MP4', '当前选择只支持 MP4 视频。', diagnostics);
-  return Object.freeze({ id, itemId: id, name: typeof name === 'string' && name.trim() ? name : path.basename(filePath), filePath: path.resolve(filePath), ext: 'mp4' });
+  const policy=require('./media-policy.cjs'),ext=policy.sourceExt(filePath);
+  if(!policy.accepts(filePath,declaredExt))throw selectionError('SELECTION_NOT_MP4','请选择支持的视频文件；实际可播放性取决于编码与源帧时间信息。',diagnostics);
+  return Object.freeze({ id, itemId: id, name: typeof name === 'string' && name.trim() ? name : path.basename(filePath), filePath: path.resolve(filePath), ext });
 }
 function captureSelected(eagleApi, options = {}) {
   const diagnostics = { schema: 'eva-selection-diagnostic-v1', method: 'eagle.item.getSelected',
@@ -328,8 +328,8 @@ function captureSelected(eagleApi, options = {}) {
     diagnostics.stage = 'response';
     diagnostics.response = { type: responseType(items), count: Array.isArray(items) ? items.length : null }; publish();
     if (!Array.isArray(items)) throw rejected('SELECTION_RESPONSE_TYPE', 'Eagle 选中 API 返回类型异常（' + diagnostics.response.type + '）；没有将它当作未选择。');
-    if (items.length === 0) throw rejected('SELECTION_EMPTY', 'Eagle 选中 API 返回 0 个素材。请在主素材列表中单选 MP4 后重新读取。');
-    if (items.length !== 1) throw rejected('SELECTION_MULTIPLE', '当前选中了多个素材，请只选中一个 MP4 视频。');
+    if (items.length === 0) throw rejected('SELECTION_EMPTY', 'Eagle 选中 API 返回 0 个素材。请在主素材列表中单选视频 后重新读取。');
+    if (items.length !== 1) throw rejected('SELECTION_MULTIPLE', '当前选中了多个素材，请只选中一个视频。');
     diagnostics.stage = 'snapshot-validation';
     let snapshot;
     try { snapshot = validateSnapshot(items[0]); }

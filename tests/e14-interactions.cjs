@@ -6,7 +6,7 @@ async function main(){let count=0;
  await test('1080p, portrait, small sources and SAR expose distinct effective preview choices only',async()=>{
   const choices=(w,h,sar='1:1',rotation=0)=>uiAPI.previewChoices({sourceWidth:w,sourceHeight:h,sampleAspectRatio:sar,rotation}).map(n=>n.value);
   assert.deepEqual(choices(1920,1080),['720p','1080p']);assert.deepEqual(choices(1080,1920),['720p','1080p']);
-  assert.deepEqual(choices(640,360),['720p']);assert.deepEqual(choices(3840,2160),['720p','1080p','1440p']);
+  assert.deepEqual(choices(640,360),['720p']);assert.deepEqual(choices(3840,2160),['720p','1080p','1440p','2160p']);
   assert.deepEqual(choices(1440,2560),['720p','1080p','1440p']);assert.deepEqual(choices(1920,1080,'1:1',90),['720p','1080p']);
   assert.deepEqual(choices(720,576,'16:15'),['720p']);
  });

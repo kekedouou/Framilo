@@ -57,6 +57,12 @@ test('VFR whole recipe preserves every frame and only encodes video', () => {
   assert.equal(args[args.indexOf('-fps_mode') + 1], 'passthrough'); assert(args.includes('-an'));
   assert.equal(args[args.indexOf('-c:v') + 1], 'h264_nvenc'); assert(!args.includes('-ss')); assert(!args.includes('-t'));
 });
+test('E51 large proxy decline and close during choice start no encoder and leave no partial output',async t=>{
+ for(const cancel of [false,true]){const f=await fixture(t),frames=Array.from({length:5000},(_,n)=>({id:n,ptsTicks:String(n),timeBase:[1,25],time:n/25,end:(n+1)/25}));let entered;const waiting=new Promise(r=>entered=r);
+ const h=f.service.start({...f.spec,frames,requestDecision:async(spec,signal)=>{assert.equal(spec.kind,'large-proxy');entered();if(!cancel)return 'source';return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(Object.assign(Error('cancelled'),{name:'AbortError'})),{once:true}));}});
+ await waiting;if(cancel)await h.cancel();assert.equal(await h.ready,null);assert.equal(h.snapshot().status,'cancelled');assert.equal(f.calls.length,0);assert.deepEqual(await fs.promises.readdir(path.join(f.cacheRoot,'whole-v1')),[]);
+ }
+});
 test('VFR mapping rejects lost frames, non-I frames and shifted timestamps', async t => {
   const f = await fixture(t), spec = _test.normalize(f.spec), stream = { codec_name: 'h264', width: 1280, height: 720, time_base: '1/1000000', duration_ts: '50000', start_pts: '0', sample_aspect_ratio: '1:1' };
   const rows = [0, 17000, 33000].map(n => ({ key_frame: '1', pts: String(n) }));

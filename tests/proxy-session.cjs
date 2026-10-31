@@ -58,6 +58,7 @@ async function entryModel(mode = 'proxy') {
     'diagnostics.cjs': require('../plugin/diagnostics.cjs'),
     'task-client.cjs': { createTaskClient(options) { clientOptions = options; return backend; } },
     'native-backend.cjs': { createNativeBackend(options) { clientOptions = options; return backend; } },
+    'media-policy.cjs': {createJpegGate:()=>async()=>{}},
     'session.cjs': { createSession(options) { configured = options; return session; } }
   };
   const win = { addEventListener() {}, close() {}, EVAUI: { createUI: () => ({ canvas: {}, bindSession() {}, update(value) { updates.push(value); }, destroy() {} }) },
@@ -102,6 +103,13 @@ async function main() {
     assert.equal(h.players.length,1);assert(h.calls.some(c=>c[0]==='background-closed'));
     const changed=await h.session.setPlaybackSettings({ramMiB:1024,playbackBackend:'jpeg'});assert.equal(changed.status,'ready');
     assert.equal(h.session.snapshot().playbackBackend,'jpeg');assert.equal(h.session.snapshot().sourceIdentity.sha256,sha);await h.session.close();
+  });
+  await test('E51 pending preparation choice aborts cleanly when mode switches or window closes',async()=>{
+    for(const close of [false,true]){let entered;const waiting=new Promise(r=>entered=r);const h=sessionModel({prepare:async(selected,options)=>{if(options.playbackBackend==='proxy'){entered();await options.requestDecision({kind:'decoder-routing',choices:[{value:'jpeg'}]});}}});
+      const opening=h.session.loadSelected();await waiting;await flush();const id=h.session.snapshot().decision.id;
+      if(close){await h.session.close();assert.equal(h.session.snapshot().decision,null);}else{const next=await h.session.setPlaybackSettings({ramMiB:1024,playbackBackend:'jpeg'});assert.equal(next.status,'ready');assert.equal(h.session.snapshot().decision,null);assert.equal(h.session.snapshot().playbackBackend,'jpeg');}
+      assert.equal(h.session.answerDecision(id,'jpeg'),false);assert.equal((await opening).status,'superseded');await h.session.close();
+    }
   });
   await test('actual app entry forwards native runtime and background status without old preview layers', async () => {
     const h = await entryModel(), signal = new AbortController().signal;

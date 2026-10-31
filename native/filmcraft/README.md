@@ -1,5 +1,7 @@
 # FilmCraft 原生媒体桥
 
+E51扩至4K UHD及竖屏，不放大源图；显式输出长边≤3840、短边≤2160。已重编译并验证短合成H.264的3840×2160与2160×3840准确取帧，CPU/GPU代理同帧接管通路；不是长片性能验收。当前actual PTS回执钩子来自MP4读者，MKV等其它容器不得假称准确原生定位，产品入口提供JPEG兼容选择。
+
 维护入口，不是另一套播放器。运行文件为 plugin/bin/filmcraft-media.exe；它不读取 prototypes、上游源码、Rust、Q:或 verification-runs。仅开发构建使用既有隔离工具。
 
 来源固定：storytold/filmcraft 0.13.0，commit 176e6a9c585fd29e4b18d691663fe88a936c5b37，MIT OR Apache-2.0。原始ZIP SHA256为 a025662645f6d330103eaea389c57ce9418a014167bc446ba5ae46fc470f44fb。没有打包编辑器UI、品牌或字体。直接复用 media/codecs/platform/frame，包括Windows Media Foundation/D3D11硬解及上游软件回退。
@@ -9,7 +11,7 @@
 命令行：
 
 ```text
-filmcraft-media.exe <source-path> <hardware|software> <720|1080|1440> <cache-bytes> [output-width output-height [yuv420p|rgba]]
+filmcraft-media.exe <source-path> <hardware|software> <720|1080|1440|2160> <cache-bytes> [output-width output-height [yuv420p|rgba]]
 ```
 
 cache-bytes为134217728～402653184（128～384MiB）。它只覆盖原生GOP解码帧缓存，不是进程RAM/显存总硬上限。上游会在淘汰时保留两张完整源帧，桥在打开时保守预留width×height×16字节；不足返回明确错误。第三参数是画质短边档位：720档横片最大1280×720，竖片最大720×1280，其它档依此类推。显式宽高须成对提供、保持显示比例、符合质量边界与源显示尺寸；PAR参与显示几何校验。小视频不放大。原生解码后转换和管道缓冲仍需额外计量。

@@ -18,6 +18,7 @@ function createSession(options) {
   let state = 'empty', source = null, duration = 0, playback = null, error = null, progress = null, loadMetrics = null;
   let memoryResume = null;
   let cleanupError = null;
+  const decisions=require('./load-decisions.cjs').createDecisions(()=>notify());
   let activeExport = null, exportSequence = 0;
   let exportState = Object.freeze({ status: 'idle', message: '' }), exportFolders = Object.freeze({ status: 'idle', items: [] });
   const emptyComments = () => Object.freeze({ status: 'idle', items: Object.freeze([]), libraryPath: null, message: '', syncMessage: '', draft: null });
@@ -46,7 +47,7 @@ function createSession(options) {
     // count/RAM ledger forever. Never borrow a superseded material's player.
     const observed = !closed && owner && owner.ready && owner.epoch === epoch && owner.player
       ? owner.player.snapshot() : playback;
-    return Object.freeze({ state, epoch, libraryEpoch, source, duration,
+    return Object.freeze({ state, epoch, libraryEpoch, source, duration, decision:decisions.snapshot(),
       sourceIdentity: source ? Object.freeze({ libraryEpoch, itemId: source.id, filePath: source.filePath, sha256: source.sha256 || null }) : null,
       playback: observed ? { ...observed, frame: observed.frameId, time: observed.time } : null,
       error: error ? { ...error } : null, progress: progress ? { ...progress } : null,
@@ -144,7 +145,7 @@ function createSession(options) {
       loadComments(request, selected); // Independent read; never add API work to the frame loop.
       owned = { epoch: request.epoch, info: null, player: null, dispose: null, released: false, ready: false }; owner = owned;
       const mediaStartedAt = now();
-      const info = await media.prepare(selected, { signal: request.controller.signal, previewQuality: request.previewQuality, playbackBackend: request.playbackBackend, proxyEncoder: request.proxyEncoder, onProgress: value => {
+      const info = await media.prepare(selected, { signal: request.controller.signal, requestDecision:(spec,signal)=>decisions.ask(spec,request.controller.signal,signal), previewQuality: request.previewQuality, playbackBackend: request.playbackBackend, proxyEncoder: request.proxyEncoder, onProgress: value => {
         if (current(request) && owner === owned) { progress = typeof value === 'object' && value ? { ...value } : { stage: 'media-prepare', message: String(value) }; notify(); }
       } });
       const mediaReturnedAt = now(); owned.info = info;
@@ -236,7 +237,7 @@ function createSession(options) {
       if (!current(request)) return { status: 'superseded' };
       if(failure?.code==='SELECTION_EMPTY'){
         state='empty';source=null;duration=0;playback=null;error=null;
-        progress={stage:'selection-empty',message:'在 Eagle 中选中一个 MP4 视频，然后点击“读取选中视频”。'};
+        progress={stage:'selection-empty',message:'在 Eagle 中选中一个视频，然后点击“读取选中视频”。'};
         notify();return{status:'empty',snapshot:snapshot()};
       }
       state = 'error'; error = describe(failure, 'PREPARATION_FAILED'); progress = null; playback = null; notify();
@@ -865,6 +866,7 @@ function createSession(options) {
       const item = drawings.list(comments.items).find(value => value.id === id);
       return item && item.time <= duration ? control('seek', [item.time, { kind: 'annotation', index: item.drawingFrameOrdinal, final: true, inputAt: now() }], ['paused', 'playing', 'seeking']) : Promise.resolve({ status: 'ignored' });
     },
+    answerDecision: (id,value) => decisions.answer(id,value),
     annotationHistory: () => Object.freeze(annotationReceipts.slice()), setMemoryMiB, setPlaybackSettings, setDrawingToolbar, clearOtherCaches,
     startProxy: () => proxyControl('startProxy'), cancelProxy: () => proxyControl('cancelProxy'),
     setAutoProxy: enabled => setPlaybackSettings({ ramMiB: options.memoryPreferences?.snapshot()?.ramMiB, autoProxy: enabled }),

@@ -18,14 +18,14 @@
   }
   const pointerTime = (x, rect, range) => timelineAPI.timeAt(x, rect, range);
   function previewChoices(preview) {
-    const all = ['720p', '1080p', '1440p'];
+    const all = ['720p', '1080p', '1440p', '2160p'];
     if (!preview || !(preview.sourceWidth > 0) || !(preview.sourceHeight > 0)) return all.map(value => ({ value, original: false }));
     const sar = String(preview.sampleAspectRatio || '1:1').split(':').map(Number), ratio = sar.length === 2 && sar.every(n => n > 0 && Number.isFinite(n)) ? sar[0] / sar[1] : 1;
     let w = preview.sourceWidth * ratio, h = preview.sourceHeight;
     if (Math.abs(preview.rotation % 180) === 90) [w, h] = [h, w];
     const result = []; let previous = '';
     for (const value of all) {
-      const [long, short] = value === '1440p' ? [2560, 1440] : value === '1080p' ? [1920, 1080] : [1280, 720];
+      const [long, short] = value === '2160p' ? [3840,2160] : value === '1440p' ? [2560, 1440] : value === '1080p' ? [1920, 1080] : [1280, 720];
       const scale = Math.min(1, (w < h ? short : long) / w, (w < h ? long : short) / h);
       const key = Math.floor(w * scale + 1e-8) + ':' + Math.floor(h * scale + 1e-8);
       if (key !== previous) result.push({ value, original: ratio === 1 && scale === 1 });
@@ -130,7 +130,7 @@
       const node = el.proxyState; if (!node) return;
       if(state.playbackBackend==='jpeg'&&state.state==='preparing'){
         if(proxyToastTimer!==null)win.clearTimeout(proxyToastTimer);proxyToastTimer=null;
-        proxyToastKey=state.epoch+':jpeg';node.removeAttribute?.('data-faded');node.hidden=false;
+        node.setAttribute('data-persistent','true');proxyToastKey=state.epoch+':jpeg';node.removeAttribute?.('data-faded');node.hidden=false;
         const p=state.progress||{},labels={hash:'校验视频',analyze:'读取视频信息',cache:'检查已有缓存',decode:'生成JPEG序列',verify:'核验JPEG序列','player-initialize':'准备画面与声音'};
         const label=p.message||labels[p.stage]||'准备JPEG序列';
         set(node,'textContent',label+(Number.isSafeInteger(p.frames)?' · 已准备'+p.frames+'帧':''));return;
@@ -140,11 +140,14 @@
       if (!active || !['preparing', 'complete', 'cancelled', 'error', 'budget'].includes(stage)) {
         if (proxyToastTimer !== null) win.clearTimeout(proxyToastTimer); proxyToastTimer = null; proxyToastKey = null; node.hidden = true; return;
       }
-      const key = state.epoch + ':' + stage;
+      const transient = ['complete', 'cancelled', 'budget'].includes(stage) || stage === 'error' && value.cleanupComplete === true;
+      node.setAttribute('data-persistent',String(!transient));
+      const key = state.epoch + ':' + stage + ':' + !!value.cleanupComplete + ':' + (stage === 'preparing' ? '' : value.message || '');
       if (key !== proxyToastKey) {
         if (proxyToastTimer !== null) win.clearTimeout(proxyToastTimer); proxyToastTimer = null;
         proxyToastKey = key; node.removeAttribute?.('data-faded');
-        if (['complete', 'cancelled'].includes(stage)) proxyToastTimer = win.setTimeout(() => { node.setAttribute('data-faded', 'true'); proxyToastTimer = null; }, 2200);
+        shellUI?.transient?.('proxyState');
+        if (transient) { proxyToastTimer = win.setTimeout(() => { node.setAttribute('data-faded', 'true'); proxyToastTimer = null; }, 2200); }
       }
       node.hidden = false;
       set(node, 'textContent', proxyLabel(value));
@@ -259,10 +262,10 @@
       for (const option of Array.from(el.qualitySelect.options || [])) {
         const choice = choices.find(n => n.value === option.value);
         set(option, 'hidden', !choice); set(option, 'disabled', !choice);
-        set(option, 'textContent', (option.value === '1440p' ? '2K（1440p）' : option.value) + (choice?.original ? '（原始分辨率）' : ''));
+        set(option, 'textContent', (option.value === '2160p' ? '4K UHD（2160p）' : option.value === '1440p' ? '2K（1440p）' : option.value) + (choice?.original ? '（原始分辨率）' : ''));
       }
       const displayedQuality = preview && choices.some(n => n.value === preview.quality) ? preview.quality : effectiveQuality;
-      set(el.previewQuality, 'textContent', preview ? (displayedQuality === '1440p' ? '2K（1440p）' : displayedQuality) + ' 预览 · ' + preview.width + ' × ' + preview.height +
+      set(el.previewQuality, 'textContent', preview ? (displayedQuality === '2160p' ? '4K UHD（2160p）' : displayedQuality === '1440p' ? '2K（1440p）' : displayedQuality) + ' 预览 · ' + preview.width + ' × ' + preview.height +
         (preview.originalResolution ? '（原始分辨率）' : '') : (state.previewQuality || '720p') + ' 预览');
     }
     on(el.drawingToolbar, 'change', async () => {

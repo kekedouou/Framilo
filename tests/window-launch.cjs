@@ -202,6 +202,7 @@ function launchModel(settings = {}) {
         discoverTools: () => ({ ffmpeg: 'memory-only' }) }) },
       'media.cjs': { createMedia: () => ({ async prepare(value) { await mediaReady.promise; clock += 100;
         return { source: { ...value, sha256: 'a'.repeat(64) }, duration: 3, frames: [{ id: 0 }], metrics: { reused: true } }; } }) },
+      'media-policy.cjs': {createJpegGate:()=>async()=>{}},
       'session.cjs': require('../plugin/session.cjs'), 'diagnostics.cjs': require('../plugin/diagnostics.cjs'), 'frame-index.cjs': {}
     };
     modules['drawing-store.cjs'] = { createAnnotationStore: () => null };

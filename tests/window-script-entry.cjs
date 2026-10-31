@@ -25,6 +25,7 @@ async function check(mode) {
     'preferences.cjs': { createMemoryPreferences: () => ({ snapshot: () => ({ ramBytes: 1024 ** 3 }) }) },
     'diagnostics.cjs': { createDiagnostics: () => ({ public: {}, publish() {} }) },
     'frame-index.cjs': {}, 'task-client.cjs': { createTaskClient() { throw Error('No media/worker may run in a loader-only test.'); } },
+    'media-policy.cjs': {createJpegGate:()=>async()=>{}},
     'session.cjs': { createSession(options) { return {
       snapshot: () => snapshot,
       async loadSelected() {

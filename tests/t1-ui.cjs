@@ -44,6 +44,16 @@ test('E46 proxy progress and one-shot completion fade work without the retired m
  h.ui.destroy();assert.equal(h.el('proxyState').hidden,true);
 });
 
+test('E51 quota fallback fades once across polling; cleanup failure persists and new epoch restarts',()=>{
+ const h=harness(),timers=new Map();let serial=0;h.win.setTimeout=fn=>{timers.set(++serial,fn);return serial;};h.win.clearTimeout=id=>timers.delete(id);
+ const native={...h.state,playbackBackend:'proxy'},budget={stage:'budget',cleanupComplete:true,message:'代理空间不足，继续播放原片'};
+ h.ui.update({...native,proxyPreparation:budget});assert.equal(timers.size,1);assert.equal(h.el('proxyState').attributes['data-persistent'],'false');
+ h.ui.update({...native,proxyPreparation:{...budget}});assert.equal(serial,1);[...timers.values()][0]();timers.clear();h.ui.update({...native,proxyPreparation:budget});assert.equal(h.el('proxyState').attributes['data-faded'],'true');assert.equal(timers.size,0);
+ h.ui.update({...native,epoch:native.epoch+1,proxyPreparation:budget});assert.equal(timers.size,1);
+ h.ui.update({...native,proxyPreparation:{stage:'error',cleanupComplete:false,message:'清理未完成'}});assert.equal(timers.size,0);assert.equal(h.el('proxyState').attributes['data-persistent'],'true');assert.notEqual(h.el('proxyState').attributes['data-faded'],'true');
+ h.ui.update({...native,proxyPreparation:{stage:'error',cleanupComplete:true,message:'后台已停止，继续原片'}});assert.equal(timers.size,1);h.ui.destroy();assert.equal(timers.size,0);
+});
+
 test('E44 proxy labels distinguish encoding, real validation and publication without inherited99percent or stale ETA',()=>{
  const h=harness(),native={...h.state,playbackBackend:'proxy'},cases=[
   [{status:'queued',message:'整片代理等待启动'},'整片代理等待启动'],

@@ -25,8 +25,8 @@ async function main() {
     await assert.rejects(captureSelected({ item: { getSelected: () => [{}, {}] } }));
     await assert.rejects(captureSelected({ item: { getSelected() { throw new Error('API failure'); } } }), /API failure/);
   });
-  await test('Non-MP4, absent ID, relative and NUL paths rejected', () => {
-    [{ id: 'one', filePath: path.resolve('x.mkv'), ext: 'mkv' }, { filePath: file },
+  await test('Non-video, absent ID, relative and NUL paths rejected', () => {
+    [{ id: 'one', filePath: path.resolve('x.jpg'), ext: 'jpg' }, { filePath: file },
       { id: 'one', filePath: 'relative.mp4' }, { id: 'one', filePath: file + '\0' }].forEach(value => assert.throws(() => validateSnapshot(value)));
   });
   await test('Official Item prototype getters are read once without own-field assumptions', async () => {

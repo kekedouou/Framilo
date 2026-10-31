@@ -54,7 +54,7 @@ fn output_size(w: u32, h: u32, par: (u32, u32), quality: u32, requested: Option<
     if w == 0 || h == 0 || par.0 == 0 || par.1 == 0 { return Err("invalid source display geometry".into()); }
     let display_w = w as f64 * par.0 as f64 / par.1 as f64;
     let display_h = h as f64;
-    let long = match quality { 720 => 1280, 1080 => 1920, 1440 => 2560, _ => return Err("unsupported output quality".into()) };
+    let long = match quality { 720 => 1280, 1080 => 1920, 1440 => 2560, 2160 => 3840, _ => return Err("unsupported output quality".into()) };
     let (max_w, max_h) = if display_w < display_h { (quality, long) } else { (long, quality) };
     let (ow, oh) = match requested {
         Some((ow, oh)) => (ow, oh),
@@ -185,13 +185,13 @@ fn run() -> Result<(), String> {
     let path = args.next().ok_or("source path required")?;
     let software = match args.next().as_deref() { Some("software") => true, Some("hardware") | None => false, _ => return Err("expected hardware or software".into()) };
     let height = args.next().unwrap_or_else(|| "720".into()).parse::<u32>().map_err(|_|"invalid output height")?;
-    if ![720, 1080, 1440].contains(&height) { return Err("unsupported output height".into()); }
+    if ![720, 1080, 1440, 2160].contains(&height) { return Err("unsupported output height".into()); }
     let cache_bytes = args.next().unwrap_or_else(|| "402653184".into()).parse::<usize>().map_err(|_|"invalid cache bytes")?;
     if !(128*1024*1024..=384*1024*1024).contains(&cache_bytes) { return Err("native cache must be 128 to 384 MiB".into()); }
     let requested = match (args.next(), args.next()) {
         (None, None) => None,
         (Some(w), Some(h)) => { let w=w.parse::<u32>().map_err(|_|"invalid output width")?; let h=h.parse::<u32>().map_err(|_|"invalid output height")?;
-            if w == 0 || h == 0 || w.max(h) > 2560 || w.min(h) > 1440 { return Err("invalid explicit output bounds".into()); } Some((w,h)) },
+            if w == 0 || h == 0 || w.max(h) > 3840 || w.min(h) > 2160 { return Err("invalid explicit output bounds".into()); } Some((w,h)) },
         _ => return Err("output width and height must be supplied together".into())
     };
     let prefer_yuv = match args.next().as_deref() { Some("yuv420p")=>true, Some("rgba")|None=>false, _=>return Err("unsupported output pixel format".into()) };

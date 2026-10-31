@@ -32,10 +32,9 @@ function snapshotCopy(value) {
   const { id, itemId, filePath, name, ext, libraryEpoch } = value;
   if (typeof id !== 'string' || !id.trim() || itemId !== undefined && itemId !== id)
     fail('视频素材身份无效。', 'MEDIA_SNAPSHOT');
-  if (typeof filePath !== 'string' || !path.isAbsolute(filePath) || filePath.includes('\0') || path.extname(filePath).toLowerCase() !== '.mp4' ||
-      String(ext || 'mp4').replace(/^\./, '').toLowerCase() !== 'mp4') fail('需要本地 MP4 视频的绝对路径。', 'MEDIA_SNAPSHOT');
+  if (typeof filePath !== 'string' || !path.isAbsolute(filePath) || filePath.includes('\0') || !require('./media-policy.cjs').accepts(filePath,ext)) fail('需要支持的视频文件的本地绝对路径。', 'MEDIA_SNAPSHOT');
   if (libraryEpoch !== undefined && (!Number.isSafeInteger(libraryEpoch) || libraryEpoch < 0)) fail('素材库代次无效。', 'MEDIA_SNAPSHOT');
-  return Object.freeze({ id, itemId: id, filePath: path.resolve(filePath), ext: 'mp4',
+  return Object.freeze({ id, itemId: id, filePath: path.resolve(filePath), ext: require('./media-policy.cjs').sourceExt(filePath),
     name: typeof name === 'string' && name.trim() ? name : path.basename(filePath),
     ...(libraryEpoch === undefined ? {} : { libraryEpoch }) });
 }
@@ -183,7 +182,7 @@ function streamRatio(stream, field, fallback) {
 function validateProbe(probe, maximumDuration = LIMITS.duration) {
   if (!probe || !Array.isArray(probe.streams)) fail('视频分析结果无效。', 'MEDIA_PROBE');
   const formats = String(probe.format && probe.format.format_name || '').split(',');
-  if (!formats.includes('mp4') && !formats.includes('mov')) fail('文件内容不是 MP4 容器。', 'MEDIA_CONTAINER');
+  if (!formats.some(f=>require('./media-policy.cjs').CONTAINERS.includes(f))) fail('文件容器尚不支持。', 'MEDIA_CONTAINER');
   const end = videoEnd(probe), video = end.stream;
   if (![video.width, video.height].every(value => Number.isSafeInteger(value) && value > 0) || video.disposition && video.disposition.attached_pic)
     fail('首视频流不是可播放画面。', 'MEDIA_VIDEO');
@@ -313,8 +312,8 @@ function childProcess(job, tool, args, stdio, sample) {
 function guarded(job, operation) {
   return track(job, operation.catch(error => { job.failure = job.failure || error; stopChildren(job); throw error; }));
 }
-async function captureProbe(job, tools, source) {
-  const { child, finish } = childProcess(job, tools.ffprobe, ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', source], ['ignore', 'pipe', 'pipe'], false);
+async function captureProbe(job, tools, source, packetsOnly=false) {
+  const { child, finish } = childProcess(job, tools.ffprobe, ['-v','error',...(packetsOnly?['-select_streams','v:0','-show_packets','-show_entries','packet=pts,duration']:['-show_streams','-show_format']),'-of','json',source], ['ignore', 'pipe', 'pipe'], false);
   async function collect(stream) {
     const chunks = []; let bytes = 0;
     for await (const chunk of stream) { check(job); bytes = boundedAdd(bytes, chunk.length, LIMITS.metadataBytes); chunks.push(chunk); }
@@ -326,6 +325,14 @@ async function captureProbe(job, tools, source) {
   if (exit.error || exit.code !== 0) throw exit.error || Object.assign(new Error('视频分析工具失败：' + results[1].value.toString('utf8').slice(-8000)), { code: 'MEDIA_PROBE_EXIT' });
   let probe;
   try { probe = JSON.parse(results[0].value.toString('utf8')); } catch (_) { fail('视频分析结果不是有效JSON。', 'MEDIA_PROBE'); }
+  if(!packetsOnly){const v=probe.streams?.find(s=>s.codec_type==='video');let timed=false;try{videoEnd(probe);timed=true;}catch(_){}if(v && !timed){
+    const timing=await captureProbe(job,tools,source,true);const packets=timing.probe.packets;
+    if(!Array.isArray(packets)||!packets.length||packets.length>LIMITS.frames||packets.some(p=>!Number.isSafeInteger(p.pts)))fail('缺少可靠的源帧时间或超过120000帧安全上限。','MEDIA_VIDEO_TIME');
+    packets.sort((a,b)=>a.pts-b.pts);const last=packets[packets.length-1];
+    if(packets.some((p,n)=>n&&p.pts===packets[n-1].pts)||!Number.isSafeInteger(last.duration)||last.duration<=0)fail('源帧时间重复或末帧边界缺失，不能猜测。','MEDIA_VIDEO_TIME');
+    v.start_pts=packets[0].pts;v.duration_ts=last.pts+last.duration-v.start_pts;
+    if(!Number.isSafeInteger(v.duration_ts)||v.duration_ts<=0)fail('源视频时间边界无效。','MEDIA_VIDEO_TIME');
+  }}
   return { probe, metrics: exit.metrics };
 }
 async function build(job, tools, tx, source, probe, frameIndex) {

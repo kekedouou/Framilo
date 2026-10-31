@@ -99,13 +99,18 @@
         readFrameBatch: (info, ...args) => ownedCache(info).readFrameBatch(info, ...args),
         release: async (info, ...args) => { const holder = ownedCache(info); await holder.release(info, ...args); mediaOwners.delete(info); },
         clearOther: (...args) => backend.cache.clearOther(...args) };
+      const jpegGate=require(path.join(root,'media-policy.cjs')).createJpegGate();
       let preparedMedia = null, discovery = null, discoveredTools = null, backendKey = null;
       // Selection is captured by session immediately; tool discovery waits only
       // inside preparation, so it cannot silently change the clicked material.
-      const media = { async prepare(snapshot, options) {
+      const media = { async prepare(snapshot, options = {}) {
         const signal = options && options.signal;
         if (signal && signal.aborted) throw cancelled();
         const native = options?.playbackBackend === 'proxy';
+        if(native && !['mp4','m4v','mov','3gp'].includes(path.extname(snapshot.filePath).slice(1).toLowerCase())){
+          if(options.requestDecision)await options.requestDecision({kind:'decoder-routing',title:'此格式使用JPEG兼容播放',body:'当前原生读者尚不能确认此容器的准确帧时间。JPEG模式会先准备整片，再逐帧播放；不会修改源视频。',choices:[{value:'jpeg',label:'使用JPEG'},{value:'cancel',label:'取消'}]});
+          if(signal?.aborted)throw cancelled();throw Object.assign(Error('此格式请在设置中选择JPEG序列；代理模式目前支持MP4、M4V、MOV、3GP。'),{code:'MEDIA_CONTAINER_MODE'});
+        }
         const memory = preferences.snapshot();
         const acceleration=preferences.gpuAcceleration?.();
         const decoder=acceleration===undefined?(preferences.decoderPreference?.()||'prefer-hardware'):acceleration?'prefer-hardware':'prefer-software',encoder=acceleration===undefined?(preferences.proxyEncoder?.()||'cpu'):acceleration?'nvidia':'cpu',gpu=acceleration===undefined?preferences.gpuDrawing?.()!==false:acceleration;
@@ -128,7 +133,10 @@
             preparedMedia = backend.media; backendKey = key;
           }
         }
-        const active = backend, info = await preparedMedia.prepare(snapshot, options);
+        const active = backend, provider=preparedMedia;
+        if(!native)await jpegGate(snapshot,options,discoveredTools);
+        if(signal?.aborted)throw cancelled();
+        const info = await provider.prepare(snapshot, options);
         mediaOwners.set(info, active.cache); return info;
       } };
       const exportOperation = (name, args) => {

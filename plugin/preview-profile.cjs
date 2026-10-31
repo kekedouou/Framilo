@@ -3,9 +3,9 @@
 // Shared pure rules; no files, Eagle API or renderer access.
 const VERSION = 'fit-no-upscale-v1';
 const SCRUB_VERSION = 'scrub-fit-no-upscale-v1';
-const QUALITIES = Object.freeze(['720p', '1080p', '1440p']);
+const QUALITIES = Object.freeze(['720p', '1080p', '1440p', '2160p']);
 function quality(value = '720p') {
-  if (!QUALITIES.includes(value)) throw new Error('画质只支持720p、1080p或2K（1440p）。');
+  if (!QUALITIES.includes(value)) throw new Error('画质支持720p、1080p、2K（1440p）或4K UHD（2160p）。');
   return value;
 }
 function dimensions(video, selected = '720p') {
@@ -19,7 +19,7 @@ function dimensions(video, selected = '720p') {
   const ratio = sar.length === 2 && sar.every(n => n > 0 && Number.isFinite(n)) ? sar[0] / sar[1] : 1;
   let displayWidth = width * ratio, displayHeight = height;
   if (Math.abs(rotation % 180) === 90) [displayWidth, displayHeight] = [displayHeight, displayWidth];
-  const [long, short] = selected === '1440p' ? [2560, 1440] : selected === '1080p' ? [1920, 1080] : [1280, 720];
+  const [long, short] = selected === '2160p' ? [3840,2160] : selected === '1440p' ? [2560, 1440] : selected === '1080p' ? [1920, 1080] : [1280, 720];
   const maxWidth = displayWidth < displayHeight ? short : long, maxHeight = displayWidth < displayHeight ? long : short;
   const scale = Math.min(1, maxWidth / displayWidth, maxHeight / displayHeight);
   const w = Math.max(1, Math.floor(displayWidth * scale + 1e-8)), h = Math.max(1, Math.floor(displayHeight * scale + 1e-8));
@@ -30,7 +30,7 @@ function dimensions(video, selected = '720p') {
 function validate(profile, source) {
   if (!profile || ![VERSION,SCRUB_VERSION].includes(profile.version)) throw new Error('预览尺寸版本无效。');
   quality(profile.quality);
-  const [long, short] = profile.quality === '1440p' ? [2560, 1440] : profile.quality === '1080p' ? [1920, 1080] : [1280, 720];
+  const [long, short] = profile.quality === '2160p' ? [3840,2160] : profile.quality === '1440p' ? [2560, 1440] : profile.quality === '1080p' ? [1920, 1080] : [1280, 720];
   if (![profile.width, profile.height].every(n => Number.isSafeInteger(n) && n > 0) ||
       Math.max(profile.width, profile.height) > long || Math.min(profile.width, profile.height) > short ||
       profile.sourceWidth !== source.width || profile.sourceHeight !== source.height ||

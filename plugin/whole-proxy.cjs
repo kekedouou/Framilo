@@ -19,7 +19,7 @@ function base(value) { const b = typeof value === 'string' ? value.split('/').ma
 function normalize(spec) {
   if (!spec || !spec.source || !path.isAbsolute(spec.source.filePath) || !/^[a-f0-9]{64}$/.test(spec.source.sha256 || '')) throw error('WHOLE_SOURCE', '整片代理缺少已确认的源文件身份。');
   const displayWidth = spec.width, displayHeight = spec.height;
-  if (![displayWidth, displayHeight].every(n => Number.isSafeInteger(n) && n >= 1) || Math.max(displayWidth,displayHeight)>2560 || Math.min(displayWidth,displayHeight)>1440) throw error('WHOLE_SIZE', '整片代理尺寸必须是有效的预览尺寸。');
+  if (![displayWidth, displayHeight].every(n => Number.isSafeInteger(n) && n >= 1) || Math.max(displayWidth,displayHeight)>3840 || Math.min(displayWidth,displayHeight)>2160) throw error('WHOLE_SIZE', '整片代理尺寸必须在4K UHD预览边界内。');
   // H.264 4:2:0 needs even coded dimensions. Round UP by at most one sample,
   // then restore the original display aspect using SAR. No crop or black pad.
   const width=Math.ceil(displayWidth/2)*2,height=Math.ceil(displayHeight/2)*2;
@@ -50,7 +50,7 @@ function encodeArgs(spec, output, byteLimit) {
     '-map', '0:v:0', '-an', '-sn', '-dn', '-vf', `setpts=PTS-STARTPTS,scale=${spec.width}:${spec.height}:flags=bilinear:out_range=tv:out_color_matrix=bt709,setsar=sar=${(spec.sampleAspectRatio||'1:1').replace(':','/')}:max=65535,format=yuv420p`,
     '-filter_threads', '2', '-fps_mode', 'passthrough', '-enc_time_base', '1:1000000', '-c:v', spec.encoder === 'nvidia' ? 'h264_nvenc' : 'libx264',
     ...(spec.encoder === 'nvidia' ? ['-preset', 'p1', '-tune', 'ull', '-rc', 'constqp', '-qp', '20', '-init_qpI', '20', '-zerolatency', '1'] : ['-preset', 'ultrafast', '-crf', '20', '-x264-params', 'keyint=1:scenecut=0']),
-    '-threads', '2', '-g', '1', '-bf', '0', '-pix_fmt', 'yuv420p', '-profile:v', 'baseline', '-level:v', '5.1',
+    '-threads', '2', '-g', '1', '-bf', '0', '-pix_fmt', 'yuv420p', '-profile:v', 'baseline', ...(Math.max(spec.width,spec.height)<=2560&&Math.min(spec.width,spec.height)<=1440?['-level:v','5.1']:[]),
     '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv', '-metadata:s:v:0', 'rotate=0',
     '-video_track_timescale', '1000000', '-fs', String(byteLimit), '-progress', 'pipe:1', '-stats_period', '0.2', '-f', 'mp4', output];
 }
@@ -318,6 +318,13 @@ function createWholeProxy(options = {}) {
         if (regular(path.join(destination, 'video.mp4')).size !== metadata.bytes || await hashFile(path.join(destination, 'video.mp4'), task) !== metadata.sha256) throw error('WHOLE_CACHE_INVALID', '已存整片代理内容校验失败。');
         check(task);if(stamp(regular(spec.source.filePath))!==sourceInitialStamp)throw error('WHOLE_SOURCE_CHANGED','源视频在复用校验过程中发生变化。');await storage.touch(key);const result = asset(metadata, destination, true); notify(task, { status: 'ready', message: '已使用完整代理', progress: 1, bytes: metadata.bytes, asset: result }); return result;
       } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      const estimateRange=require('./media-policy.cjs').largeProxy(spec,limitBytes);
+      if(estimateRange.confirm && input.requestDecision){
+        notify(task,{status:'awaiting',message:'大代理待确认，原片可继续播放'});
+        const gib=n=>(n/1024**3).toFixed(1);
+        const choice=await input.requestDecision({kind:'large-proxy',title:'生成较大的代理？',body:'预计约 '+gib(estimateRange.low)+'–'+gib(estimateRange.high)+' GiB（内容复杂时可能超出），当前额度 '+gib(limitBytes)+' GiB。会先清理可淘汰旧缓存；仍不足则回收本次未完成代理，继续原片。',choices:[{value:'generate',label:'生成代理'},{value:'source',label:'继续原片'}]},task.decisionController.signal);
+        check(task);if(choice!=='generate'){task.cancelled=true;check(task);}
+      }
       const lock = path.join(directory, key + '.lock'), lockBody = JSON.stringify({ schema: SCHEMA, token: task.token, pid: process.pid, createdAt: new Date().toISOString() });
       try { await fs.promises.writeFile(lock, lockBody, { flag: 'wx' }); }
       catch (e) {
@@ -403,8 +410,8 @@ function createWholeProxy(options = {}) {
     if (closed) throw error('WHOLE_CLOSED', '整片代理服务已关闭。');
     if (current && current.input === spec) return current.handle;
     const previous = current; if (previous) previous.handle.cancel();
-    const task = { token: crypto.randomBytes(16).toString('hex'), input: spec, cancelled: false, child: null, state: Object.freeze({ status: 'queued', stage: 'preparing', progress: 0, ready: 0, total: 0, readyRanges: Object.freeze([]), message: '整片代理等待启动' }), onChange: spec.onChange };
-    task.handle = { ready: null, snapshot: () => task.state, cancel: () => { task.cancelled = true; try { task.child?.kill(); } catch (_) {} return task.ready; } };
+    const task = { token: crypto.randomBytes(16).toString('hex'), input: spec, cancelled: false, decisionController:new AbortController(), child: null, state: Object.freeze({ status: 'queued', stage: 'preparing', progress: 0, ready: 0, total: 0, readyRanges: Object.freeze([]), message: '整片代理等待启动' }), onChange: spec.onChange };
+    task.handle = { ready: null, snapshot: () => task.state, cancel: () => { task.cancelled = true; task.decisionController.abort(); try { task.child?.kill(); } catch (_) {} return task.ready; } };
     tasks.add(task);task.handle.release=async()=>{await task.handle.cancel();if(task.readLease){await task.readLease();task.readLease=null;}tasks.delete(task);};
     current = task; task.ready = Promise.resolve().then(() => execute(task, spec, previous)); task.handle.ready = task.ready; return task.handle;
   }

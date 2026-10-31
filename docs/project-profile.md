@@ -1,5 +1,7 @@
 # 项目说明
 
+当前：E-51 第二阶段候选完成实现，用户授权连续交付；适用验证与未验边界以阶段记录为准；范围见[计划](experiments/E51/plan.md)，结果见[记录](experiments/E51/report.md)。下方E50及更早为历史。
+
 当前：E-50 发布前稳定性包代码与适用本地检查通过，真实Eagle集中体验待验：监测异步扫描/关窗取消、失败临时代理先回收后终态、分类说明及无素材空状态；E49标签保持。见[计划](experiments/E50/plan.md)与[记录](experiments/E50/report.md)。下方E49及此前按历史阶段阅读。
 
 2026-10-31 发布准备：E-49运行代码仍冻结；用户实测确认监测开启带来热命中卡顿，关闭时目前感觉不到卡顿，优先安排监测修复。Motionote、4K、格式与长稳验收以及独立版/联动/扩展等已整理[六阶段需求路线](roadmap.md#motionote需求总表与阶段顺序2026-10-31)。本轮只更新规划；JPEG去留、容量阈值及帧数上限仍待决定。见[发布调查](releases/motionote-preflight.md)。
@@ -18,6 +20,8 @@
 
 ## 当前模块与资源边界
 
+E51新增media-policy（格式/时长/空间策略）与load-decisions（可取消、代次隔离的选择），由app/Session协调，whole-proxy在复用核验后、写锁前确认大任务。preview-profile/native-reader/原生桥支持2160p；设置内外能力表明确JPEG兼容与未验格式，详见架构E51章节。
+
 E50由proxy-storage提供可取消的异步逐文件统计，live-resources管理资源采样生命周期/源身份与分类，performance-runtime按新事件重算有界监测快照。关闭监测取消未完扫描及自有资源采样进程；不新增Worker或依赖。whole-proxy只回收当前任务归属的未完成文件，回收失败保留锁与原因，不删除未知/活动/当前源完整代理。Session把SELECTION_EMPTY映射正常空状态，API/释放错误仍为错误。详见架构E50章节。
 
 原片/完整代理统一FilmCraft原生读者，异步packet源索引/整数PTS，后台独立整片H.264全I生成，完成验证才同帧接管。前台不运行旧分段/稀疏预览；JPEG独立旧整片准备。native-backend/reader/wire管理媒体与进程，native-player/renderer管理源音频时钟、RAM、YUV/WebGL及CPU回退，whole-proxy管理完整生产/发布/取消；proxy-storage管理代理额度及读者租约；live-resources和performance-runtime管理即时监测。设置与现有UI沿原session接线。E46新增统一GPU加速；代理自动生成与提前解压固定开启；其它缓存维护走后台，提示统一左下。E49以native-audio无损复制压缩音轨到有界内存，避免取声路径同时恢复原4K视频；Player管理Blob/预算和音频时钟，代理保持不变。E47减少热帧/账本/布局冗余，横拖按短长范围一次计算灵敏度，JPEG应用时仅显示实际进度。E48在目标已就绪时补原生单读者邻域填充，JPEG热拖动豁免静默期；冷目标前台优先，清缓存按钮与应用统一。
@@ -27,7 +31,7 @@ E50由proxy-storage提供可取消的异步逐文件统计，live-resources管�
 ## 身份与入口
 
 - 正式主线是Eagle Window视频分析插件，唯一实现位于 `plugin/`；开发入口 `plugin/manifest.json`，界面名“视频分析”。
-- 当前开发版支持MP4及720p/1080p/1440p预览，设置高级菜单可选代理或JPEG序列，以统一GPU加速控制编码/解码/绘制，缺少旧偏好字段时默认proxy；原生代理使用独立整片路径，JPEG所有时长沿旧整片准备路径。源帧上限120000、索引64MiB/控制JSON6MiB，重复/缺失PTS不猜测。默认720p/1GiB，提供512MiB及1～10GiB档位；压缩帧池≤总额度1/8。额度不是整个程序内存硬上限，1440p与真实长片性能仍需实际体验。
+- 当前开发版支持MP4/M4V/MOV/3GP原生路径及部分其它容器的JPEG兼容选择（见releases/motionote-capabilities.md），提供720p/1080p/1440p/2160p预览，设置高级菜单可选代理或JPEG序列，以统一GPU加速控制编码/解码/绘制，缺少旧偏好字段时默认proxy；原生代理使用独立整片路径，JPEG所有时长沿旧整片准备路径。源帧上限120000、索引64MiB/控制JSON6MiB，重复/缺失PTS不猜测。默认720p/1GiB，提供512MiB及1～10GiB档位；压缩帧池≤总额度1/8。额度不是整个程序内存硬上限，4K与真实长片性能仍需Eagle实际体验。
 - 已发布MVP Beta2/R4已归档；冻结的是发行包、标签与仓库外安装，不表示后续开发停止。发行入口名“视频分析 · MVP Beta”、独立ID，功能固定720p；历史路径公开已接受，许可证未指定。
 - Git根为 `eagle-video-analysis/`，保留单一仓库。原型A/B/S1及preview-quality受局部AGENTS约束，默认封存；旧T2/T4自动测量入口停用。
 - 技术栈：HTML/CSS/JavaScript、Eagle API、FilmCraft原生媒体桥、YUV/WebGL或CPU绘制、源音频HTMLMediaElement，Node内置模块和Eagle现有FFmpeg/ffprobe；JPEG保留Canvas/Web Audio/旧任务守护。Rust仅开发构建依赖。
@@ -43,7 +47,7 @@ E50由proxy-storage提供可取消的异步逐文件统计，live-resources管�
 | 任务、清理规则 | docs/development-plan.md；E45修复/清理与未验关卡、历史T/E任务及F-01～F-07 |
 | 验证协议 | docs/verification.md；协议、真实运行和人工反馈分开 |
 | 当前状态 | docs/progress.md；先读顶部当前交接，后段为历史 |
-| 专项结果 | docs/experiments/E50/report.md当前候选的检查与宿主缺口；E49/report.md保存冻结代码结果，E48及更早按历史范围保留 |
+| 专项结果 | docs/experiments/E51/report.md当前候选的检查与宿主缺口；E49/report.md保存冻结代码结果，E48及更早按历史范围保留 |
 | 发布交接 | docs/releases/e49-frozen-2026-10-30.md当前源码冻结；docs/releases/v0.1.0-beta.2.md为旧安装包发布记录 |
 | 旧发行与过程 | docs/releases/旧版本、docs/progress/、demos/standalone-preview/；历史说明不冒充下载或新授权 |
 | 私人原始证据/配置 | verification-runs/和原型evidence/等Git忽略路径；不公开、不覆盖 |
