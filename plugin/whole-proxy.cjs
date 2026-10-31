@@ -263,11 +263,23 @@ function createWholeProxy(options = {}) {
     // Only a current-run random directory bearing this exact ownership token may be removed.
     let temporaryReleased = !task.temp, lockReleased = !task.lock;
     if (task.temp && inside(directory, task.temp)) {
-      try { const owner = JSON.parse(await fs.promises.readFile(path.join(task.temp, 'owner.json'), 'utf8'));
-        if (owner.schema === SCHEMA && owner.token === task.token && owner.pid === process.pid) { await fs.promises.rm(task.temp, { recursive: true }); temporaryReleased = true; }
-      } catch (e) { if (e.code === 'ENOENT') temporaryReleased = true; else notify(task, { cleanupMessage: '临时代理清理未完成：' + e.message }); }
+      try { const stat=await fs.promises.lstat(task.temp);
+        if(!stat.isDirectory()||stat.isSymbolicLink()||path.resolve(await fs.promises.realpath(task.temp)).toLowerCase()!==path.resolve(task.temp).toLowerCase())throw Error('临时目录身份不符');
+        const ownerFile=path.join(task.temp,'owner.json');if(regular(ownerFile).size>2048)throw Error('临时归属记录过大');
+        const owner = JSON.parse(await fs.promises.readFile(ownerFile, 'utf8'));
+        if (owner.schema !== SCHEMA || owner.token !== task.token || owner.pid !== process.pid)throw Error('临时文件归属已变化');
+        const names=await fs.promises.readdir(task.temp);if(names.some(n=>!['owner.json','video.mp4','complete.json'].includes(n)))throw Error('临时目录含未知文件');
+        for(const name of names)regular(path.join(task.temp,name));
+        await fs.promises.rm(task.temp, { recursive: true }); temporaryReleased = true;
+      } catch (e) {
+        // A missing owner/file is not proof that the directory was removed.
+        if(e.code==='ENOENT')try{await fs.promises.lstat(task.temp);}catch(missing){if(missing.code==='ENOENT')temporaryReleased=true;}
+        if(!temporaryReleased)notify(task,{cleanupMessage:'临时代理清理未完成：'+e.message});
+      }
     }
-    if (task.lock) {
+    // Keep the owning lock if recovery failed, so a later restart can identify
+    // the orphan. Do not turn a known partial into an unowned directory.
+    if (task.lock && temporaryReleased) {
       try { const owner = JSON.parse(await fs.promises.readFile(task.lock, 'utf8')); if (owner.token === task.token) { await fs.promises.unlink(task.lock); lockReleased = true; } } catch (e) { if (e.code === 'ENOENT') lockReleased = true; else notify(task, { cleanupMessage: '代理锁清理未完成。' }); }
     }
     notify(task, { cleanupComplete: temporaryReleased && lockReleased, temporaryReleased, lockReleased });
@@ -371,13 +383,21 @@ function createWholeProxy(options = {}) {
       const unavailable=failure.code==='WHOLE_PROCESS'&&/(?:unknown encoder ['"]?h264_nvenc|cannot load (?:nvcuda|nvencodeapi|libnvidia-encode)|no (?:nvenc capable|capable devices|cuda capable)|openencodesessionex failed|driver does not support|required nvidia driver|cuda_error_no_device|unsupported device)/i.test(failure.message);
       if(!cancelled&&task.spec?.encoder==='nvidia'&&unavailable){
         await cleanup(task);if(task.allocation){await task.allocation();task.allocation=null;}if(task.readLease){await task.readLease();task.readLease=null;}
+        if(task.state.cleanupComplete){
         task.temp=null;task.lock=null;task.key=null;
         notify(task,{status:'checking',message:'GPU编码不可用，自动改用CPU生成代理',encoder:'cpu',encoderFallback:true});
         return await execute(task,{...input,encoder:'cpu'},null);
+        }
       }
-      notify(task, { status: cancelled ? 'cancelled' : 'failed', message: cancelled ? '整片代理已取消' : failure.message, error: cancelled ? null : { code: failure.code || 'WHOLE_FAILED', message: failure.message } });
+      notify(task,{status:'cleaning',message:'正在回收未完成的代理，原片仍可播放'});
+      await cleanup(task);task.failureCleaned=true;
+      const incomplete=!task.state.cleanupComplete;
+      const message=incomplete?(task.state.cleanupMessage||'临时代理清理未完成，请关闭当前视频后重试；原片仍可播放。'):
+        cancelled?'整片代理已取消，临时文件已回收':failure.code==='WHOLE_BUDGET'?'代理磁盘额度不足；未完成文件已回收，继续播放原片。可在高级设置提高额度或降低预览画质。':/ENOSPC|No space left on device/i.test(failure.code+' '+failure.message)?'硬盘可用空间不足；未完成文件已回收，继续播放原片。请释放硬盘空间后重试。':failure.message;
+      notify(task, { status: cancelled&&!incomplete ? 'cancelled' : 'failed', bytes:task.state.temporaryReleased?0:task.state.bytes, message,
+        error:cancelled&&!incomplete?null:{code:incomplete?'WHOLE_CLEANUP_FAILED':failure.code||'WHOLE_FAILED',message} });
       return null;
-    } finally { await cleanup(task);if(task.allocation){await task.allocation();task.allocation=null;}if(task.state.status!=='ready'&&task.readLease){await task.readLease();task.readLease=null;} }
+    } finally { if(!task.failureCleaned)await cleanup(task);if(task.allocation){await task.allocation();task.allocation=null;}if(task.state.status!=='ready'&&task.readLease){await task.readLease();task.readLease=null;} }
   }
   function start(spec) {
     if (closed) throw error('WHOLE_CLOSED', '整片代理服务已关闭。');
@@ -397,7 +417,7 @@ function createWholeProxy(options = {}) {
     try{return await work;}finally{settings.signal?.removeEventListener('abort',stop);inspections.delete(entry);}
   }
   if(typeof options[VALIDATION_ACCESS]==='function')options[VALIDATION_ACCESS](validateExisting);
-  return { start, clearOther:hash=>storage.clearOther(hash),measure:hash=>storage.measure(hash),pids:()=>[...owned].map(c=>c.pid).filter(Number.isSafeInteger), snapshot: () => current ? current.state : Object.freeze({ status: 'idle', progress: 0 }), async close() { closed = true;for(const entry of inspections)entry.stop();await Promise.allSettled([...inspections].map(e=>e.work));await current?.handle.cancel();for(const task of tasks)await task.handle.release(); for (const child of owned) try { child.kill(); } catch (_) {} }, capabilities: Object.freeze({ pause: false, cancel: true, fullAssetOnly: true }) };
+  return { start, clearOther:hash=>storage.clearOther(hash),measure:(hash,options)=>storage.measure(hash,options),pids:()=>[...owned].map(c=>c.pid).filter(Number.isSafeInteger), snapshot: () => current ? current.state : Object.freeze({ status: 'idle', progress: 0 }), async close() { closed = true;for(const entry of inspections)entry.stop();await Promise.allSettled([...inspections].map(e=>e.work));await current?.handle.cancel();for(const task of tasks)await task.handle.release(); for (const child of owned) try { child.kill(); } catch (_) {} }, capabilities: Object.freeze({ pause: false, cancel: true, fullAssetOnly: true }) };
 }
 async function validateExisting(options,spec,file,settings){let invoke;const service=createWholeProxy({...options,[VALIDATION_ACCESS]:fn=>{invoke=fn;}});try{return await invoke(spec,file,settings);}finally{await service.close();}}
 module.exports = { createWholeProxy, SCHEMA, _test: { normalize, encodeArgs, probeArgs, validationArgs, validationLine, validateProxy, validateExisting, fields, diskUsage } };

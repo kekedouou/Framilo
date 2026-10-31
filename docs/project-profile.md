@@ -1,5 +1,7 @@
 # 项目说明
 
+当前：E-50 发布前稳定性包代码与适用本地检查通过，真实Eagle集中体验待验：监测异步扫描/关窗取消、失败临时代理先回收后终态、分类说明及无素材空状态；E49标签保持。见[计划](experiments/E50/plan.md)与[记录](experiments/E50/report.md)。下方E49及此前按历史阶段阅读。
+
 2026-10-31 发布准备：E-49运行代码仍冻结；用户实测确认监测开启带来热命中卡顿，关闭时目前感觉不到卡顿，优先安排监测修复。Motionote、4K、格式与长稳验收以及独立版/联动/扩展等已整理[六阶段需求路线](roadmap.md#motionote需求总表与阶段顺序2026-10-31)。本轮只更新规划；JPEG去留、容量阈值及帧数上限仍待决定。见[发布调查](releases/motionote-preflight.md)。
 
 当前：E-49 已按用户要求于2026-10-30冻结，标签 `e49-frozen-2026-10-30`；运行代码固定503e0a6，只补文档。独立原声与续播修复的本地/真实音频浏览器检查通过，Eagle手感仍待验；不自动继续开发。见[冻结记录](releases/e49-frozen-2026-10-30.md)及[阶段记录](experiments/E49/report.md)。下方E48及更早为历史。
@@ -15,6 +17,8 @@
 历史E-44：原生体验版已接入正式plugin，真实Eagle正式媒体模块完成三轮固定轨迹。完整UI/全部素材/长稳未最终验收。[体验与证据](experiments/E44/experience.md) · [阶段记录](experiments/E44/report.md) · 旧图表（已停用）。冻结Beta不改；HEAD43b0f4及不提交例外保持。
 
 ## 当前模块与资源边界
+
+E50由proxy-storage提供可取消的异步逐文件统计，live-resources管理资源采样生命周期/源身份与分类，performance-runtime按新事件重算有界监测快照。关闭监测取消未完扫描及自有资源采样进程；不新增Worker或依赖。whole-proxy只回收当前任务归属的未完成文件，回收失败保留锁与原因，不删除未知/活动/当前源完整代理。Session把SELECTION_EMPTY映射正常空状态，API/释放错误仍为错误。详见架构E50章节。
 
 原片/完整代理统一FilmCraft原生读者，异步packet源索引/整数PTS，后台独立整片H.264全I生成，完成验证才同帧接管。前台不运行旧分段/稀疏预览；JPEG独立旧整片准备。native-backend/reader/wire管理媒体与进程，native-player/renderer管理源音频时钟、RAM、YUV/WebGL及CPU回退，whole-proxy管理完整生产/发布/取消；proxy-storage管理代理额度及读者租约；live-resources和performance-runtime管理即时监测。设置与现有UI沿原session接线。E46新增统一GPU加速；代理自动生成与提前解压固定开启；其它缓存维护走后台，提示统一左下。E49以native-audio无损复制压缩音轨到有界内存，避免取声路径同时恢复原4K视频；Player管理Blob/预算和音频时钟，代理保持不变。E47减少热帧/账本/布局冗余，横拖按短长范围一次计算灵敏度，JPEG应用时仅显示实际进度。E48在目标已就绪时补原生单读者邻域填充，JPEG热拖动豁免静默期；冷目标前台优先，清缓存按钮与应用统一。
 
@@ -39,7 +43,7 @@
 | 任务、清理规则 | docs/development-plan.md；E45修复/清理与未验关卡、历史T/E任务及F-01～F-07 |
 | 验证协议 | docs/verification.md；协议、真实运行和人工反馈分开 |
 | 当前状态 | docs/progress.md；先读顶部当前交接，后段为历史 |
-| 专项结果 | docs/experiments/E49/report.md当前冻结代码的修复/验证/缺口，E48及更早按历史范围保留 |
+| 专项结果 | docs/experiments/E50/report.md当前候选的检查与宿主缺口；E49/report.md保存冻结代码结果，E48及更早按历史范围保留 |
 | 发布交接 | docs/releases/e49-frozen-2026-10-30.md当前源码冻结；docs/releases/v0.1.0-beta.2.md为旧安装包发布记录 |
 | 旧发行与过程 | docs/releases/旧版本、docs/progress/、demos/standalone-preview/；历史说明不冒充下载或新授权 |
 | 私人原始证据/配置 | verification-runs/和原型evidence/等Git忽略路径；不公开、不覆盖 |

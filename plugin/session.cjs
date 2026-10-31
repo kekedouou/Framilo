@@ -234,6 +234,11 @@ function createSession(options) {
         if (!current(request)) { error = cleanupError; notify(); return { status: 'error', error: { ...cleanupError } }; }
       }
       if (!current(request)) return { status: 'superseded' };
+      if(failure?.code==='SELECTION_EMPTY'){
+        state='empty';source=null;duration=0;playback=null;error=null;
+        progress={stage:'selection-empty',message:'在 Eagle 中选中一个 MP4 视频，然后点击“读取选中视频”。'};
+        notify();return{status:'empty',snapshot:snapshot()};
+      }
       state = 'error'; error = describe(failure, 'PREPARATION_FAILED'); progress = null; playback = null; notify();
       return { status: 'error', error: { ...error } };
     }

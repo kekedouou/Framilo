@@ -64,9 +64,9 @@ function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024
    },async closeReader(r){readers.delete(r);return r.close();},async cancelReaders(){await Promise.allSettled([...readers].map(r=>r.close()));},proxyAsset:()=>asset,
    subscribeProxy(fn){listeners.add(fn);return()=>listeners.delete(fn);},
    resourcePids:()=>[...readers].map(r=>r.proc?.pid).concat(producer.pids(),...[...audioJobs].map(t=>t.pids())).filter(Number.isSafeInteger),
-   diskUsage:async()=>{const proxy=await producer.measure(info.source.sha256);return {...proxy,scope:'proxy'};},
+   diskUsage:async options=>{const proxy=await producer.measure(info.source.sha256,options);return {...proxy,scope:'proxy'};},
    status(){return job?.snapshot()||{stage:'idle',status:'idle',ready:0,total:info.frames.length,readyRanges:[]};},
-   startProxy(){if(released)return null;if(job&&['queued','checking','encoding','validating','ready'].includes(job.snapshot().status))return job;
+   startProxy(){if(released)return null;if(job&&['queued','checking','encoding','validating','cleaning','ready'].includes(job.snapshot().status))return job;
     try{job=producer.start({source:info.source,frames:info.frames,width:info.width,height:info.height,duration:info.frames[info.frames.length-1].end,encoder:settings.proxyEncoder||proxyEncoder,video:info.sourceVideo,validationHardware:(settings.decoderPreference||decoderPreference)!=='prefer-software'});}
     catch(failure){const state={status:'failed',stage:'error',ready:0,total:info.frames.length,readyRanges:[],message:failure.message,error:{code:failure.code||'WHOLE_START',message:failure.message}};job={ready:Promise.resolve(null),snapshot:()=>state,cancel:async()=>null};try{onBackground();}catch(_){}return job;}
     job.ready.then(value=>{if(!value||released||closing)return;asset=value;try{onBackground();}catch(_){}for(const fn of listeners)try{fn(value);}catch(_){}}).catch(()=>{});try{onBackground();}catch(_){}return job;},
@@ -90,7 +90,7 @@ function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024
   try{proxy=await producer.clearOther?.(sourceSha256);}catch(failure){if(result.cleared)failure.message='已清理'+result.cleared+'个旧序列缓存；代理清理未完成：'+failure.message;throw failure;}
   result={...result,cleared:result.cleared+(proxy?.removed||0),freedBytes:result.freedBytes+(proxy?.freed||0)};
   try{onBackground();}catch(_){}
-  return{status:result.cleared?'cleared':'unchanged',...result,message:result.cleared?'已清除'+result.cleared+'个其它视频缓存，释放'+(result.freedBytes/1024**2).toFixed(1)+' MB；当前与占用中的缓存保留。':'没有可清理的其它视频缓存；当前、占用中及身份不明的文件保留。'};
+  return{status:result.cleared?'cleared':'unchanged',...result,message:result.cleared?'已清除'+result.cleared+'个其它视频缓存，释放'+(result.freedBytes/1024**2).toFixed(1)+' MB；当前与占用中的缓存保留。':'没有可清理的其它视频缓存。此操作保留当前视频（含其它画质）及使用中的缓存；无法确认归属的文件不会删除。'};
  }
  const cache={readAsset(){return Promise.reject(Error('原生视频不读取JPEG或旧分段资源。'));},readFrameBatch(){return Promise.reject(Error('原生视频不读取旧帧包。'));},release:info=>info.nativeRuntime.release(),backgroundStatus:info=>info.nativeRuntime.status(),target(){},prefetch(){},cancelReads(){},isFrameReady:()=>false,prioritizeRecords(){},clearOther};
  return {media:{prepare},cache,beginClose(){closing=true;for(const p of preparing)p.controller.abort();for(const r of owners)r.release().catch(()=>{});},async close(){closing=true;for(const p of preparing)p.controller.abort();await Promise.allSettled([...preparing].map(p=>p.promise));await Promise.allSettled([...owners].map(r=>r.release()));await producer.close();await cleaning?.catch(()=>{});await maintenance?.close();}};

@@ -7,7 +7,18 @@ const same=(a,b)=>path.resolve(a).toLowerCase()===path.resolve(b).toLowerCase();
 function regular(file){const s=fs.lstatSync(file);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||!same(fs.realpathSync(file),file))throw Error('代理文件身份不符');return s;}
 function json(file,max=6*1024**2){if(regular(file).size>max)throw Error('代理记录过大');return JSON.parse(fs.readFileSync(file,'utf8'));}
 function directory(dir){const s=fs.lstatSync(dir);if(!s.isDirectory()||s.isSymbolicLink()||!same(fs.realpathSync(dir),dir))throw Error('代理目录身份不符');}
-async function usage(root){let bytes=0;try{directory(root);for(const e of await fs.promises.readdir(root,{withFileTypes:true})){const f=path.join(root,e.name);if(e.isSymbolicLink())continue;if(e.isDirectory())bytes+=await usage(f);else if(e.isFile())bytes+=regular(f).size;}return bytes;}catch(e){if(e.code==='ENOENT')return 0;throw e;}}
+function checkScan(signal){if(signal?.aborted)throw Object.assign(Error('资源统计已取消'),{name:'AbortError'});}
+async function regularAsync(file,signal){checkScan(signal);const s=await fs.promises.lstat(file);checkScan(signal);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||!same(await fs.promises.realpath(file),file))throw Error('代理文件身份不符');checkScan(signal);return s;}
+async function jsonAsync(file,max=6*1024**2,signal){if((await regularAsync(file,signal)).size>max)throw Error('代理记录过大');const raw=await fs.promises.readFile(file,'utf8');checkScan(signal);return JSON.parse(raw);}
+async function usage(root,{signal}={}){
+ checkScan(signal);let bytes=0,dir;
+ try{const s=await fs.promises.lstat(root);if(!s.isDirectory()||s.isSymbolicLink()||!same(await fs.promises.realpath(root),root))throw Error('代理目录身份不符');dir=await fs.promises.opendir(root);}
+ catch(e){if(e.code==='ENOENT')return 0;throw e;}
+ // Streaming entries and async metadata keep even large receipt directories off
+ // the renderer's synchronous path. A missing child must not erase prior sums.
+ for await(const e of dir){checkScan(signal);const f=path.join(root,e.name);try{if(e.isSymbolicLink())continue;if(e.isDirectory())bytes+=await usage(f,{signal});else if(e.isFile())bytes+=(await regularAsync(f,signal)).size;}catch(error){if(error.code!=='ENOENT')throw error;}}
+ checkScan(signal);return bytes;
+}
 function createStorage(root){
  root=path.resolve(root);const assets=path.join(root,'whole-v1'),leases=path.join(root,'leases-v1');
  async function init(){await fs.promises.mkdir(assets,{recursive:true});await fs.promises.mkdir(leases,{recursive:true});directory(root);directory(assets);directory(leases);}
@@ -31,8 +42,9 @@ function createStorage(root){
  }
  async function touch(key){return guarded(async()=>{const dir=path.join(assets,key);directory(dir);const f=path.join(dir,'last-use.json');if(fs.existsSync(f))regular(f);await fs.promises.writeFile(f,JSON.stringify({at:Date.now()}));});}
  async function makeRoom(limit,needed,sourceHash){return guarded(async()=>{let used=await usage(root),freed=0,removed=0;for(const item of await candidates()){if(limit-used>=needed)break;if(item.sourceHash===sourceHash)continue;directory(item.dir);const actual=path.resolve(item.dir);if(path.dirname(actual)!==assets||!HEX.test(path.basename(actual)))throw Error('代理清理路径不在归属目录内');await fs.promises.rm(actual,{recursive:true});used-=item.bytes;freed+=item.bytes;removed++;}return{used,freed,removed,available:Math.max(0,limit-used)};});}
- async function measure(sourceHash){await init();let current=0;for(const name of await fs.promises.readdir(assets)){const dir=path.join(assets,name);try{if(HEX.test(name)){const m=json(path.join(dir,'complete.json'));if(m.schema===SCHEMA&&m.sourceHash===sourceHash)current+=await usage(dir);}else if(name.startsWith('.pending-')){const m=json(path.join(dir,'owner.json'),2048);if(m.schema===SCHEMA&&m.sourceHash===sourceHash)current+=await usage(dir);}}catch(_){}}
-  return{totalBytes:await usage(root),currentBytes:current};}
+ async function measure(sourceHash,{signal}={}){checkScan(signal);let current=0,pending=0;let names;try{names=await fs.promises.readdir(assets);}catch(e){if(e.code!=='ENOENT')throw e;names=[];}
+  for(const name of names){checkScan(signal);const dir=path.join(assets,name);try{if(HEX.test(name)){const m=await jsonAsync(path.join(dir,'complete.json'),6*1024**2,signal);if(m.schema===SCHEMA&&m.sourceHash===sourceHash)current+=await usage(dir,{signal});}else if(name.startsWith('.pending-')){const m=await jsonAsync(path.join(dir,'owner.json'),2048,signal);if(m.schema===SCHEMA){const n=await usage(dir,{signal});pending+=n;if(m.sourceHash===sourceHash)current+=n;}}}catch(e){if(e.name==='AbortError')throw e;}}
+  return{totalBytes:await usage(root,{signal}),currentBytes:current,pendingBytes:pending};}
  return{acquire,touch,makeRoom,clearOther:sourceHash=>makeRoom(0,1,sourceHash),measure,allocation:()=>lock('allocation',false)};
 }
 module.exports={createStorage,usage};

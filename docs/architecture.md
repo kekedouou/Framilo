@@ -1,5 +1,15 @@
 # 技术架构与模块边界
 
+## E50 监测与失败回收隔离
+
+proxy-storage.usage以异步lstat/realpath与opendir逐文件读取代替renderer上的同步递归；保持链接/文件身份约束，扫描中消失的单文件只跳过该文件，不把已累计目录归零。支持AbortSignal，不创建缓存目录。measure异步读取归属元数据，分别统计当前源各画质与pending；仍不放宽实际删除候选。
+
+live-resources保持2.5秒资源采样与至少5秒磁盘校准，不并发堆积扫描。关闭监测中断扫描与自有采样进程；源切换后旧结果不更新当前视频占用，失败显示未知。JPEG分类只扫一次并复用总和，代理/临时/JPEG/其它口径交给监测窗口悬停说明。performance-runtime只在新事件/源变化后重新快照与汇总，等待累计时间仍每100ms更新；没有Worker或额外依赖。此统计仍是采样，后台写入跨次统计不承诺严格同时刻一致。
+
+whole-proxy失败路径新增cleaning状态，等待受管子进程结束后核对临时目录真实路径、owner token/pid、文件身份与白名单，再删除当前任务临时文件；核实回收后才发布failed/cancelled。失败时保留归属锁、记录WHOLE_CLEANUP_FAILED；不能把owner.json不存在当作整个目录已清空。NVENC回退CPU也必须确认前次回收完成。清理期间startProxy复用同一任务，避免重复生产。既有dead-owner恢复与读者租约、完整代理清理规则不变。
+
+Session在资源释放成功后把SELECTION_EMPTY映射empty，清除旧source/playback/error；真正SDK或释放错误仍保持error。UI复用retry操作但空态命名“读取选中视频”，不新增Eagle访问路径。没有持久化格式/协议、编解码、画质、预算或标注改动。
+
 ## E49 原声与原片视频解码分离
 
 当前Lightning的独立Chrome Media证据表明，HTMLAudio直接加载原MP4仍实例化4K AV1视频解码器，长暂停恢复时音频已缓冲足够仍等视频。修正不改变代理：native-audio.cjs仅用FFmpeg复制原压缩音轨到有界stdout Buffer，以流式ffprobe逐包/编码/时序指纹验证，无音频重编码、磁盘缓存或Worker。元数据/单行/总时长有上限，源压缩包累计已超额度时早停；源与拷贝都只有可核实的音轨。

@@ -240,12 +240,18 @@ async function main() {
     h.selection = selected('B'); await h.session.retry(); assert.strictEqual(h.calls, 2); await h.session.close(); await h.session.close();
     assert.strictEqual((await h.session.loadSelected()).status, 'ignored'); assert.strictEqual(h.calls, 2); assert.strictEqual(h.session.snapshot().state, 'closed');
   });
-  await test('Selection failure preserves typed error and retry captures a fresh selection', async () => {
+  await test('Empty selection enters normal empty state and retry captures a fresh selection', async () => {
     const failure = new Error('请单选MP4'); failure.code = 'SELECTION_EMPTY';
     const h = harness({ capture: value => value.calls === 1 ? Promise.reject(failure) : value.selection });
-    assert.strictEqual((await h.session.loadSelected()).status, 'error'); assert.strictEqual(h.prepared.length, 0);
-    assert.strictEqual(h.session.snapshot().error.code, 'SELECTION_EMPTY'); h.selection = selected('B'); await h.session.retry();
+    assert.strictEqual((await h.session.loadSelected()).status, 'empty'); assert.strictEqual(h.prepared.length, 0);
+    assert.strictEqual(h.session.snapshot().error, null); assert.equal(h.session.snapshot().progress.stage,'selection-empty'); h.selection = selected('B'); await h.session.retry();
     assert.strictEqual(h.session.snapshot().source.id, 'B'); await h.session.close();
+  });
+  await test('API failure is not mistaken for empty selection; empty after ready releases the player', async () => {
+    let empty=false;const h=harness({capture:value=>{if(empty)throw Object.assign(Error('none'),{code:'SELECTION_EMPTY'});return value.selection;}});
+    await h.session.loadSelected();empty=true;assert.equal((await h.session.retry()).status,'empty');assert(h.players[0].disposed);assert.equal(h.session.snapshot().source,null);await h.session.close();
+    const broken=harness({capture:()=>{throw Object.assign(Error('SDK unavailable'),{code:'SELECTION_API_UNAVAILABLE'});}});
+    assert.equal((await broken.session.loadSelected()).status,'error');assert.equal(broken.session.snapshot().error.code,'SELECTION_API_UNAVAILABLE');await broken.session.close();
   });
   await test('Prepared source mismatch releases original handle and never creates a player', async () => {
     let prepared; const h = harness({ prepare: (value, options, state) => { prepared = state.makeInfo(selected('wrong')); return prepared; } });

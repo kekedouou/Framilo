@@ -97,7 +97,8 @@
     function proxyLabel(value) {
       if (!value) return '';
       if (value.stage === 'complete') return '整片代理已就绪';
-      if (value.stage === 'budget') return '代理空间不足，继续播放原片';
+      if (value.status === 'cleaning') return value.message || '正在回收未完成的代理';
+      if (value.stage === 'budget') return value.message || '代理磁盘额度不足，继续播放原片';
       if (value.stage === 'error') return '后台准备失败' + (value.error ? '：' + String(value.error.message || value.error).slice(0, 160) : '');
       if (value.stage === 'cancelled') return '代理生成已取消';
       if (value.stage !== 'preparing') return '';
@@ -785,7 +786,8 @@
       const handover = state.state === 'preparing' && state.progress && state.progress.stage === 'handover' && state.progress.message;
       set(el.status, 'textContent', emptyMessage || handover || (state.playback?.buffering ? '正在缓冲画面，稍后自动继续…' : state.state === 'closing' ? '正在关闭…' : messages[state.state] || '等待素材') + (state.state === 'preparing' ? progress : ''));
       set(el.error, 'hidden', !state.error); set(el.error, 'textContent', state.error ? state.error.message : '');
-      set(el.retry, 'hidden', !session || state.state !== 'error');
+      set(el.retry, 'hidden', !session || !['error','empty'].includes(state.state));
+      set(el.retry, 'textContent', state.state==='empty'?'读取选中视频':'重试');
       set(el.notice, 'hidden', ready || !!(state.playback && Number.isSafeInteger(state.playback.frameId)));
       set(el.notice, 'textContent', emptyMessage || handover || (state.state === 'closing' ? '正在关闭…' : state.state === 'preparing' ? '正在准备视频…' : state.state === 'error' ? '视频未就绪' : '在 Eagle 中单选 MP4 后打开插件'));
       thumb(cursorTime());

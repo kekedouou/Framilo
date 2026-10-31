@@ -34,6 +34,7 @@ async function fixture(t, mode = 'normal') {
       } else if (exe === ffmpeg) {
         if((mode==='nvenc-unavailable'||mode==='source-decode-error')&&args.includes('h264_nvenc')){c.stderr.write(mode==='nvenc-unavailable'?'[h264_nvenc] No NVENC capable devices found\n':'Error while decoding stream: invalid data\n');finish(1);return;}
         await fs.promises.writeFile(args[args.length - 1], Buffer.alloc(256, 1));
+        if(mode==='disk-full'){c.stderr.write('No space left on device\n');finish(1);return;}
         if(mode==='quota-once'&&encodes++===0){c.stdout.write('total_size='+(Number(args[args.indexOf('-fs')+1])+1)+'\n');return;}
         c.stdout.write('out_time_us=25000\ntotal_size=256\n');
         if (mode === 'hold') { release = finish; return; }
@@ -237,4 +238,27 @@ test('odd-aspect cache publishes and reopens with original display geometry and 
 
 test('exact simple SAR is retained and numerically equivalent H264 fractions validate',async t=>{
  const f=await fixture(t),spec=_test.normalize({...f.spec,width:2560,height:975});assert.equal(spec.sampleAspectRatio,'976:975');const rows=[0,17000,33000].map(pts=>({pts:String(pts),key_frame:'1'})),stream={codec_name:'h264',width:2560,height:976,time_base:'1/1000000',duration_ts:'50000',start_pts:'0',sample_aspect_ratio:'1952:1950'};assert.equal(_test.validateProxy(spec,rows,stream).proxyPts.length,3);assert.throws(()=>_test.validateProxy(spec,rows,{...stream,sample_aspect_ratio:'1:1'}),/像素比例/);
+});
+
+test('quota failure is published only after the owned partial is removed; original remains untouched',async t=>{
+ const f=await fixture(t,'quota-once');let terminal;
+ const h=f.service.start({...f.spec,onChange:s=>{if(s.stage==='budget')terminal={...s,pending:fs.readdirSync(path.join(f.cacheRoot,'whole-v1')).filter(n=>n.startsWith('.pending-'))};}});
+ assert.equal(await h.ready,null);assert(terminal);assert.equal(terminal.cleanupComplete,true);assert.equal(terminal.temporaryReleased,true);assert.equal(terminal.bytes,0);assert.deepEqual(terminal.pending,[]);assert(f.states.some(s=>s.status==='cleaning'));assert.match(h.snapshot().message,/已回收/);assert.equal(sha(await fs.promises.readFile(f.source)),f.spec.source.sha256);
+});
+test('failed cleanup retains ownership and never reports partial space reclaimed or cancelled successfully',async t=>{
+ const f=await fixture(t,'missing');let changed=false;
+ const h=f.service.start({...f.spec,onChange:s=>{if(s.status==='validating'&&!changed){changed=true;const dir=fs.readdirSync(path.join(f.cacheRoot,'whole-v1')).find(n=>n.startsWith('.pending-'));fs.writeFileSync(path.join(f.cacheRoot,'whole-v1',dir,'foreign.txt'),'preserve');}}});
+ assert.equal(await h.ready,null);assert.equal(h.snapshot().error.code,'WHOLE_CLEANUP_FAILED');assert.equal(h.snapshot().cleanupComplete,false);assert.equal(h.snapshot().lockReleased,false);assert(fs.readdirSync(path.join(f.cacheRoot,'whole-v1')).some(n=>n.endsWith('.lock')));
+});
+test('missing owner does not masquerade as a removed partial',async t=>{
+ const f=await fixture(t,'missing');let changed=false;
+ const h=f.service.start({...f.spec,onChange:s=>{if(s.status==='validating'&&!changed){changed=true;const dir=fs.readdirSync(path.join(f.cacheRoot,'whole-v1')).find(n=>n.startsWith('.pending-'));fs.unlinkSync(path.join(f.cacheRoot,'whole-v1',dir,'owner.json'));}}});
+ assert.equal(await h.ready,null);assert.equal(h.snapshot().error.code,'WHOLE_CLEANUP_FAILED');assert.equal(h.snapshot().temporaryReleased,false);
+});
+
+test('physical disk exhaustion is distinguished from configured quota after partial cleanup',async t=>{
+ const f=await fixture(t,'disk-full'),h=f.service.start(f.spec);
+ assert.equal(await h.ready,null);assert.equal(h.snapshot().cleanupComplete,true);assert.equal(h.snapshot().bytes,0);
+ assert.match(h.snapshot().message,/硬盘可用空间不足/);assert.match(h.snapshot().message,/已回收/);
+ assert(!fs.readdirSync(path.join(f.cacheRoot,'whole-v1')).some(n=>n.startsWith('.pending-')));
 });

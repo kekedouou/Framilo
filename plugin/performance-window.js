@@ -11,6 +11,8 @@
   el('reason').textContent=v.title||'等待操作';el('reason').title=v.title||'';
   for(const cell of cells){const found=v.stages.filter(p=>cell.names.includes(p.name)&&typeof p.ms==='number'),n=found.length?found.reduce((s,p)=>s+p.ms,0):null;cell.value.textContent=num(n)+(n===null?'':n<1000?' ms':' s');cell.bar.style.width=n===null?'0%':Math.min(100,n/Math.max(1,v.delay||0)*100)+'%';cell.row.title=found.map(p=>p.label+'：'+p.note).join('\n');}
   for(const id of ['ramTotal','ramVideo','diskTotal','diskVideo']){const n=v.resources?.[id];el(id).textContent=Number.isFinite(n)?n>=1024**3?(n/1024**3).toFixed(2)+' GiB':(n/1024**2).toFixed(1)+' MiB':'—';}
+  const parts=v.resources?.diskParts,bytes=n=>Number.isFinite(n)?(n/1024**2).toFixed(1)+' MiB':'—';
+  el('diskTotal').parentElement.title=parts?'代理（含生成中） '+bytes(parts.proxy)+'；其中生成中/待回收 '+bytes(parts.pending)+'；JPEG '+bytes(parts.jpeg)+'；管理记录/其它 '+bytes(parts.other):'全部缓存；正在统计';
   const other=v.stages.find(p=>p.name==='other')?.ms;el('message').textContent=other>10?'未归因 '+num(other)+(other<1000?' ms':' s'):'';
 
  }

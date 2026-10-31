@@ -111,7 +111,7 @@ async function main() {
     h.ui.update(state); assert.match(value, /整片代理生成 20%/); const before = writes;
     for (let i = 0; i < 20; i++) h.ui.update({ ...state, playback: { time: i / 30 } }); assert.equal(writes, before);
     h.ui.update({ ...state, proxyPreparation: { stage: 'complete', ready: 10, total: 10 } }); assert.match(value, /代理已就绪/);
-    h.ui.update({ ...state, proxyPreparation: { stage: 'budget', ready: 5, total: 10 } }); assert.match(value, /代理空间不足，继续播放原片/);
+    h.ui.update({ ...state, proxyPreparation: { stage: 'budget', ready: 5, total: 10 } }); assert.match(value, /代理磁盘额度不足，继续播放原片/);
     h.ui.update({ ...state, proxyPreparation: { stage: 'error', error: { message: 'source unavailable' } } }); assert.match(value, /后台准备失败：source unavailable/);
     h.ui.update({ ...state, playbackBackend: 'jpeg' }); assert(!value.includes('代理')); h.ui.destroy();
   });
