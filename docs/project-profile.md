@@ -13,6 +13,7 @@
 | 要做的事 | 只读对应入口及关联章节 |
 | --- | --- |
 | 恢复任务、确认授权和待验项 | [当前交接](progress.md) |
+| 前端可见改动、预览与批注交付 | [长期预览流程](development-plan.md#前端预览与反馈流程) |
 | 产品行为、UI/提示、R/P要求 | [产品规范](product.md) |
 | 模块定位、数据/进程/缓存边界 | [架构与模块地图](architecture.md) |
 | 执行流程、新增原则归类、Git或清理 | [开发与维护流程](development-plan.md)；[中英文分工](development-plan.md#文档语言规则) |

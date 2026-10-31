@@ -12,6 +12,10 @@ This page defines check selection and pass criteria; actual results belong in st
 | Cache/tasks/persistence | All readers/writers, compatibility, use, ownership, budgets, normal restart and interruption | Confirm isolated directories/budgets first; leave unknown/active data untouched |
 | Host/interaction/audio/video | Real Eagle workflow, sound/image/responsiveness, annotation safety and exit | Codex automates technical checks; users assess bundles. Test-asset writes need specific authorization |
 
+## 前端预览交付
+Apply the [persistent preview workflow](development-plan.md#前端预览与反馈流程) to each authorized visible frontend change. Verify the delivered URL actually loads the matching production UI resources and changed interactions work; record code identity, data isolation, browser/host limitations and service restart/stop instructions. Preserve pending user annotations/drafts before refreshing. New chats restore the documented entry, not an assumed still-running port.
+Review the actual rendered states and relevant input/focus/layout transitions; a static screenshot, launched process or simulated success alone is not an interactive handoff. Report unavailable browser/annotation capabilities or native-only coverage explicitly. Pure documentation/backend changes may omit preview with a reason. These are delivery checks, not proof of native performance or Eagle data acceptance; existing host and data-safety gates still apply.
+
 ## 提示计时与准备选择
 For every added/changed notification, use a controlled clock to cover:
 1. Ordinary completion, capacity failure after cleanup/fallback, and safely stopped tasks fade after about 2.2 seconds.
