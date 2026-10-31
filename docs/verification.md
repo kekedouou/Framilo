@@ -1,43 +1,43 @@
 # 验证协议与验收映射
 
-本页定义检查选择和通过条件，实际结果只写阶段报告；现状见[当前交接](progress.md)。R/P目标见[产品规范](product.md#性能可靠性与测量口径)，不因文档整理放宽。
+This page defines check selection and pass criteria; actual results belong in stage reports. See [handoff](progress.md) for current status and [product requirements](product.md#性能可靠性与测量口径) for R/P targets; document maintenance must not relax them.
 
 ## 按改动选择检查
-| 影响 | 要检查什么 | 入口与副作用 |
+| Change | Required checks | Entry and side effects |
 | --- | --- | --- |
-| 纯文档/工作流程 | 链接/锚点、角色、现状唯一性、历史/实验导航、归类与语义同步 | node scripts/check-docs.cjs，只读；检查工具变更另做其回归 |
-| 正式代码 | 语法、模块边界、受影响功能及manifest/接线 | node scripts/check.cjs --without-prepared-host；可能产生自有隔离夹具，不生成真实媒体、不写库 |
-| 提示/准备选择 | 下节全部计时、替换、持久异常及关闭/切模式 | 现行tests/t1-ui.cjs、e51-decisions.cjs等；浏览器仅补DOM/样式，不能代替Eagle |
-| 索引/解码/代理/像素 | 同源身份、整数PTS、帧号、独立参考、尺寸/比例、CPU/GPU实际路径、取消/重开 | 先读目标阶段计划；显式媒体命令可能写合成样本/缓存，不默认运行 |
-| 缓存/任务/持久化 | 全部读写端、兼容、占用、归属、预算、正常重启与运行中中断 | 隔离目录/预算先确认，不碰未知或当前活动数据 |
-| 宿主/交互/声画 | 实际Eagle流程、声音/画质/跟手、标注安全及退出 | Codex执行可自动技术检查，用户集中体验；需要写测试素材时另有具体授权 |
+| Documentation/workflow only | Links/anchors, roles, unique current status, history/experiment navigation, classification and semantic consistency | node scripts/check-docs.cjs is read-only; changes to check tools also need their regressions |
+| Production code | Syntax, module boundaries, affected behavior, manifest/wiring | node scripts/check.cjs --without-prepared-host; may create isolated fixtures, never real media or library writes |
+| Notifications/preparation choices | All timing, replacement, persistent errors, closure/mode switching below | Current tests/t1-ui.cjs, e51-decisions.cjs, etc.; browsers supplement DOM/style checks, never replace Eagle |
+| Indexing/decoding/proxy/pixels | Source identity, integer PTS, frame number, independent reference, dimensions/aspect, actual CPU/GPU path, cancel/reopen | Read the stage plan first; explicit media commands may write synthetic samples/cache; never run by default |
+| Cache/tasks/persistence | All readers/writers, compatibility, use, ownership, budgets, normal restart and interruption | Confirm isolated directories/budgets first; leave unknown/active data untouched |
+| Host/interaction/audio/video | Real Eagle workflow, sound/image/responsiveness, annotation safety and exit | Codex automates technical checks; users assess bundles. Test-asset writes need specific authorization |
 
 ## 提示计时与准备选择
-新增或修改任意提示须用可控时钟覆盖：
-1. 普通完成、容量不足已清理回退、任务安全停止约2.2秒渐隐。
-2. 同结果重复轮询不重启寿命；新任务/新结果才重计时。
-3. 新普通通知替换使旧普通通知立即渐隐；不能只断言新文本显示。
-4. 进行中随任务结束撤下；取消/回退/完成时序正确。
-5. 保存失败、未保存、结果未知、清理未完成持续保留；状态不靠文案关键词分类。
-6. 关闭/换源/换模式、取消/拒绝、迟到答案不得复活旧选择或写入，确认前不持有代理写锁。同步验证合法确认能继续及重开/复用不会重复错误阻挡。
+For every added/changed notification, use a controlled clock to cover:
+1. Ordinary completion, capacity failure after cleanup/fallback, and safely stopped tasks fade after about 2.2 seconds.
+2. Polling the same result must not restart its lifetime; only a new task/result restarts it.
+3. A new ordinary notification immediately fades the old one; checking new text alone is insufficient.
+4. In-progress notices leave when the task ends; cancellation/fallback/completion ordering must be correct.
+5. Failed saves, unsaved work, unknown results and incomplete cleanup persist. Classify states explicitly, not by message keywords.
+6. Closure/source/mode changes, cancellation/rejection and late answers must not revive stale choices or writes. No proxy write lock before confirmation. Also verify valid confirmation proceeds and reopening/reuse does not wrongly block again.
 
 ## 持久化与数据安全
-改格式或校验先盘点全部生产者/消费者及旧记录：偏好、圈画、缓存manifest、owner/lease、任务/证据账本等受影响项逐一列出。
-每个受影响操作覆盖正常完成后重启、执行中关闭/中断、旧格式读取、原子提交/损坏/版本不符、恢复与真实释放；单一退出测试或小编号模型不能替代所有入口读写闭环。
-保存单次提交，独立读回才报成功；结果未知先核对，不重复写。草稿保留、素材/库/源身份、同帧圈画删除保护、切源旧回调均需回归。测试写入/删除只对具体授权专用素材，Git回退不能代替数据回退。
-清理覆盖：活跃/当前源/未知文件/链接拒删、归属变化/缺owner、PID复用、额度/物理盘满、真实停止后回收、回收失败保留恢复线索、重启/死owner及多窗口保护；F规则的回执和前后清单一致。
+Before changing formats/validation, inventory all affected producers/consumers and old records: preferences, drawings, cache manifests, owner/lease records, task/evidence ledgers.
+For each affected operation, cover restart after normal completion, closure/interruption in flight, old-format reads, atomic commit/corruption/version mismatch, recovery and actual release. One exit test or a small-ID model cannot replace every entry's read/write cycle.
+Save once; report success only after independent readback. Verify unknown results before retrying writes. Regress draft preservation, asset/library/source identity, same-frame drawing deletion protection and stale callbacks after source changes. Test writes/deletes require specifically authorized dedicated assets; Git rollback is not data rollback.
+Cleanup must cover protection of active/current-source/unknown files and links, changed ownership/missing owners, PID reuse, quota/full-disk failures, reclaiming only after actual stop, recovery clues after cleanup failure, restart/dead-owner and multi-window protection. F-rule receipts must match before/after inventories.
 
 ## 性能与证据口径
-需要性能检查的改动及采样方式先按[性能工作流](performance/WORKFLOW.md)声明；同源同条件比较，完整保存条件/失败，未测为未知，不混用不同版本最好结果。
-- P-01/P-02：统计真实画面提交，报告成功/取消/取代/未完成、最长无提交、独立定位与释放最终准确帧。输入/请求数和旧帧保留不是出图；无新目标重绘不凑更新率。提交、刷新机会、物理屏幕呈现分开。
-- 原正常协议：持续目标3轮×30秒，实际提交≥55次/秒的判定沿原条件；独立定位每样本/缓存条件3轮×200目标。0/25/60ms注入各3轮只适用原获批压力协议，不能用慢注入豁免正常门槛，也不能因本页登记自动重跑。
-- P-03：每样本首次完整准备3次、有效缓存复用3次，起点是本次create/run/显式读取入口到首帧和音频可用且可操作，初始化/分析/生成/排队计入。首次/复用、manifest创建前未测时间分开。
-- P-04：受管资源含音频/帧/在途；进程集合、FFmpeg、GPU/观察开销分别采样，不相加不同时刻峰值。沿具体批准的停止线和时长，不能提高预算或只用短测证明长稳。
-完整原计量细节及长时协议按需查[原P协议](history/2026-10-31/verification.md#p-01p-02正常轮压力轮与释放)、[原资源口径](history/2026-10-31/verification.md#p-04预算趋势与观察停止线)。旧T2/T4入口已停用，不将引用解释为重导入或重新授权。
-代码/二进制身份、运行条件/时间、源身份、样本量/成功/失败和测量边界必须可追溯；原件不覆盖，复算/重测另写有界记录，失败根因不明先调查。
+Declare required performance checks/sampling under the [performance workflow](performance/WORKFLOW.md). Compare the same source/conditions, preserve conditions/failures, label unmeasured results unknown; do not combine best results from different versions.
+- P-01/P-02: Count actual image submissions; report success/cancellation/supersession/incompletion, longest gap without submission, independent seeks and accurate final frames on release. Inputs/requests and retained old frames are not output; redraws without new targets do not inflate rate. Distinguish submissions, refresh opportunities and physical presentation.
+- Original normal protocol: 3 × 30-second continuous-target rounds; retain original conditions for ≥55 submissions/second. Independent seeks: 3 × 200 targets per sample/cache condition. Three rounds each at 0/25/60ms injection apply only to the originally approved stress protocol; slower injection cannot waive normal thresholds. Recording this here does not authorize reruns.
+- P-03: Per sample, 3 first complete preparations and 3 valid-cache reuse runs. Measure from this create/run/explicit-read entry until the first frame and audio are usable and controls responsive; include initialization/analysis/generation/queuing. Separate first/reuse results and unmeasured time before manifest creation.
+- P-04: Managed resources include audio/frames/in-flight work. Sample process groups, FFmpeg, GPU and observation overhead separately; do not add peaks from different times. Follow specifically approved stop limits/durations; do not raise budgets or use short tests to prove long-term stability.
+Consult the [original P protocol](history/2026-10-31/verification.md#p-01p-02正常轮压力轮与释放) and [resource definitions](history/2026-10-31/verification.md#p-04预算趋势与观察停止线) for detailed measurement/long-run protocols as needed. Old T2/T4 entry points are retired; links do not authorize reimports or renew permissions.
+Record code/binary identity, conditions/time, source identity, sample size/success/failure and measurement boundaries. Never overwrite originals; recalculations/retests use separate bounded records. Investigate unknown failure causes first.
 
 ## 宿主与发布关卡
-独立浏览器只验证相应UI/媒体链；真实Eagle、后台模块、完整窗口操作、用户体验和物理听声分别说明。缺宿主自动能力如实报告，不要求用户代输调试命令、不在正式页面加测试按钮。
-格式按容器×编码×位深/HDR/透明×帧时间×尺寸×音轨分层，每个承诺后缀端到端基础检查，代表组合性能/长稳，历史问题源复验。能力承诺与缺口见[能力表](releases/motionote-capabilities.md)。
-真实Eagle需覆盖监测开关热命中/背景生成、空态重新选源、容量失败继续原片/重开、4K连续播放/音画/圈画坐标/素材切换、安装升级/关闭与标注安全。全素材、HDR/透明/旋转、外部安装和长稳没有因为本地短样本通过而完成。
-发布长稳候选两组60分钟及50次完整开关的环境/样本/预算须执行前固定，旧单轮10分钟不会自动扩大。旧认可体验和历史长测不为凑记录反复重跑，原R/P与关键技术关卡保持。详见[发布调查与草案](releases/motionote-preflight.md#验证与执行顺序)。
+Standalone browsers verify only their UI/media path. Report real Eagle, background modules, complete window operations, user experience and physical listening separately. Disclose missing host automation; do not ask users to type debugging commands or add test buttons to production UI.
+Stratify formats by container × codec × bit depth/HDR/alpha × frame timing × dimensions × audio. Perform basic end-to-end checks for each promised extension, performance/stability checks for representative combinations, and retest historical problem sources. See [capabilities](releases/motionote-capabilities.md) for promises/gaps.
+Real Eagle coverage includes monitoring toggles on warm hits/background generation, reselecting sources from empty state, continuing source playback/reopening after capacity failure, continuous 4K playback, audio/video, drawing coordinates, asset switching, install/upgrade/closure and annotation safety. Short local samples do not complete all-material, HDR/alpha/rotation, external-installation or stability acceptance.
+For release stability, fix environment/samples/budgets before 2 × 60-minute candidate runs and 50 complete open/close cycles; an old single 10-minute run does not authorize expansion. Do not repeat previously accepted experience/historical long tests merely to fill records. Preserve original R/P targets and key technical gates; see [release investigation/draft](releases/motionote-preflight.md#验证与执行顺序).

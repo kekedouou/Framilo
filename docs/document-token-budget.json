@@ -1,0 +1,22 @@
+{
+  "encoding": "o200k_base",
+  "vocabularySha256": "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
+  "baseline": "495e441",
+  "fixtures": 4,
+  "normalization": "CRLF to LF",
+  "files": {
+    "AGENTS.md": {
+      "before": {
+        "sha256": "d132af6b99df938f9b1cb23d8d1a99ce7eb67c9c90832988b9b459b7043266f1",
+        "characters": 1907,
+        "tokens": 1160
+      },
+      "after": {
+        "sha256": "aa6efbaa4c1ea671b7a190810831541b9f2b5baa61ddf036e3e27a8918df9538",
+        "characters": 5381,
+        "tokens": 1010
+      },
+      "reductionPercent": 12.93
+    }
+  }
+}

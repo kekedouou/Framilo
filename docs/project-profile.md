@@ -15,8 +15,8 @@
 | 恢复任务、确认授权和待验项 | [当前交接](progress.md) |
 | 产品行为、UI/提示、R/P要求 | [产品规范](product.md) |
 | 模块定位、数据/进程/缓存边界 | [架构与模块地图](architecture.md) |
-| 执行流程、新增原则归类、Git或清理 | [开发与维护流程](development-plan.md) |
-| 选择检查、持久化/关闭/异常验收 | [验证协议](verification.md) |
+| 执行流程、新增原则归类、Git或清理 | [开发与维护流程](development-plan.md)；[中英文分工](development-plan.md#文档语言规则) |
+| 选择检查、持久化/关闭/异常验收 | [验证协议](verification.md)（英文正文，中文导航） |
 | 寻帧/解码/缓存/调度等性能工作 | [性能工作流](performance/WORKFLOW.md)及受影响架构章节 |
 | 格式、画质与长片能力 | [候选能力表](releases/motionote-capabilities.md) |
 | 未来需求、优先级与待决项 | [路线图](roadmap.md) |

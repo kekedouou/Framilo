@@ -40,17 +40,28 @@ function governance(read, exists) {
   for (const file of Object.keys(roles)) {
     if (!exists(file)) fail('missing role entry: ' + file);
     const body = read(file);
-    if (file !== 'docs/progress.md' && /^(?:当前(?:阶段[：:]|[：:]E-?\d+)|候选(?:提交|状态)[：:])/m.test(body)) fail('duplicate current state in ' + file);
+    if (file !== 'docs/progress.md' && /^(?:当前(?:阶段[：:]|[：:]E-?\d+)|候选(?:提交|状态)[：:]|current (?:stage|phase)\s*[:：]|candidate (?:commit|status)\s*[:：])/im.test(body)) fail('duplicate current state in ' + file);
     if (/^#{1,6}\s+(?:当前[：:]|E-?\d+\b)/m.test(body)) fail('stage patch heading in role entry: ' + file);
     if (/第二阶段(?:尚未开始|及未来范围仍未启动)/.test(body)) fail('stale stage status in ' + file);
   }
-  const limits = { 'AGENTS.md': [60, 3000], 'docs/project-profile.md': [80, 4000], 'docs/progress.md': [100, 4000] };
+  const limits = { 'AGENTS.md': [60, 6000], 'docs/project-profile.md': [80, 4000], 'docs/progress.md': [100, 4000] };
   let total = 0;
   for (const [file, [maxLines, maxChars]] of Object.entries(limits)) {
     const s = read(file); total += s.length;
     if (s.split('\n').length > maxLines || s.length > maxChars) fail('entry budget exceeded; merge/archive before adding: ' + file);
   }
   if (total > 10000) fail('default reading exceeds 10000 characters');
+  // English uses more characters per token. Keep the total character guard and
+  // require a fresh local measurement within the pre-translation token budget.
+  const budgetPath = 'docs/document-token-budget.json';
+  if (!exists(budgetPath)) fail('missing token measurement');
+  const budget = JSON.parse(read(budgetPath));
+  const measured = budget.files?.['AGENTS.md']?.after;
+  if (budget.encoding !== 'o200k_base' || budget.vocabularySha256 !== require('./count-doc-tokens.cjs').VOCAB_SHA ||
+      !measured || measured.sha256 !== sha(read('AGENTS.md')) || measured.characters !== read('AGENTS.md').length)
+    fail('stale/invalid AGENTS token measurement; rerun local count');
+  if (!Number.isSafeInteger(measured.tokens) || measured.tokens <= 0 || measured.tokens > 1160)
+    fail('AGENTS token budget exceeded (1160); merge/archive before adding');
   const progress = read('docs/progress.md');
   const stages = [...progress.matchAll(/^当前阶段：E-(\d+)$/gm)];
   if (stages.length !== 1) fail('progress needs exactly one current stage');

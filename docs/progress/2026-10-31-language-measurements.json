@@ -1,0 +1,61 @@
+{
+  "encoding": "o200k_base",
+  "vocabularySha256": "446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d",
+  "baseline": "495e441",
+  "fixtures": 4,
+  "normalization": "CRLF to LF",
+  "files": {
+    "AGENTS.md": {
+      "before": {
+        "sha256": "d132af6b99df938f9b1cb23d8d1a99ce7eb67c9c90832988b9b459b7043266f1",
+        "characters": 1907,
+        "tokens": 1160
+      },
+      "after": {
+        "sha256": "aa6efbaa4c1ea671b7a190810831541b9f2b5baa61ddf036e3e27a8918df9538",
+        "characters": 5381,
+        "tokens": 1010
+      },
+      "reductionPercent": 12.93
+    },
+    "docs/verification.md": {
+      "before": {
+        "sha256": "f1b33bdd148bc88d6d401395ad1db0133752c3bf439e382ef88c6cc7a9f589f3",
+        "characters": 2526,
+        "tokens": 1701
+      },
+      "after": {
+        "sha256": "76827f1ba4ea6c93becec1a4bd02288dd8227686ebccd2eef59f0d37e88f4905",
+        "characters": 7374,
+        "tokens": 1506
+      },
+      "reductionPercent": 11.46
+    },
+    "docs/project-profile.md": {
+      "before": {
+        "sha256": "0f9c5f0c198ad9831f4b1bdf31e9d60b3b67cb2557ec155d98467303514b92a1",
+        "characters": 1996,
+        "tokens": 955
+      },
+      "after": {
+        "sha256": "64e32990f994ce58b9b94553c5e86fa2b6887b25ad6675028d1357935dcac683",
+        "characters": 2043,
+        "tokens": 978
+      },
+      "reductionPercent": -2.41
+    },
+    "docs/progress.md": {
+      "before": {
+        "sha256": "6bbb1039afae6e820fbb095c680bcedd16792fd47a9402b2cf102f78c4ad5cb7",
+        "characters": 1252,
+        "tokens": 699
+      },
+      "after": {
+        "sha256": "c1188e032e6cbee6c2b3bbed940ff9ecc23ae06b13bddd1e1e4a6d0d6fbf9039",
+        "characters": 1350,
+        "tokens": 754
+      },
+      "reductionPercent": -7.87
+    }
+  }
+}

@@ -1,27 +1,26 @@
-# Eagle 视频分析项目：Agent 规范
+# Eagle Video Analysis: Agent Rules
 
-## 阅读与文档维护
-- 默认中文短答，必要术语首次附解释。先读[项目地图](docs/project-profile.md)和[当前交接](docs/progress.md)，再按任务读取对应主题及目标目录局部AGENTS；历史不默认全文读取。
-- 用户当前指令和既有明确授权优先，局部规则补充目录边界。新增要求先查同类条款：相同则合并、补充则原位更新、替代则归档旧决定；功能细节归产品/验证。仅新通用规则进入本文件，禁止按日期叠补丁。
-- 文档职责、合并步骤、同步检查见[文档维护机制](docs/development-plan.md#文档维护机制)；语义整理由Codex执行，脚本检查结构与链接，不能冒充自动理解全部冲突。
+## Reading and maintenance
+- Reply briefly in Chinese; explain necessary jargon on first use. Read the [project map](docs/project-profile.md) and [handoff](docs/progress.md), then relevant topics and local AGENTS. Do not read all history by default.
+- Current user instructions and existing explicit authorization take priority; local rules add directory boundaries. Find related rules before adding requirements: merge duplicates, update additions in place, archive replaced decisions. Put feature details in product/verification docs. Only new general rules belong here; no dated patches.
+- Follow [document maintenance](docs/development-plan.md#文档维护机制) for ownership, merging, language and synchronization. Codex reconciles meaning; scripts check structure/links, not every semantic conflict.
 
-## 授权与实施
-- 调查/方案默认只读。获批阶段内连续实施、检查、修复，按功能包集中交付；小任务或Git提交不是再次授权点。必要人工验收、重大产品/架构/体验变化及未授权受限操作才暂停依赖部分，其余继续。
-- 未定且影响体验、输出、数据、资源或范围的取舍及时沟通；常规实现自主处理，已确认决定不重复问。发现失败或低效方法先查证，主动说明事实、影响、不确定处及可行选项，不盲改或反复陪测。
-- 开发引用产品R/P及验收标准，先确认范围和影响文件，不顺便重构。遵循[产品原则](docs/product.md#当前产品定位与设计原则)及[模块边界](docs/architecture.md#现行模块地图)，不将UI、Eagle API、媒体和缓存业务混回入口。
-- 多阶段任务先更新阶段入口；计划记录目标/范围/预算/验收，报告记录结果/证据/限制。PoC放prototypes，实验通过不自动批准正式架构、发布或下一阶段。
+## Authorization and implementation
+- Investigation/proposals are read-only by default. Within an approved stage, implement, check and repair continuously; deliver feature bundles. Subtasks/commits do not require renewed approval. Pause dependent work only for required manual acceptance, major product/architecture/experience changes or unauthorized restricted actions; continue the rest.
+- Discuss unresolved choices affecting experience, output, data, resources or scope promptly. Handle routine implementation independently; do not re-ask settled decisions. Investigate failures/inefficiency first; explain facts, impact, uncertainty and options instead of blind edits or repeated user testing.
+- Reference product R/P requirements and acceptance criteria; confirm scope/files before coding, without unrelated refactoring. Follow [product principles](docs/product.md#当前产品定位与设计原则) and [module boundaries](docs/architecture.md#现行模块地图); do not merge UI, Eagle API, media or cache logic back into the entry point.
+- Update stage navigation before multi-stage work. Plans record goals/scope/budgets/acceptance; reports record results/evidence/limits. Put PoCs in prototypes; passing experiments does not approve production architecture, release or another stage.
+- Use the named browser: official Browser Use for built-in/Edge/Chrome, ego-browser skill for ego; default to ego. Never use mouse control; use DOM/semantic APIs or direct navigation.
 
-- 浏览器按用户指定名称使用：内置/Edge/Chrome用官方Browser Use，ego用ego-browser技能，默认ego；禁止鼠标控制，使用DOM/语义API或直接导航。
+## Permissions and data
+- Explicit authorization is required to install software/dependencies, load/install Eagle plugins, modify libraries, import assets, modify/delete source videos, modify the Eagle installation, delete outside the project, or create/push remote repositories. Do not re-request existing authorization.
+- Development annotation writes/deletes require dedicated test assets and specific authorization for that proposal. Product users save through the defined operation, without an experiment-authorization-file workflow.
+- Write outputs only to designated project directories. Never send assets, annotations, preferences or credentials over the network. Keep one repository; no nested repos or history rewriting. Preserve ignored configuration/evidence during migration. Git rollback cannot undo library writes.
 
-## 权限与数据
-- 安装软件/额外依赖、加载或安装Eagle插件、修改素材库、导入素材、修改或删除原视频、修改Eagle安装目录、目录外删除、创建或推送远程仓库须明确授权；既有授权不重复申请。
-- 开发标注写入/删除只对专用测试素材并取得针对本提案的具体授权；产品用户主动保存按既定操作，不引入实验授权文件流程。
-- 输出只写项目指定目录，不向网络发送素材、标注、偏好或凭据。保留单一仓库，不新增嵌套仓库、不改写历史；迁移保全忽略的配置/证据。Git回退不撤销素材库写入。
-
-## 验证与交付
-- 按[验证协议](docs/verification.md)运行受影响检查，先确认命令副作用；测试只用获批目录/预算，不默认重跑旧实验、reset或重建/导入样本。性能相关改动按[性能工作流](docs/performance/WORKFLOW.md)声明验证必要性与理由。
-- 修改提示必须遵守[寿命规则](docs/product.md#提示与错误反馈)及[计时回归](docs/verification.md#提示计时与准备选择)；修改持久化须盘点全部读写端、旧记录兼容，覆盖受影响入口正常重开与执行中关闭/中断。
-- Codex承担命令、计量和统计；用户集中判断实际体验。代码完成、本地模型、独立浏览器、真实Eagle、人工观察分别记录，失败/未测/推断明确标注；证据与必要验收齐备才报告适用范围通过，提交不代替验收。
-- 原始证据保留来源/时间/运行条件，复算重测另建有界记录，不覆盖旧记录、不擅自增额或删旧证据腾位。封存原型按既有边界保全；复盘简记做法、错误和已验证修正，不扩成未经验证的成功流程。
-- 收尾同步受影响文档正文与导航，不受影响/冻结文件注明理由。临时产物及时整理，按[F-01～F-07](docs/development-plan.md#文件整理f-01f-07)核对路径、归属、身份、占用及有界回执；未知文件、活动目录、必要证据与唯一交付包保护，Git忽略不等于删除许可。
-- 按[Git提交边界](docs/development-plan.md#git提交边界)提交可独立检查的完整改动，不按消息/编辑次数提交；提交前执行node scripts/check-handoff.cjs --base HEAD，提交后执行node scripts/check-handoff.cjs --require-clean。不混入其他任务，不等待用户提醒，不自动推送，最终报短号和未验事项。
+## Verification and delivery
+- Run affected checks under the [verification protocol](docs/verification.md); first identify command side effects. Use only approved test directories/budgets; do not default to rerunning old experiments, reset, or rebuilding/importing samples. For performance-related changes, state verification necessity and reasons under the [performance workflow](docs/performance/WORKFLOW.md).
+- Notification changes must meet [lifetime rules](docs/product.md#提示与错误反馈) and [timing regressions](docs/verification.md#提示计时与准备选择). Persistence changes require inventorying all readers/writers and old-format compatibility; cover normal reopening and closure/interruption during each affected operation.
+- Codex runs commands, measurements and statistics; users assess the experience in consolidated acceptance. Distinguish code completion, local models, standalone browsers, real Eagle and manual observation; label failures, untested claims and inferences. Claim passage only within the scope supported by evidence and required acceptance; commits do not replace acceptance.
+- Preserve original evidence with source/time/conditions. Recalculations/retests create separate bounded records; never overwrite old records. Do not raise quotas or delete old evidence to make room without authorization. Preserve archived prototypes within existing boundaries. Retrospectives briefly separate practices, mistakes and verified corrections; do not present unverified methods as successful workflows.
+- At completion, synchronize affected document bodies/navigation and explain unaffected/frozen files. Clear temporary outputs promptly under [F-01–F-07](docs/development-plan.md#文件整理f-01f-07), checking paths, ownership, identity, use and bounded receipts. Protect unknown files, active directories, required evidence and sole delivery packages; Git ignore is not deletion permission.
+- Follow [Git boundaries](docs/development-plan.md#git提交边界): commit complete, independently checkable changes, not each message/edit. Before committing run node scripts/check-handoff.cjs --base HEAD; afterwards run node scripts/check-handoff.cjs --require-clean. Exclude other tasks, commit without reminders, never push automatically; report the short hash and unverified items.
