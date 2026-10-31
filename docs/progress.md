@@ -16,13 +16,13 @@
 维护记录：[退休性能源码归档](progress/2026-10-31-retired-performance-archive.md)
 
 ## 本轮维护与检查
-40份退休代码已复制到[只读历史归档](history/retired-performance-2026-10-31/README.md)，逐字节核对一致；当前先提交归档，原位置清理与收尾检查随后执行。结果见[本轮记录](progress/2026-10-31-retired-performance-archive.md)。文档语言分工及原则合并继续按[语言规则](development-plan.md#文档语言规则)执行。
+40份退休代码已在6718315提交[只读历史归档](history/retired-performance-2026-10-31/README.md)，逐字节核对已提交对象后移除原位置文件。结果及检查见[本轮记录](progress/2026-10-31-retired-performance-archive.md)。文档语言分工及原则合并继续按[语言规则](development-plan.md#文档语言规则)执行。
 本轮仅文档与开发检查工具，未触及寻帧、解码、代理、缓存、传输、渲染或调度实现，性能重测不需要；不重跑媒体或Eagle验收。
 
-工作区登记：[保留清单](history/2026-10-31/source-manifest.json)
+工作区登记：[当前保留清单](workspace-exceptions.json)
 
 ## 工作区例外
-基线3a6d5af之外原有43项差异：3份已暂存的codex-changes-button探针、40份未跟踪的退休性能源码/脚本/测试。沿既有归属保留，不混本次提交、不丢弃；精确路径清单见整理记录。本次提交后require-clean预期仍不能通过，不声称工作区干净。
+仅剩3份已暂存的codex-changes-button探针，原内容/暂存身份保留且不混入提交；用户尚未确认重启检查结束，暂不删除。旧40份源码已归档清理；旧43项登记保留为历史。提交后require-clean仍因3份探针失败，不声称工作区干净。
 
 ## 历史导航
 [阶段索引](experiments/README.md) · [语言整理](progress/2026-10-31-document-language.md) · [职责整理](progress/2026-10-31-document-reorganization.md) · [整理前进度全文](history/2026-10-31/progress.md) · [旧迁移与维护](progress/2026-10-22-document-maintenance.md) · [早期A/B过程](progress/legacy-experiments.md)

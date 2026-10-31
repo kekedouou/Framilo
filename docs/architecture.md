@@ -81,5 +81,5 @@ Session仅在释放成功后将SELECTION_EMPTY映射正常empty；SDK/释放故�
 | plugin/proxy-background.cjs | 前台优先的渐进代理准备、段描述/租约保留及writer账本额度判断；背景完整/容量停止先等batch核对关闭，不把整片图像常驻RAM |
 | plugin/segment-reader.cjs、segment-audio.cjs | 受限分段读取/借用归还、共享时钟音频排程；关闭等待实际读取与释放 |
 
-上表分段/AVC/WebCodecs实现仅供JPEG共享或历史追溯，不在当前原生代理前台链调用。旧性能dashboard/explainer/inbox/protocol/report/runner及标准测试脚本已退役，不进现行模块地图或发行清单；残留文件不是删除许可。
+上表分段/AVC/WebCodecs实现仅供JPEG共享或历史追溯，不在当前原生代理前台链调用。旧性能dashboard/explainer/inbox/protocol/report/runner及标准测试脚本已退役，不进现行模块地图或发行清单；40份旧源码已保存在[历史归档](history/retired-performance-2026-10-31/README.md)，原位置文件按批准范围移除。
 A-01～A-08、双槽记录/维护事务、关闭互斥与旧JPEG细节按任务查[原架构条款](history/2026-10-31/architecture.md#模块依赖与数据流)、[A-07生命周期](history/2026-10-31/architecture.md#a-07-任务生命周期与快速关闭交接2026-10-15-用户批准整改)、[A-08帧包](history/2026-10-31/architecture.md#a-08-jpeg集中存储与批量预载2026-10-16)。未被现行链明确替代的安全约束继续有效，历史限额/授权不自动恢复。

@@ -27,8 +27,8 @@ for (const file of js) {
     throw new Error('Formal code depends on prototypes/tests: ' + file);
 }
 console.log(`syntax and prototype dependency boundary: ${js.length} files`);
-// E45 retires user recording/reporting and the proxy strip. Their source cleanup
-// is policy-blocked; do not execute the retired product contracts as active tests.
+// E45 recording/reporting/proxy-strip sources are archived under docs/history.
+// Keep this exclusion as a guard; check-docs rejects restoration to active paths.
 const retiredTests=new Set(['performance-detail.cjs','performance-lifecycle.cjs','performance-monitor.cjs','performance-readable.cjs','proxy-strip-display.cjs']);
 for (const file of fs.readdirSync(path.join(root, 'tests')).filter(f => f.endsWith('.cjs')&&!retiredTests.has(f)).sort()) run([path.join(root, 'tests', file)]);
 console.log('E45 retired recording/report/proxy-strip suites excluded: '+retiredTests.size);

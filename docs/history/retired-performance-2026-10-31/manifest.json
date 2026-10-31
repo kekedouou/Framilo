@@ -1,7 +1,7 @@
 {
   "baseline": "b17ac2908fa8478a54062677912ad6eb4e82b6ba",
   "sourceManifest": "docs/history/2026-10-31/source-manifest.json",
-  "originalsRemoved": false,
+  "originalsRemoved": true,
   "totalBytes": 285046,
   "files": [
     {
