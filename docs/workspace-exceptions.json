@@ -1,21 +1,6 @@
 {
-  "reason": "Codex UI restart checks not confirmed complete; keep three probes uncommitted with original index entries.",
+  "reason": "User confirmed Codex UI restart checks complete; all three temporary probes and staged additions have been removed. No active workspace exceptions.",
   "sourceManifest": "docs/history/2026-10-31/source-manifest.json",
-  "inheritedDetails": [
-    {
-      "path": "codex-changes-button-probe-2.txt",
-      "sha256": "5c351314693671bb2b45e9eab16bb66d70cdda0f44e76bd8137d99f72e067841",
-      "index": "100644 9306d6cbf32dbf45e5318d438a03482167b911be 0\tcodex-changes-button-probe-2.txt"
-    },
-    {
-      "path": "codex-changes-button-probe.txt",
-      "sha256": "6678a1b282b07a07038676bb28c7829e80b0a187ea49e65e9dbe8390db6d243c",
-      "index": "100644 b2d754b284442f663a989be31db9777b3831e241 0\tcodex-changes-button-probe.txt"
-    },
-    {
-      "path": "codex-changes-button-restart-test.txt",
-      "sha256": "3ae5f8fd27ba360cc789aaad98b1f30225f10fe197c7f2c4a17f36ab8bf2d897",
-      "index": "100644 6c230daffd29719c1788e81de8689b51e0829a0c 0\tcodex-changes-button-restart-test.txt"
-    }
-  ]
+  "closureRecord": "docs/progress/2026-10-31-probe-cleanup.md",
+  "inheritedDetails": []
 }
