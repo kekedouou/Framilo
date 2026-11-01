@@ -23,7 +23,7 @@ async function start({sampleBytes=null,writeReceipt=true}={}) {
   if(sampleBytes?(!Buffer.isBuffer(sampleBytes)||sampleBytes.length>16*1024**2):(fs.lstatSync(sample).isSymbolicLink()||fs.statSync(sample).size>16*1024**2))throw Error('预览样本身份/体积不符');
   const token=crypto.randomBytes(18).toString('hex'),base='/'+token+'/';
   const html=fs.readFileSync(path.join(plugin,'index.html'),'utf8');
-  const names=new Set([...html.matchAll(/(?:src|href)="([^"/]+\.(?:js|css))"/g)].map(m=>m[1]));names.delete('app.js');
+  const names=new Set([...html.matchAll(/(?:src|href)="([^"/]+\.(?:js|css|png))"/g)].map(m=>m[1]));names.delete('app.js');
   const server=http.createServer((req,res)=>{
     const origin='http://127.0.0.1:'+server.address().port;
     if(req.headers.host!==new URL(origin).host||req.headers.origin&&req.headers.origin!==origin||!['GET','HEAD'].includes(req.method)||!req.url.startsWith(base)){res.writeHead(403).end();return;}
@@ -34,7 +34,7 @@ async function start({sampleBytes=null,writeReceipt=true}={}) {
       else if(name==='preview-bundle.js')content=bundle();
       else if(['preview-player.js','preview-host.js'].includes(name))content=fs.readFileSync(path.join(__dirname,'preview',name));
       else if(name==='sample.mp4') {type='video/mp4';content=(sampleBytes||fs.readFileSync(sample));}
-      else if(names.has(name)){type=name.endsWith('.css')?'text/css; charset=utf-8':type;content=fs.readFileSync(path.join(plugin,name));}
+      else if(names.has(name)){type=name.endsWith('.png')?'image/png':name.endsWith('.css')?'text/css; charset=utf-8':type;content=fs.readFileSync(path.join(plugin,name));}
       else {res.writeHead(404).end();return;}
       res.setHeader('Content-Type',type);res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');
       res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'self'; object-src 'none'");

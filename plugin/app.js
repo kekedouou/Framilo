@@ -310,5 +310,5 @@
     if (typeof eagle.onPluginBeforeExit === 'function') eagle.onPluginBeforeExit(requestClose);
     window.addEventListener('beforeunload', beforeUnload);
     window.addEventListener('pagehide', requestClose);
-  } else startupError(new Error('请从 Eagle 打开视频分析插件。'));
+  } else startupError(new Error('请从 Eagle 打开 Framilo。'));
 })();

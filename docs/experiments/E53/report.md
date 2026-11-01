@@ -1,5 +1,21 @@
 # E53 execution record
 
+## A定稿与自用候选 — 2026-11-01
+
+用户选定新A「流线F」，批准连续推进五包，并确认Eagle载入本项目plugin目录。基线494de89；正式名称Framilo、版本0.2.0-private.1、256px图标已接入，插件ID、存储身份、原生程序529ed38和E49冻结503e0a6不变。A/B代码完成；C自动检查完成但真实宿主待验；D准备可校验快照；E仅建立观察登记，不能称五包全部验收。
+
+品牌母版与小尺寸板见[定稿](../../brand/framilo-final/README.md)，自用/数据/恢复说明见[自用版](../../releases/framilo-private.md)，集中验收与长期计数见[清单](acceptance.md)。正式运行文件没有开发服务、素材或额外遥测；旧Motionote内部标识和历史路径不机械改名。
+
+验证按范围分开：
+- 完整默认检查`node scripts/check.cjs --without-prepared-host`通过，原始日志verification-runs/e53/checks-1793519878858.log及JSON回执。早期失败分别是旧Beta测试读取新manifest、历史宿主准备器硬编码旧标题；修正测试来源及标题替换后重跑通过，失败日志保留。
+- 显式有界`node scripts/e53-native-check.cjs`通过17组合/85次准确源帧读取，所有close均收到完成回执，原合成素材SHA不变。原始记录native-check-1793519551706.json；15种现有E52自有样本覆盖常用容器、编码、VFR、音轨起点、60fps和4K，另有H.264/4K硬件路径，实际硬解帧计数非零且无回退。此项是独立原生读帧/关闭检查，不证明Eagle音画/连续播放/人工手感，不是新性能基准。
+- 运行闭包83文件、原生文件和第三方许可检查通过；新private-package模型检查篡改/越界/身份/版本/验收标志。冻结Beta配方保持原版本。尚须提交后生成独立包并验证归档与异目录运行。
+- Ego任务8检查品牌板10张大小/背景图，正式PNG已目视检查；隔离预览标题Framilo、favicon返回image/png、记录面板打开成功，回执browser-brand-acceptance.json。初次空格探针超时，随后捕获play调用但未完成可靠时序判定，不计入键盘或播放时延验收。无故修改播放逻辑不是本轮范围。
+
+前端预览在新端口13668，入口与恢复见交接；复用E52合成片，不连接Eagle/真实数据。旧9506用户草稿未动。Codex打开请求仅返回queued，不冒充用户已经看到。包构建需干净已提交代码：`node scripts/package-private.cjs build HEAD`与`build 494de89`；仅在dist新建不可覆盖的运行快照/ZIP/SHA，合计≤256MiB，拒绝未知文件与个人数据，不安装/发布。归档结果追加在本段后。
+
+本轮不改编解码、代理、缓存策略，因此不重跑历史性能实验；基础原生检查用于自用交付闭包/既有格式回归。产品架构正文和既有能力限制未变化，历史实验、冻结包与证据保护。无新依赖、远程推送或真实标注写入。真实宿主验收、实际恢复和14天观察仍待执行。
+
 ## E direction abandoned; new shape and wordmark exploration — 2026-11-01
 
 Baseline9bc878b clean. User rejected every E refinement and requested unrelated directions. [New board](../../brand/framilo-round2/README.md) offers A flow, B link, C echo, D ink, E negative-space F and F custom script wordmark. This round's E label is not the old cadence design. Previous boards remain historical; plan, roadmap and handoff now supersede the E-selection decision. No final logo choice inferred.

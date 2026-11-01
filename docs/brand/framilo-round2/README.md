@@ -1,6 +1,6 @@
 # Framilo：重新探索六个方向
 
-用户否定全部E变体并明确不再沿用该方向。名称仍为Framilo；本轮重新探索，尚未选定或替换正式图标。
+用户否定全部E变体后重新探索，并从本轮选定A「流线」。当前[定稿与运行图标](../framilo-final/README.md)已采用该方向，本目录保留六款原始比较稿。
 
 ## 方案与取舍
 
@@ -28,4 +28,4 @@
 - [单色轮廓板](silhouettes.png)：统一白底比较形状。
 - [手绘字标](f-wordmark.svg)，其余图标为同目录a–f独立SVG。
 
-重建：`node docs/brand/framilo-round2/build.mjs`生成SVG/HTML；PNG由本机浏览器导出。浏览页不可用时直接查看PNG/SVG，无需持续电脑控制。沿用E53全部品牌资料≤8MiB预算；旧稿仅历史保留，运行代码/原生程序/正式图标及冻结版本均未改变。
+重建：`node docs/brand/framilo-round2/build.mjs`生成SVG/HTML；PNG由本机浏览器导出。浏览页不可用时直接查看PNG/SVG，无需持续电脑控制。沿用E53全部品牌资料≤8MiB预算。本轮出稿时未改运行代码/正式图标；后续A定稿与接入见[正式标识](../framilo-final/README.md)。旧稿与冻结版本保留。

@@ -56,7 +56,7 @@ test('rehashing changed full license text does not bypass content-addressed lice
   assert.throws(() => validate(f), /License text hash/);
 });
 test('native profile cannot accidentally use Beta distribution identity or admit cache files', () => {
-  const f = copy(); f['manifest.json'] = pack.packageManifest(f['manifest.json']); assert.throws(() => validate(f));
+  const f = copy(); const manifest=JSON.parse(f['manifest.json']);manifest.id=pack.ID;f['manifest.json']=Buffer.from(JSON.stringify(manifest));assert.throws(() => validate(f));
   const extra = copy(); extra['cache/asset.mp4'] = Buffer.alloc(1); assert.throws(() => validate(extra));
 });
 test('native and Beta byte budgets remain distinct and enforced', () => {

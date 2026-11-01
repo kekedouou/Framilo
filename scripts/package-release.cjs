@@ -12,6 +12,7 @@ const NAMES = [...RUNTIME, 'README.md', 'CHANGELOG.md', 'BUILD-INFO.json'].sort(
 // This profile only validates the registered local development directory. It is
 // deliberately separate from the frozen Beta distribution recipe and its 2MiB cap.
 const NATIVE_LIMIT = 64 * 1024 ** 2, NATIVE_ID = 'EVAVIDEOANALYSIS20261011';
+const NATIVE_VERSION = require('../plugin/manifest.json').version;
 const NATIVE_RUNTIME = Object.freeze([...RUNTIME, 'temporary-media.cjs', 'media-space.cjs', 'legacy-media-cleanup.cjs', 'native-backend.cjs', 'native-audio.cjs', 'native-reader.cjs', 'native-wire.cjs',
   'native-player.js', 'native-renderer.js', 'whole-proxy.cjs', 'bin/filmcraft-media.exe',
   'bin/filmcraft-media.build.json', 'bin/FilmCraft-LICENSE-MIT', 'bin/FilmCraft-LICENSE-APACHE',
@@ -61,7 +62,7 @@ function validateRuntime(files, options = {}) {
   const bytes = Object.values(files).reduce((n, b) => n + b.length, 0);
   assert(bytes <= (native ? NATIVE_LIMIT : LIMIT), 'Runtime exceeds profile byte limit.');
   const manifest = JSON.parse(files['manifest.json']);
-  assert.equal(manifest.version, VERSION); assert.equal(manifest.platform, 'win'); assert.equal(manifest.arch, 'x64');
+  assert.equal(manifest.version, native ? (options.version || NATIVE_VERSION) : VERSION); assert.equal(manifest.platform, 'win'); assert.equal(manifest.arch, 'x64');
   assert.equal(manifest.id, native ? NATIVE_ID : ID); assert.equal(manifest.main.url, 'index.html'); assert.equal(manifest.main.multiple, false); assert.equal(manifest.devTools, false);
   assert.equal(manifest.logo, '/logo.png');
   const local = (name, from) => {
@@ -235,5 +236,5 @@ if (require.main === module) {
   const mode = process.argv[2] || 'build'; assert(process.argv.length <= 3 && ['build', 'verify', 'extract', 'verify-install', 'native-experience'].includes(mode));
   console.log(JSON.stringify(({ build, verify, extract, 'verify-install': verifyInstall, 'native-experience': validateNativeExperience })[mode](), null, 2));
 }
-module.exports = { VERSION, NAME, ID, RUNTIME, NATIVE_RUNTIME, NATIVE_LIMIT, packageManifest, validateRuntime, validateNativeExperience,
+module.exports = { VERSION, NAME, ID, RUNTIME, NATIVE_RUNTIME, NATIVE_LIMIT, NATIVE_VERSION, packageManifest, validateRuntime, validateNativeExperience,
   assertLegacyBuildSource, scanText, build, verify, extract, verifyInstall };

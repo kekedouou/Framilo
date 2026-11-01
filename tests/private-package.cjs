@@ -1,0 +1,18 @@
+'use strict';
+// Read-only snapshots + in-memory mutations; no archives, installation or media.
+const fs=require('fs'),path=require('path'),crypto=require('crypto'),assert=require('assert');
+const p=require('../scripts/package-private.cjs'),root=path.resolve(__dirname,'..');
+const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+const files=Object.fromEntries(p.RUNTIME.map(n=>[n,fs.readFileSync(path.join(root,'plugin',n))]));files['README.md']=Buffer.from('Private build');
+const version=JSON.parse(files['manifest.json']).version;
+const info={schema:'framilo-private-package-v1',version,sourceCommit:'a'.repeat(40),pluginId:'EVAVIDEOANALYSIS20261011',publicRelease:false,longTermAccepted:false,files:Object.fromEntries(Object.entries(files).map(([n,b])=>[n,{bytes:b.length,sha256:sha(b)}]))};
+assert(p.checkFiles(files,info).licenseClosureVerified);
+assert.throws(()=>p.checkFiles({...files,'memory-settings.json':Buffer.from('{}')},info));
+assert.throws(()=>p.checkFiles({...files,'logo.png':Buffer.from('changed')},info),assert.AssertionError);
+assert.throws(()=>p.checkFiles(files,{...info,version:'wrong'}));
+assert.throws(()=>p.checkFiles(files,{...info,publicRelease:true}));
+assert.throws(()=>p.checkFiles(files,{...info,longTermAccepted:true}));
+assert.throws(()=>p.manifestCheck({id:'another-plugin',platform:'win',arch:'x64',version}));
+assert.throws(()=>p.verify(path.join(root,'plugin')),/inside dist/);
+assert.throws(()=>p.checkFiles(files,{...info,files:{...info.files,'cache/video.mp4':{bytes:0,sha256:sha('')}}}));
+console.log('Private package: exact runtime/license closure, immutable identity, byte hashes, no user data, no acceptance inflation and path boundary passed; no installation or native execution.');

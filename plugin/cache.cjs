@@ -1183,7 +1183,7 @@ function createCache(options = {}) {
       if (prior.size === 0 && writer.processIdentity && typeof processIdentity.claimEmptyWriter === 'function' && processIdentity.claimEmptyWriter(lockPath, lockData)) {
         recoveredEmpty = prior; fd = fs.openSync(lockPath, 'r+');
       } else {
-        error.message = '另一个缓存任务仍在运行，或残留记录暂时无法安全恢复。请关闭其他视频分析窗口后重试。';
+        error.message = '另一个缓存任务仍在运行，或残留记录暂时无法安全恢复。请关闭其他 Framilo 窗口后重试。';
         error.code = 'CACHE_BUSY'; throw error;
       }
     }

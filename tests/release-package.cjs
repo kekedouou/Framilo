@@ -8,7 +8,7 @@ const base = Object.fromEntries(pack.RUNTIME.filter(n => !/native\/task-host\.lo
   .map(n => [n, fs.readFileSync(path.join(root, 'plugin', n))]));
 // Preserve the frozen Beta entry recipe. The current entry now requires the
 // native experience runtime and must not be laundered into the old 2MiB ZIP.
-for (const name of ['app.js', 'index.html']) {
+for (const name of ['app.js', 'index.html', 'manifest.json']) {
   const r = spawnSync('git', ['show', 'v0.1.0-beta.2:plugin/' + name], { cwd: root, windowsHide: true, maxBuffer: 1024 ** 2 });
   assert.equal(r.status, 0, 'Frozen Beta2 entry must remain available in Git: ' + name); base[name] = r.stdout;
 }

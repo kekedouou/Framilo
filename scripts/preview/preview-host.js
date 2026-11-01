@@ -1,6 +1,6 @@
 /* Development only. No Node bridge, filesystem, Eagle data, native decoding or real performance claims. */
 (async()=>{'use strict';
- const clone=x=>JSON.parse(JSON.stringify(x)), source={id:'preview-synthetic',name:'Motionote · 合成交互样本',filePath:'/sample.mp4',sha256:'e'.repeat(64)},libraryPath='/preview-only';
+ const clone=x=>JSON.parse(JSON.stringify(x)), source={id:'preview-synthetic',name:'Framilo · 合成交互样本',filePath:'/sample.mp4',sha256:'e'.repeat(64)},libraryPath='/preview-only';
  const frames=Array.from({length:360},(_,id)=>({id,time:id/30,end:(id+1)/30,file:'sample.mp4',bytes:1}));
  const defaults=()=>({comments:[{id:'sample-1',time:1,text:'观察运动方向'},{id:'sample-2',time:4,text:'同帧文字与圈画可一起编辑'},{id:'sample-3',time:8,text:'检查片段范围和记录切换'}],records:[],quality:'720p',ramMiB:1024,interaction:PreviewModules.load('preferences.cjs').DEFAULT_INTERACTION,visible:true,styles:EVADrawingModel.defaultStyles(),version:0});
  const scenario=new URLSearchParams(location.search).get('scenario'),dense=scenario==='dense',storageKey='motionote-ui-preview-v1'+(scenario?'-'+scenario:'');

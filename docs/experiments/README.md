@@ -4,7 +4,7 @@
 
 | 阶段 | 计划 | 结果 | 专项 |
 | --- | --- | --- | --- |
-| E53 | [plan.md](E53/plan.md) | [report.md](E53/report.md) | 第三阶段自用产品化、品牌选择与长期验证；暂不发行 |
+| E53 | [plan.md](E53/plan.md) | [report.md](E53/report.md) | [验收登记](E53/acceptance.md)；第三阶段自用产品化与长期验证，暂不发行 |
 | E52 | [plan.md](E52/plan.md) | [report.md](E52/report.md) | 第二阶段优化实现与本地验证；Eagle集中验收待做 |
 | E03 | [plan.md](E03/plan.md) | [report.md](E03/report.md) | — |
 | E04 | [plan.md](E04/plan.md) | [report.md](E04/report.md) | — |

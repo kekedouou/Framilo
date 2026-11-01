@@ -71,7 +71,7 @@ function prepare(requested = 'performance') {
     html = html.replace(token, attribute + '="' + pathToFileURL(path.join(plugin, name)).href + '?verify=' + hashes['plugin/' + name] + '"');
   }
   html = html.replace(/(<script src="[^"\n]*\/app\.js\?verify=[^"\n]+"><\/script>)/,
-    '<script src="bootstrap.js"></script>\n  $1').replace('<title>视频分析</title>', mode === 'experience' ? '<title>阶段4体验 · 视频分析</title>' : '<title>阶段4验收 · 视频分析</title>');
+    '<script src="bootstrap.js"></script>\n  $1').replace(/<title>[^<]*<\/title>/, mode === 'experience' ? '<title>阶段4体验 · 视频分析</title>' : '<title>阶段4验收 · 视频分析</title>').replace('href="logo.png"','href="logo.local.png"');
   if (!html.includes('src="bootstrap.js"')) throw new Error('Formal app entry missing.');
   const files = { 'manifest.json': Buffer.from(JSON.stringify(manifest, null, 2)), 'index.local.html': Buffer.from(html),
     'logo.local.png': read(path.join(plugin, 'logo.png')) };

@@ -42,7 +42,7 @@ function render(html, plugin, hashes, mode = 'performance') {
   }
   const app = '<script src="' + (pathToFileURL(path.join(plugin, 'app.js')).href + '?verify=' + hashes['plugin/app.js']).replace(/&/g, '&amp;') + '"></script>';
   out = out.replace(app, '<script src="bootstrap.js?verify=' + hashes['tests/host/window/bootstrap.js'] + '"></script>\n  ' + app);
-  return out.replace('<title>视频分析</title>', '<title>' + (mode === 'window-checks' ? 'T2 窗口验收' : mode === 'annotations' ? 'T3 标注验收' : mode === 'preferences' ? 'T2 内存设置验收' : 'T2 自动测量') + ' · 视频分析</title>');
+  return out.replace(/<title>[^<]*<\/title>/, '<title>' + (mode === 'window-checks' ? 'T2 窗口验收' : mode === 'annotations' ? 'T3 标注验收' : mode === 'preferences' ? 'T2 内存设置验收' : 'T2 自动测量') + ' · 视频分析</title>').replace('href="logo.png"','href="logo.local.png"');
 }
 function validApproval(value) {
   if (value == null) return true;

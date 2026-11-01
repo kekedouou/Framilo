@@ -1,0 +1,58 @@
+'use strict';
+// Explicit self-use snapshots only. No installation, Eagle, user data or publishing.
+const fs=require('fs'),path=require('path'),crypto=require('crypto'),assert=require('assert');
+const {spawnSync}=require('child_process'),pack=require('./package-release.cjs');
+const ROOT=path.resolve(__dirname,'..'),DIST=path.join(ROOT,'dist'),BUDGET=256*1024**2;
+const RUNTIME=pack.NATIVE_RUNTIME,ID='EVAVIDEOANALYSIS20261011';
+const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+function git(args){const r=spawnSync('git',args,{cwd:ROOT,windowsHide:true,maxBuffer:64*1024**2});if(r.error||r.status!==0)throw Error('Git source unavailable: '+args.slice(0,2).join(' '));return r.stdout;}
+function safe(file,dir=false){const s=fs.lstatSync(file);assert(!s.isSymbolicLink()&&(dir?s.isDirectory():s.isFile())&&fs.realpathSync(file).toLowerCase()===path.resolve(file).toLowerCase()&&(dir||s.nlink===1),'Unsafe package path');return s;}
+function read(file){const s=safe(file);assert(s.size<=pack.NATIVE_LIMIT,'Oversize package input');const b=fs.readFileSync(file),after=safe(file);assert.equal(s.ino,after.ino);assert.equal(s.mtimeMs,after.mtimeMs);assert.equal(b.length,s.size);return b;}
+function inventory(dir){safe(dir,true);const out=[];for(const n of fs.readdirSync(dir)){const f=path.join(dir,n),s=fs.lstatSync(f);assert(!s.isSymbolicLink(),'Links refused');if(s.isDirectory())out.push(...inventory(f).map(p=>n+'/'+p));else{safe(f);out.push(n);}}return out.sort();}
+function manifestCheck(m){assert.equal(m.id,ID);assert.equal(m.platform,'win');assert.equal(m.arch,'x64');assert(/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(m.version));}
+function checkFiles(files,info){
+ assert.equal(info.schema,'framilo-private-package-v1');assert.equal(info.pluginId,ID);assert(/^[a-f0-9]{40}$/.test(info.sourceCommit));
+ assert.equal(info.publicRelease,false);assert.equal(info.longTermAccepted,false);
+ assert.deepStrictEqual(Object.keys(files).sort(),[...RUNTIME,'README.md'].sort());
+ assert.deepStrictEqual(Object.keys(info.files).sort(),Object.keys(files).sort());
+ for(const[n,b]of Object.entries(files)){assert(Buffer.isBuffer(b));assert.equal(info.files[n].bytes,b.length);assert.equal(info.files[n].sha256,sha(b),'Changed file: '+n);if(/\.(?:js|cjs|cs|json|html|css|md|exe)$/.test(n))pack.scanText(b,n);}
+ const m=JSON.parse(files['manifest.json']);manifestCheck(m);assert.equal(m.version,info.version);
+ return pack.validateRuntime(Object.fromEntries(RUNTIME.map(n=>[n,files[n]])),{profile:'native-experience',version:info.version});
+}
+function ps(code,env){const r=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; "+code],{cwd:ROOT,windowsHide:true,encoding:'utf8',timeout:60000,maxBuffer:1024**2,env:{...process.env,...env}});if(r.error||r.status!==0)throw Error('Archive operation failed: '+(r.error?.message||r.stderr));return r.stdout.trim().replace(/^\uFEFF/,'');}
+function withinDist(folder){folder=path.resolve(folder);assert(path.dirname(folder)===DIST&&/^framilo-[\w.-]+-win-x64$/.test(path.basename(folder)),'Expected an explicit Framilo snapshot inside dist');safe(DIST,true);safe(folder,true);return folder;}
+function verify(folder){
+ folder=withinDist(folder);const info=JSON.parse(read(path.join(folder,'BUILD-INFO.json')));
+ assert.deepStrictEqual(inventory(folder),[...RUNTIME,'README.md','BUILD-INFO.json'].sort());
+ const files=Object.fromEntries([...RUNTIME,'README.md'].map(n=>[n,read(path.join(folder,n))])),checked=checkFiles(files,info);
+ const zip=folder+'.zip',archive=read(zip);assert.equal(read(zip+'.sha256').toString(),sha(archive)+'  '+path.basename(zip)+'\n');
+ const rows=JSON.parse(ps("$z=[IO.Compression.ZipFile]::OpenRead($env:FRAMILO_ZIP);try{$rows=@(foreach($e in $z.Entries){if($e.Length -gt 67108864){throw 'Oversize entry'};$s=$e.Open();$h=[Security.Cryptography.SHA256]::Create();try{[pscustomobject]@{name=$e.FullName;bytes=$e.Length;sha256=[BitConverter]::ToString($h.ComputeHash($s)).Replace('-','').ToLowerInvariant()}}finally{$s.Dispose();$h.Dispose()}});ConvertTo-Json -InputObject $rows -Compress}finally{$z.Dispose()}",{FRAMILO_ZIP:zip}));
+ const expected=Object.entries({...files,'BUILD-INFO.json':read(path.join(folder,'BUILD-INFO.json'))}).map(([name,b])=>({name:name.replace(/\\/g,'/'),bytes:b.length,sha256:sha(b)}));
+ assert.deepStrictEqual(rows.map(r=>({...r,name:r.name.replace(/\\/g,'/')})).sort((a,b)=>a.name.localeCompare(b.name)),expected.sort((a,b)=>a.name.localeCompare(b.name)),'Archive differs from snapshot');
+ return {version:info.version,sourceCommit:info.sourceCommit,folder:path.relative(ROOT,folder).replace(/\\/g,'/'),zipSha256:sha(archive),zipBytes:archive.length,...checked,archiveGenerated:true,archiveVerified:true,realEagleAccepted:false,longTermAccepted:false};
+}
+function build(ref='HEAD'){
+ assert.equal(process.platform,'win32');assert(!/^c:/i.test(ROOT));safe(ROOT,true);
+ assert(!git(['status','--porcelain','--untracked-files=all']).toString().trim(),'Commit the reviewed source bundle first');
+ assert(/^(?:HEAD|[a-f0-9]{7,40})$/.test(ref),'Use HEAD or an explicit commit');
+ const commit=git(['rev-parse',ref+'^{commit}']).toString().trim(),commitTime=git(['show','-s','--format=%cI',commit]).toString().trim();
+ const tracked=new Set(git(['ls-tree','-r','--name-only',commit,'plugin']).toString().trim().split(/\r?\n/));
+ const files={};
+ for(const n of RUNTIME){const source='plugin/'+n;files[n]=tracked.has(source)?git(['show',commit+':'+source]):read(path.join(ROOT,source));}
+ // Only the ignored guard pair may come from the local build, and its exact
+ // source/executable hashes are validated by validateRuntime before packaging.
+ for(const n of RUNTIME)assert(tracked.has('plugin/'+n)||/^native\/task-host\.local\.(exe|json)$/.test(n),'Unversioned runtime input: '+n);
+ const m=JSON.parse(files['manifest.json']);manifestCheck(m);
+ files['README.md']=Buffer.from('Framilo · 个人使用快照\n版本：'+m.version+'\n来源：'+commit+'\n\n完整解压到独立的非C盘可写目录，再通过Eagle载入本地插件。\n本包不公开发行，尚未完成长期验收。需要Eagle的FFmpeg模块；无需安装Rust或Node.js。\n升级前关闭播放器。保留原目录的memory-settings.json和annotation-data，不移动或覆盖Eagle素材库。\n回退只恢复本插件程序文件；不要删除用户偏好、标注、未知文件或活动缓存。\n相同插件ID不能同时注册两个入口；不要将回退目录当第二个插件同时运行。\n回退版本不支持的新功能和偏好可能无法使用；Git回退不能撤销Eagle标注写入。\n首次在新目录使用可能需要重新生成缓存；正常关闭清理本窗口临时媒体。\n\n第三方许可在bin目录。项目整体开源许可证未指定，本包不授予新许可。\n');
+ const info={schema:'framilo-private-package-v1',version:m.version,sourceCommit:commit,commitTime,pluginId:ID,publicRelease:false,longTermAccepted:false,files:Object.fromEntries(Object.entries(files).map(([n,b])=>[n,{bytes:b.length,sha256:sha(b)}]))};checkFiles(files,info);
+ if(!fs.existsSync(DIST))fs.mkdirSync(DIST);safe(DIST,true);
+ const used=inventory(DIST).reduce((n,p)=>n+safe(path.join(DIST,p)).size,0),size=Object.values(files).reduce((n,b)=>n+b.length,0);assert(used+size*2+1024**2<=BUDGET,'Private snapshot budget exceeded');
+ const folder=path.join(DIST,'framilo-'+m.version+'-'+commit.slice(0,7)+'-win-x64');
+ assert(!fs.existsSync(folder)&&!fs.existsSync(folder+'.zip')&&!fs.existsSync(folder+'.zip.sha256'),'Snapshot exists; verify instead of overwriting');
+ fs.mkdirSync(folder);for(const[n,b]of Object.entries({...files,'BUILD-INFO.json':Buffer.from(JSON.stringify(info,null,2)+'\n')})){const f=path.join(folder,n);fs.mkdirSync(path.dirname(f),{recursive:true});fs.writeFileSync(f,b,{flag:'wx'});}
+ ps('[IO.Compression.ZipFile]::CreateFromDirectory($env:FRAMILO_FOLDER,$env:FRAMILO_ZIP,[IO.Compression.CompressionLevel]::Optimal,$false)',{FRAMILO_FOLDER:folder,FRAMILO_ZIP:folder+'.zip'});
+ fs.writeFileSync(folder+'.zip.sha256',sha(read(folder+'.zip'))+'  '+path.basename(folder)+'.zip\n',{flag:'wx'});
+ return verify(folder);
+}
+if(require.main===module){const mode=process.argv[2];assert(['build','verify'].includes(mode)&&process.argv.length<=4);console.log(JSON.stringify(mode==='build'?build(process.argv[3]):verify(process.argv[3]),null,2));}
+module.exports={build,verify,checkFiles,manifestCheck,RUNTIME};
