@@ -1,5 +1,13 @@
 # E53 execution record
 
+## E direction abandoned; new shape and wordmark exploration — 2026-11-01
+
+Baseline9bc878b clean. User rejected every E refinement and requested unrelated directions. [New board](../../brand/framilo-round2/README.md) offers A flow, B link, C echo, D ink, E negative-space F and F custom script wordmark. This round's E label is not the old cadence design. Previous boards remain historical; plan, roadmap and handoff now supersede the E-selection decision. No final logo choice inferred.
+
+Delivered editable icon/wordmark SVGs, generator, responsive HTML, colour and monochrome boards. Visually checked the 1536×1152 PNG for readable labels, intact shapes and small-size samples. PNGs are SVG Canvas exports, not HTML screenshots. Ego space7 verified six cards and no document horizontal overflow at1440/800/390px; verification-runs/e53/framilo-new-layout.json records results. Browser task closed; no user preview tab changed. Local HTML needs no server; PNG/SVG provide recovery.
+
+Tradeoffs include link/audio/ink associations and provisional script optical spacing; final small-size mastering and user selection remain pending. Document/link/diff, SVG parsing and output-budget checks apply. No runtime/native/media/performance regression is needed for brand-only files. Runtime branding, plugin identity, annotations, installed binaries, frozen releases and historical evidence are unchanged; no remote push or release.
+
 ## Cadence E selected; six refinements — 2026-11-01
 
 Baseline7a5a08f clean. User chose E's continuous-frame direction and requested refinements to choose from. [E-series board](../../brand/framilo-e-variants/README.md) retains E0 as reference and adds E1 balanced, E2 compact, E3 four-frame, E4 forward lean, E5 joined fold and E6 explicit F. Same palette/wordmark/display scale isolates shape differences; no runtime branding replacement or final selection inferred. Original six concepts remain intact apart from a navigation/status note.

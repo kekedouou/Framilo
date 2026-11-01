@@ -1,6 +1,6 @@
 # Framilo：E 连续帧变体
 
-用户选定首轮E的感觉，要求继续优化并提供多个变体供选择；E方向已定，具体版本和最终字标尚未定稿。没有替换正式插件图标。
+历史稿：用户曾偏好首轮E，随后否定全部变体并明确放弃E方向。当前见[六款新方向](../framilo-round2/README.md)。本目录保留原始证据，没有替换正式插件图标。
 
 [对照图](contact-sheet.png) · [可缩放展板](contact-sheet.svg) · [浏览页](index.html) · [原版E](../framilo-round1/e-cadence.svg) · [阶段计划](../../experiments/E53/plan.md)
 
