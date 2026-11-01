@@ -247,10 +247,13 @@
       await hideTask;
       if (pendingOpen !== request) return;
       if (result && result.status === 'error') throw new Error(result.error && result.error.message || '旧任务未能正常释放。');
+      // UI construction may fail. Keep the closed lifecycle retryable until it
+      // succeeds, and retain the previous error surface instead of exposing DOM.
+      const nextUI = window.EVAUI.createUI({hostAction});
       pendingOpen = null; initialSelection = request.captured; entryOverride = request.startedAt;
       session = null; backend = null; closeTask = null; closed = false; allowUnload = false; exitScheduled = false; closeFailure = null;
-      ui = window.EVAUI.createUI({hostAction}); const work = initialize(lastPlugin); presentWindow(); return work;
-    }).catch(startupError);
+      ui = nextUI; const work = initialize(lastPlugin); presentWindow(); return work;
+    }).catch(error => { if (pendingOpen === request) pendingOpen = null; startupError(error); });
   }
   function closeFailed(error) {
     closeFailure = error;

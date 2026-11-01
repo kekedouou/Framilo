@@ -30,7 +30,7 @@ function node(tagName = 'div') {
     getBoundingClientRect() { return { left: 100, top: 0, width: 200, height: 200, right: 300, bottom: 200 }; },
     getContext() { return { clearRect() {}, fillRect() {}, scale() {} }; }, focus() {}, setPointerCapture() {}, hasPointerCapture() { return false; },
     animate() {} };
-  Object.defineProperties(value, { firstChild: { get() { return this.children[0]; } }, nextSibling: { get() { return this.parentNode?.children[this.parentNode.children.indexOf(this) + 1] || null; } } });
+  Object.defineProperties(value, { childNodes: { get() { return this.children; } }, firstChild: { get() { return this.children[0]; } }, nextSibling: { get() { return this.parentNode?.children[this.parentNode.children.indexOf(this) + 1] || null; } } });
   return value;
 }
 function uiHarness() {
@@ -126,5 +126,25 @@ async function shellCases() {
   shell.destroy(); assert.equal(released, rendered);
   console.log('ok E36 shell: early comments/SHA replay at actual ready, closed-record preparation, deduplicated priorities, source isolation and playing thumbnail cleanup');
 }
-async function main() { await cursorCases(); await shellCases(); console.log('E36 UI models passed; virtual clock and DOM doubles do not prove Chrome latency or real Eagle acceptance.'); }
+function shellRestoreCases() {
+  const workspace=node(),pane=node(),settings=node(),win=node(),elements=new Map(),timers=new Map();let serial=0;
+  workspace.append(pane,settings);settings.className='memory-settings';
+  const doc={documentElement:{dataset:{}},hidden:false,createElement:node,addEventListener(){},removeEventListener(){},
+    querySelector:s=>s==='.workspace'?workspace:s==='.player-pane'?pane:s==='.memory-settings'?settings:null,
+    getElementById(id){if(id==='screenGestureRing')return null;if(!elements.has(id)){const n=node();n.id=id;elements.set(id,n);pane.append(n);}const n=elements.get(id);return workspace.contains(n)?n:null;}};
+  for(const id of ['memoryStatus','cacheClearStatus','memoryApply','performanceMonitor','drawingFadeSeconds'])settings.append(doc.getElementById(id));
+  const originals=[...settings.children],state={epoch:1,state:'empty',duration:0};
+  Object.assign(win,{innerWidth:1200,innerHeight:800,matchMedia:()=>({matches:true}),requestAnimationFrame:()=>1,cancelAnimationFrame(){},setTimeout:fn=>{timers.set(++serial,fn);return serial;},clearTimeout:id=>timers.delete(id),EVAIcons:{svg:()=>'<svg></svg>'}});
+  const context={window:win,setTimeout:win.setTimeout,clearTimeout:win.clearTimeout,Event:class {constructor(type){this.type=type;}},Option:class {}};
+  for(const file of ['settings-view.js','graphite-shell.js'])vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../plugin',file),'utf8'),context);
+  for(let cycle=0;cycle<5;cycle++){
+    const shell=win.EVAGraphite.createShell({document:doc,window:win,getState:()=>state,getSession:()=>null,annotate(){},clip(){},exitDrawing(){}});
+    assert.equal(workspace.dataset.graphite,'true');shell.update(state);shell.destroy();
+    for(const n of originals){assert.equal(doc.getElementById(n.id),n,`${n.id} must remain connected after closing cycle ${cycle}`);assert.equal(n.parentNode,settings);}
+    assert.deepEqual(settings.children,originals,'Original controls must retain their identity and order');
+    assert.equal(workspace.querySelector('.shell-header'),null);assert.equal(timers.size,0);
+  }
+  console.log('ok shell/settings teardown: five rebuilds retain original controls, no detached statuses or duplicate shell');
+}
+async function main() { await cursorCases(); await shellCases(); shellRestoreCases(); console.log('E36 UI models passed; virtual clock and DOM doubles do not prove Chrome latency or real Eagle acceptance.'); }
 main().catch(error => { console.error(error.stack); process.exitCode = 1; });

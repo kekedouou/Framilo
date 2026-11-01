@@ -17,9 +17,9 @@ app装配/宿主生命周期 → UI发操作 → Session持有库/源快照和�
 | plugin/native-audio.cjs | 有界压缩音轨复制、逐包内容/时序核对、源身份及取消，无磁盘缓存 |
 | plugin/native-player.js、native-renderer.js | 原生播放/音频时钟、最新目标/缓存/闲时邻域/缩略图、YUV准确GPU绘制及CPU回退 |
 | plugin/whole-proxy.cjs | 独立整片生产、完整校验/原子发布、取消/复用/容量及死owner恢复 |
-| plugin/app.js | 宿主生命周期、依赖装配和事件接线，不承载媒体、缓存、标注业务 |
+| plugin/app.js | 宿主生命周期、依赖装配和事件接线；重建界面成功后才提交重开状态，失败保留可重试关闭状态；不承载媒体、缓存、标注业务 |
 | plugin/ui.js、styles.css | 原始控件/输入路由、会话状态；正式可见布局由graphite模块承载，默认不显示帧数/秒数、带输入焦点保护的空格操作；只向会话发出操作，不直接访问文件或 Eagle 素材/标注 API；正式页面无测试控制 |
-| plugin/graphite-shell.js、graphite.css、interface-icons.js | 视频优先布局、直角透明材质、图标、左工具/右记录、缩略图租约和标注输入位置；统一按钮提示、非交互标注退出动画副本；不访问素材库 |
+| plugin/graphite-shell.js、graphite.css、interface-icons.js | 视频优先布局、直角透明材质、图标、左工具/右记录、缩略图租约和标注输入位置；统一按钮提示、非交互标注退出动画副本；拆卸先归还借用控件，再拆设置容器；不访问素材库 |
 | plugin/settings-view.js | 原设置控件的分级展示；子菜单中心跟随父项并在视口边缘限位；淡化输入横拖与取消只改控件值，保留原应用/即时生效写入端 |
 | plugin/timeline-strip.js | 灰色带、蓝光标、白标注、内嵌片段、真实帧刻度；已撤下代理条 |
 | plugin/window-drag.cjs | 宿主窗口恢复和拖动调度，不改播放核心 |

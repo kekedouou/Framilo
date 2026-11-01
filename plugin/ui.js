@@ -60,7 +60,7 @@
   }
   function createUI(options = {}) {
     const doc = options.document || document, win = options.window || window, now = options.now || (() => performance.now());
-    doc.querySelector?.('[data-eva-closing]')?.remove();
+    const previousClosingSurface = doc.querySelector?.('[data-eva-closing]');
     let closingSurface = null;
     const ids = ['screen', 'picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
       'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentShade', 'commentEditor', 'commentTime', 'commentChoice', 'commentText', 'commentSave', 'commentCancel', 'commentKeyboardHint', 'commentDraftPreview', 'commentEditorStatus',
@@ -900,6 +900,8 @@
       exitDrawing:()=>drawingUI.confirmExit('退出标注'),hostAction:options.hostAction});
     const commentResize = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(layoutComment) : null;
     commentResize?.observe(el.screen);
+    // Keep the old close/error surface until the replacement UI exists.
+    previousClosingSurface?.remove();
     return { canvas: el.picture, confirmDrawingExit: () => drawingUI.confirmExit(), bindSession(value) {
       if (session !== value) {
         seekIntent = null;

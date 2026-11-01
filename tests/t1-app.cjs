@@ -60,7 +60,8 @@ function harness(settings = {}) {
     if (settings.deferNativeAck) { nativeTasks.push(callback); return nativeTasks.length; }
     return setTimeout(callback, milliseconds);
   };
-  const win = { EVAUI: { createUI: () => ui }, EVAPlayer: { Player: function (options) { this.options = options; } },
+  let uiCreations = 0;
+  const win = { EVAUI: { createUI: () => { if (++uiCreations === settings.failUIAt) throw Error('injected UI reconstruction failure'); return ui; } }, EVAPlayer: { Player: function (options) { this.options = options; } },
     close: requestClose, addEventListener(type, fn) { hooks[type] = fn; } };
   if (settings.nativePlayer) win.EVANativePlayer = { Player: settings.nativePlayer };
   vm.runInNewContext(settings.code || code, { window: win, eagle, performance: { now: () => 100 }, require(name) {
@@ -83,6 +84,15 @@ async function bounded(pending) {
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 async function main() {
+  {
+    const h = harness({ failUIAt: 2 });
+    await h.hooks.onPluginCreate({path:h.root});await h.hooks.onPluginBeforeExit();
+    await h.hooks.onPluginRun();assert.match(h.updates.at(-1).error.message,/UI reconstruction failure/);
+    assert.equal(h.log.filter(x=>x.type==='selected').length,1,'Failed UI cannot start media');
+    await h.hooks.onPluginRun();assert.equal(h.log.filter(x=>x.type==='selected').length,2,'Explicit run retries after failed UI construction');
+    await h.hooks.onPluginBeforeExit();assert.equal(h.counts().closed,2);
+    console.log('T1 app: failed UI reconstruction remains retryable without starting media or losing close ownership');
+  }
   {
     let finish, hidden = 0, shown = 0;
     const pending = new Promise(resolve => { finish = resolve; });

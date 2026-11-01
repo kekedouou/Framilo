@@ -1,5 +1,19 @@
 # E52 planning record
 
+## Window reuse repair — 2026-11-01
+
+User reported certain selected videos showing the legacy sidebar and “已关闭” instead of loading. Baseline 88ab282 was clean. Scope R-01/R-08: app/UI reconstruction and shell/settings ownership only. No decoder, proxy, binary, cache recipe, persistence format or library writes changed. No media performance benchmark is warranted for this DOM/lifecycle correction; close/reopen, failed reconstruction and late-close safety regressions are required.
+
+Reproduced defect: settings first moves original controls into temporary storage; the shell then borrows memoryStatus/cacheClearStatus for alerts. Teardown destroyed settings first and subsequently restored these two nodes into detached storage. Next createUI removed its closing cover, failed mandatory-element validation, and app.run had already cleared the closed state, so later runs could not recover. This explains the reported legacy/closed appearance; it does not prove the user's particular video has no separate media issue.
+
+Fix: return borrowed controls before dismantling settings storage; retain the closing/error cover until replacement UI construction succeeds; commit reopened lifecycle state only after createUI succeeds. Failed construction leaves the completed close task available for a later explicit run. No source, annotation, preference or cache cleanup policy was changed.
+
+Evidence: the new E36 composed real-shell/real-settings model failed before the fix at `memoryStatus must remain connected after closing cycle 0`; after the fix, five cycles preserve identity/order and remove duplicate UI/timers. T1 app injects the second createUI failure, verifies no new media load, then succeeds on the next explicit run. Existing close-during-open/latest-request, native acknowledgement, cleanup failure and source/discovery cancellation checks pass. Complete default suite: `verification-runs/e52/reopen-check-20261101.log` (passed).
+
+ego-browser used a new isolated task/page against the existing shared-resource preview, leaving user tabs/drafts untouched. Five real-browser UI rebuilds preserved all 106 original HTML IDs and exactly one Graphite header/dock, with no closing cover after success. Evidence: `verification-runs/e52/frontend/reopen-browser-20261101.{json,png}` and round scripts. Initial browser probe incorrectly counted generated contextWheel as original HTML and failed; second probe lost its instrumentation on navigation because the CDP initialization was scoped to the previous call. Third probe derives original IDs from index.html and installs instrumentation in the same round, and passed. These are test-driver corrections, not product successes. The agent test space was closed; ordinary/dense previews remain available and serve revised production resources without requiring service restart. Browser reconstruction does not exercise actual Eagle callbacks, source playback or the user's failing file.
+
+Documentation: handoff, architecture, verification and changelog updated. Product behavior/AGENTS/development workflow, format capability claims, native baseline529ed38, frozen E49, historical reports and user materials unchanged. No dependency install, plugin import, source/cache deletion or remote push. Real Eagle close/reopen and the reported video remain the concentrated manual check.
+
 ## Browser feedback refinement — 2026-11-01
 
 Authorized by three browser comments; baseline 936ee69 was clean. The user confirmed comment 1 refers to annotation fade duration. Scope: R-03/R-05 timeline interaction and settings presentation only. No media/native/cache/persistence-format changes, new dependencies, Eagle/library writes or remote push.
