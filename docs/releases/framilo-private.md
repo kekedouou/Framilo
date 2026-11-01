@@ -19,6 +19,8 @@ Windows x64、Eagle 4.0 Build 22+和Eagle内已有的FFmpeg模块即可使用，
 
 ## 回退
 
+本地自用快照为dist/framilo-0.2.0-private.1-70515ca-win-x64.zip；改品牌前恢复快照为dist/framilo-0.1.0-beta.2-494de89-win-x64.zip。每包旁有.sha256，包内BUILD-INFO记录完整提交与逐文件摘要。恢复包保留旧版本号，以494de89识别，不能当成历史Beta2发行包。两者均只保存在本机，详细构建/验证结果见[E53报告](../experiments/E53/report.md)。
+
 更新前保留对应版本的程序快照。关闭播放器后，只恢复快照清单内的程序文件到原plugin目录；保留memory-settings.json、annotation-data和所有未知文件，不把旧缓存搬回。由Codex核对文件清单、版本、占用和摘要后执行，不建议自行整目录覆盖。
 
 回退不能撤销已经写入Eagle的标注；新旧版本未共同支持的偏好可能不生效。重新打开后先核对旧标注和偏好。恢复版本的已知限制仍然存在，不能因为能回退就跳过验证。
