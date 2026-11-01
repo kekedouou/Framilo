@@ -28,6 +28,7 @@
   let hideTask = Promise.resolve(), closeFailure = null;
   let drawingCloseIntent = null, drawingLoadSequence = 0;
   let temporaryMedia = null;
+  let windowFit = null;
   let backend = null, adapter = null, lastPlugin = null, pendingOpen = null, initialSelection = null;
   let entryOverride = null;
   const now = () => performance.now();
@@ -82,6 +83,8 @@
         Object.defineProperty(window, 'EVADiagnostics', { value: diagnostics.public, writable: false, configurable: false });
       }
       adapter = createEagleAdapter(eagle);
+      windowFit = require(path.join(root, 'window-fit.cjs')).createWindowFit({host:eagle.window,screen:eagle.screen,
+        report:error=>diagnostics?.publish('window-fit-failed',{message:String(error.message)})});
       const sessionAdapter = { ...adapter };
       sessionAdapter.captureSelected = () => { if (initialSelection) { const captured = initialSelection; initialSelection = null; return captured; } return adapter.captureSelected(); };
       // Route leases by the info object that acquired them, never by a newer
@@ -178,7 +181,7 @@
           activePlayer.observeCanvas = !!performanceMonitor?.enabled();
           activePlayer.observePerformance = !!performanceMonitor?.enabled();
           return activePlayer;
-        }, onChange: snapshot => { ui.update(snapshot); diagnostics.publish('state', snapshot); } });
+        }, onChange: snapshot => { ui.update(snapshot); windowFit?.update(snapshot); diagnostics.publish('state', snapshot); } });
       ui.bindSession(session);
       performanceView = window.EVAPerformanceView?.create({
         createMonitor: onUpdate => {
@@ -198,6 +201,7 @@
     if (closeTask) return closeTask;
     if (session && session.hasDrawingDraft && session.hasDrawingDraft()) return Promise.resolve({ status: 'cancelled' });
     closed = true;
+    windowFit?.destroy();windowFit=null;
     // Hide the window, not its failure/result: owned resources still close below.
     // Keep the promise so a delayed host hide cannot hide a reopened session.
     try { hideTask = Promise.resolve(eagle.window?.hide?.()).catch(() => {}); } catch (_) { hideTask = Promise.resolve(); }

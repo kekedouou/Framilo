@@ -298,7 +298,7 @@ function validateSnapshot(value) {
   if (typeof id !== 'string' || !id.trim()) throw selectionError('SELECTION_ID_INVALID', '选中视频缺少 Eagle 素材 ID。', diagnostics);
   if (typeof filePath !== 'string' || !filePath.trim() || !path.isAbsolute(filePath) || filePath.includes('\0')) throw selectionError('SELECTION_PATH_INVALID', '选中视频缺少有效的本地绝对路径。', diagnostics);
   const policy=require('./media-policy.cjs'),ext=policy.sourceExt(filePath);
-  if(!policy.accepts(filePath,declaredExt))throw selectionError('SELECTION_NOT_MP4','请选择支持的视频文件；实际可播放性取决于编码与源帧时间信息。',diagnostics);
+  if(!policy.accepts(filePath,declaredExt))throw selectionError('SELECTION_NOT_MP4','当前插件仅支持 MP4、M4V、MOV、MKV、WebM 格式。请在 Eagle 中选择这些格式的视频后重新打开。',diagnostics);
   return Object.freeze({ id, itemId: id, name: typeof name === 'string' && name.trim() ? name : path.basename(filePath), filePath: path.resolve(filePath), ext });
 }
 function captureSelected(eagleApi, options = {}) {

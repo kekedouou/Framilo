@@ -317,7 +317,9 @@
       const selection = win.getSelection?.();
       if (selection && (el.drawingLayer.contains?.(selection.anchorNode) || el.drawingLayer.contains?.(selection.focusNode))) selection.removeAllRanges();
     }, true);
-    on(win, 'resize', () => { if (snapshot?.drawings && (editor || !el.drawingLayer.hidden)) { finish(); layout(); render(editor ? committed : normalObjects()); } });
+    // SVG uses source dimensions in its viewBox: resizing needs geometry only,
+    // not rebuilding every shape/text node. The observer follows sidebar motion.
+    on(win, 'resize', () => { if (snapshot?.drawings && (editor || !el.drawingLayer.hidden)) { finish(); if(!layoutObserver)layout(); } });
     on(el.screen, 'wheel', event => {
       if (!editor || !temporaryVisible || !['editing', 'failed'].includes(draft()?.status) || event.altKey || event.metaKey || !Number.isFinite(event.deltaY) || !event.deltaY) return;
       if (event.target?.closest?.('.drawing-palette,input[type=color]')) return;

@@ -139,7 +139,12 @@ function shellRestoreCases() {
   for(const file of ['settings-view.js','graphite-shell.js'])vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../plugin',file),'utf8'),context);
   for(let cycle=0;cycle<5;cycle++){
     const shell=win.EVAGraphite.createShell({document:doc,window:win,getState:()=>state,getSession:()=>null,annotate(){},clip(){},exitDrawing(){}});
-    assert.equal(workspace.dataset.graphite,'true');shell.update(state);shell.destroy();
+    assert.equal(workspace.dataset.graphite,'true');shell.update(state);
+    const unavailable=workspace.querySelector('.shell-unsupported');assert(unavailable.hidden);
+    state.state='error';state.error={code:'SELECTION_NOT_MP4',message:'internal detail'};shell.update(state);assert(!unavailable.hidden);
+    state.error={code:'SAVE_FAILED',message:'save error'};shell.update(state);assert(unavailable.hidden,'Unrelated failures retain their original error path');
+    state.state='empty';state.error=null;shell.update(state);assert(unavailable.hidden);
+    shell.destroy();
     for(const n of originals){assert.equal(doc.getElementById(n.id),n,`${n.id} must remain connected after closing cycle ${cycle}`);assert.equal(n.parentNode,settings);}
     assert.deepEqual(settings.children,originals,'Original controls must retain their identity and order');
     assert.equal(workspace.querySelector('.shell-header'),null);assert.equal(timers.size,0);

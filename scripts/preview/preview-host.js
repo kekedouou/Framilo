@@ -3,7 +3,7 @@
  const clone=x=>JSON.parse(JSON.stringify(x)), source={id:'preview-synthetic',name:'Motionote · 合成交互样本',filePath:'/sample.mp4',sha256:'e'.repeat(64)},libraryPath='/preview-only';
  const frames=Array.from({length:360},(_,id)=>({id,time:id/30,end:(id+1)/30,file:'sample.mp4',bytes:1}));
  const defaults=()=>({comments:[{id:'sample-1',time:1,text:'观察运动方向'},{id:'sample-2',time:4,text:'同帧文字与圈画可一起编辑'},{id:'sample-3',time:8,text:'检查片段范围和记录切换'}],records:[],quality:'720p',ramMiB:1024,interaction:PreviewModules.load('preferences.cjs').DEFAULT_INTERACTION,visible:true,styles:EVADrawingModel.defaultStyles(),version:0});
- const dense=new URLSearchParams(location.search).get('scenario')==='dense',storageKey='motionote-ui-preview-v1'+(dense?'-dense':'');
+ const scenario=new URLSearchParams(location.search).get('scenario'),dense=scenario==='dense',storageKey='motionote-ui-preview-v1'+(scenario?'-'+scenario:'');
  const sample=()=>{const value=defaults();if(dense)value.comments.splice(2,0,{id:'dense-same',time:4,text:'同帧：检查亮部边缘'},{id:'dense-1',time:4+1/30,text:'运动开始扩散'},{id:'dense-2',time:4+2/30,text:'轮廓变化'},{id:'dense-3',time:4.1,text:'拖尾开始消失'});return value;};
  let data;try{data=JSON.parse(sessionStorage.getItem(storageKey))||sample();}catch(_){data=sample();}
  const persist=()=>sessionStorage.setItem(storageKey,JSON.stringify(data));
@@ -20,7 +20,7 @@
  const preferences={snapshot:()=>({ramMiB:data.ramMiB,ramBytes:data.ramMiB*1024**2,compressedRamBytes:data.ramMiB*1024**2/8,totalRamBytes:8*1024**3,optionsMiB:[512,1024,2048,4096],persisted:true}),quality:()=>data.quality,backend:()=> 'proxy',interaction:()=>data.interaction,forwardPredecode:()=>true,gpuAcceleration:()=>false,proxyEncoder:()=> 'cpu',decoderPreference:()=> 'prefer-software',gpuDrawing:()=>false,automaticProxy:()=>false,proxyDiskGiB:()=>5,
    preview:ramMiB=>({...preferences.snapshot(),ramMiB,ramBytes:ramMiB*1024**2}),save:(ramMiB,quality=data.quality,predecode=true,interaction=data.interaction)=>{data.ramMiB=ramMiB;data.quality=quality;data.interaction=interaction;persist();return preferences.snapshot();}};
  const store={read:()=>({records:clone(data.records),token:String(data.version)}),save:(_binding,records,token)=>{if(token!==String(data.version))throw Error('预览记录已经变化');data.records=clone(records);data.version++;persist();return store.read();},readVisibility:()=>({visible:data.visible,token:'preview'}),saveVisibility:visible=>{data.visible=visible;persist();return store.readVisibility();},readStyles:()=>({styles:data.styles,token:'preview'}),saveStyles:styles=>{data.styles=clone(styles);persist();return store.readStyles();}};
- const adapter={captureSelected:async()=>({...source}),drawingLibrary:()=>libraryPath,readComments:async()=>({libraryPath,items:clone(data.comments)}),saveComment:async draft=>{
+ const adapter={captureSelected:async()=>{if(scenario==='unsupported')throw Object.assign(Error('unsupported preview fixture'),{code:'SELECTION_NOT_MP4'});return {...source};},drawingLibrary:()=>libraryPath,readComments:async()=>({libraryPath,items:clone(data.comments)}),saveComment:async draft=>{
    const id=draft.original?.id||crypto.randomUUID();if(draft.kind==='delete')data.comments=data.comments.filter(n=>n.id!==id);else if(draft.original)data.comments=data.comments.map(n=>n.id===id?{...n,text:draft.text}:n);else data.comments.push({id,time:draft.time,text:draft.text});persist();
    const read=await adapter.readComments();return{status:'saved',items:read.items,commentId:id,message:'示例标注已保存。'};
  }};

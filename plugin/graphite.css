@@ -115,7 +115,7 @@
 .shell-alerts [data-faded="true"]{opacity:0;visibility:hidden;pointer-events:none}
 .screen-gesture-ring[data-direction="left"] .gesture-left,.screen-gesture-ring[data-direction="right"] .gesture-right{background:transparent}
 .shell-dock .shell-icon:hover:enabled,.shell-dock .shell-icon[aria-expanded="true"],.workspace[data-annotating="true"] .shell-dock .shell-icon:first-child{background:rgba(111,147,176,.18);color:#a8c7df}
-.workspace[data-graphite]>.player-pane{transition:margin-right 220ms cubic-bezier(.2,.7,.2,1)}
+.workspace[data-graphite][data-record-motion="true"]>.player-pane{transition:margin-right 220ms cubic-bezier(.2,.7,.2,1)}
 .shell-records{animation:record-reveal 220ms cubic-bezier(.2,.7,.2,1) both}
 @keyframes record-reveal{from{opacity:0;transform:translateX(22px)}to{opacity:1;transform:translateX(0)}}
 @media(prefers-reduced-motion:reduce){.workspace[data-graphite]>.player-pane,.shell-header{transition:none}.shell-records{animation:none}}
@@ -264,3 +264,13 @@
 .shell-decision-actions {display:flex;gap:8px;}
 .shell-decision-actions button {flex:1;border:1px solid #354650;background:#202d35;color:#b6d6e8;padding:9px 10px;cursor:pointer;border-radius:0;}
 .shell-decision-actions button:hover,.shell-decision-actions button:focus-visible {background:#2b4050;outline:none;}
+
+/* Resize tracks the pointer; only explicit record toggles animate geometry. */
+.workspace[data-record-resizing="true"]>.player-pane{transition:none!important}
+@media(prefers-reduced-motion:reduce){.workspace[data-graphite][data-record-motion="true"]>.player-pane{transition:none}}
+.shell-unsupported{position:absolute;inset:44px 24px 68px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:#000;z-index:17;gap:12px;color:#b6c0c8}
+.shell-unsupported h1{font-size:19px;font-weight:500;line-height:1.4;color:#e1e7ec;margin:0 0 6px}
+.shell-unsupported p{max-width:480px;line-height:1.8;margin:0;font-size:13px}
+.shell-unsupported button{margin-top:12px;padding:9px 18px;background:#6f93b01c;color:#a8c7df;border:1px solid #6f93b033;border-radius:0}
+.workspace[data-unsupported="true"] #error,.workspace[data-unsupported="true"] #retry,.workspace[data-unsupported="true"] #notice,.workspace[data-unsupported="true"] .transport{display:none!important}
+@media(max-width:600px){.shell-records{max-width:calc(100vw - 160px)}.transport{padding-left:20px;padding-right:20px}.shell-editor{width:calc(100% - 24px)}.shell-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.shell-windows{flex:none}}

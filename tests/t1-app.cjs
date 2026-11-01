@@ -21,6 +21,7 @@ function harness(settings = {}) {
     discoverTools() { discovered++; return new Promise((resolve, reject) => { discoveries.push({ resolve, reject }); }); }
   };
   const modules = {
+    'window-fit.cjs': require('../plugin/window-fit.cjs'),
     'cache.cjs': { createCache(options) { assert.strictEqual(options.pluginRoot, root); return settings.backendCache || { readAsset() {}, release() {} }; } },
     'eagle.cjs': { createEagleAdapter() { return Object.freeze(adapter); } },
     'drawing-store.cjs': { createAnnotationStore: () => null },

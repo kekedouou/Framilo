@@ -197,6 +197,7 @@ function launchModel(settings = {}) {
       snapshot: () => ({ state: 'paused', frameId: 0, frameOrdinal: 0, time: 0, budget: { used: 0, limit: 1024 ** 3 } }),
       async dispose() {}, async play() {}, async pause() {}, async seek() {}, async step() {} }; } };
     const modules = {
+      'window-fit.cjs': require('../plugin/window-fit.cjs'),
       'cache.cjs': { createCache: () => ({ readAsset() {}, release() { return settings.releaseGate ? settings.releaseGate.promise : undefined; } }) },
       'eagle.cjs': { createEagleAdapter: () => ({ captureSelected: () => ({ id: 'selected', filePath: path.join(plugin, '中文 视频.mp4') }),
         discoverTools: () => ({ ffmpeg: 'memory-only' }) }) },

@@ -51,6 +51,7 @@ async function entryModel(mode = 'proxy') {
   const session = { loadSelected: async () => ({ status: 'ready' }), close: async () => ({ status: 'closed' }), hasDrawingDraft: () => false,
     snapshot: () => ({ epoch: 1, libraryEpoch: 1, sourceIdentity: { itemId: source.id, sha256: sha } }) };
   const modules = {
+    'window-fit.cjs': require('../plugin/window-fit.cjs'),
     'eagle.cjs': { createEagleAdapter: () => ({ captureSelected: () => source, discoverTools: async () => ({ ffmpeg: 'existing-only' }) }) },
     'preferences.cjs': { createMemoryPreferences: () => ({ snapshot: () => ({ ramBytes: 1024 ** 3, compressedRamBytes: 128 * 1024 ** 2 }), backend: () => mode, forwardPredecode: () => true,
       decoderPreference: () => 'prefer-hardware', proxyEncoder: () => 'cpu', automaticProxy: () => true, gpuDrawing: () => true }) },
