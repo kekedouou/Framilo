@@ -42,6 +42,16 @@ test('dense marker menu seeks only the chosen record once, preserves data and ca
  markers.fire('click',{target:owner});const next=markers.children.at(-1);next.fire('keydown',{key:'Escape',stopPropagation(){}});assert(!markers.children.includes(next));
  markers.fire('click',{target:owner});h.width=320;h.win.fire('resize');assert(!markers.children.some(n=>n.attributes.role==='dialog'));h.ui.destroy();
 });
+test('single marker selection returns focus to transport; Space toggles once without reselecting the note',async()=>{
+ const h=harness();h.session.toggle=async()=>{h.calls.push(['toggle']);};
+ const marker=h.el('commentMarkers').children[0];marker.focus();
+ h.el('commentMarkers').fire('click',{target:marker});await flush();
+ assert.equal(h.doc.activeElement,h.el('timeline'));assert.equal(h.calls.filter(c=>c[0]==='seek').length,1);
+ const event=h.win.fire('keydown',{code:'Space',key:' ',target:h.doc.activeElement});await flush();assert(event.defaultPrevented);
+ h.win.fire('keydown',{code:'Space',key:' ',repeat:true,target:h.doc.activeElement});h.win.fire('keyup',{code:'Space',key:' ',target:h.doc.activeElement});await flush();
+ assert.equal(h.calls.filter(c=>c[0]==='toggle').length,1);assert.equal(h.calls.filter(c=>c[0]==='seek').length,1);
+ h.el('commentText').tagName='textarea';h.win.fire('keydown',{code:'Space',key:' ',target:h.el('commentText')});await flush();assert.equal(h.calls.filter(c=>c[0]==='toggle').length,1);h.ui.destroy();
+});
 function visualHarness(){
  let serial=0;const timers=new Map(),nodes=[];
  const node=()=>{const handlers=new Map(),attrs=new Map(),n={isConnected:true,hidden:false,style:{},dataset:{},classList:{add(){}},children:[],offsetWidth:68,offsetHeight:30,

@@ -1,5 +1,13 @@
 # E52 planning record
 
+## Marker selection and Space — 2026-11-01
+
+Baseline571b140 clean; user browser comment requests direct playback after selecting a timeline annotation and removal of its focus box (R-02/R-03). Single-marker selection kept native button focus, unlike the existing dense chooser which returned focus to the timeline; Space therefore reactivated the button. Align single selection with the chooser's focus handoff and suppress only marker outline/shadow, retaining tick-colour keyboard feedback. No global button shortcut override, input changes, decoder/cache work, library writes or new dependencies.
+
+Tests: e52-ui-feedback, t1-ui and t3-ui pass (7/38/17); one-seek/one-toggle, repeated Space and text input protected. Initial new test used the generic mock div for a textarea and failed its input assertion; corrected the fixture tag, with no product workaround. Real ego browser verified single selection → timeline focus → Space playing → Space paused, no chooser and computed marker outline/shadow none. Evidence: verification-runs/e52/frontend/marker-space-{01,02,03}.mjs and marker-space-20261101.json. Optional screenshot timed out after assertions/evidence were saved; subsequent semantic snapshot succeeded and the owned task space was closed. No screenshot-based visual or real Eagle claim.
+
+Shared dense preview serves updated formal UI; user's tab/drafts were not refreshed. Existing service/recovery and synthetic/native limits remain. Product/changelog/handoff updated; architecture, general principles, frozen/native versions and historical evidence unchanged. Relevant keyboard/annotation checks suffice for this focus/style correction; no media benchmark or full media-suite rerun required.
+
 ## Format state, initial fit and resize work — 2026-11-01
 
 User requested presentable unsupported-format feedback, proportionate landscape/portrait windows and targeted resize optimisation. Baseline dcd16d3 clean. R-01/R-03/R-05/R-08 affected; no codec/proxy/cache/data-format changes, dependencies, native binary build or library writes. Use the existing black/blue-grey visual tokens, Segoe UI, centered short title/body/action; no new decorative card, warning jargon or instructions panel.

@@ -603,7 +603,7 @@
     function chooseMarker(event){
       const button=event.target?.closest?.('button[data-comment-id]'),group=markerGroups.get(button);
       if(!button||button.disabled||!interactive()||selection.snapshot().editing)return;
-      if(!group||group.length<2){closeMarkerChooser();seekComment(event);return;}
+      if(!group||group.length<2){closeMarkerChooser();seekComment(event);el.timeline.focus();return;}
       if(markerChooserOwner===button){closeMarkerChooser(true);return;}
       closeMarkerChooser();markerChooserOwner=button;button.setAttribute('aria-expanded','true');
       const panel=markerChooser=doc.createElement('div');panel.className='timeline-marker-chooser';panel.setAttribute('role','dialog');panel.setAttribute('aria-label','选择相邻标注');

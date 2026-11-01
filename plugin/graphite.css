@@ -86,6 +86,7 @@
 .comment-marker:before{content:'';position:absolute;left:calc(var(--marker-x,10px) - 1px);top:34px;width:2px;height:10px;background:#f3f3ef;pointer-events:none}
 .workspace[data-graphite] .comment-marker:hover:after,.workspace[data-graphite] .comment-marker:focus-visible:after,.workspace[data-graphite] .comment-marker[aria-expanded="true"]:after{background:#a8c7df}
 .comment-marker:hover:enabled{background:transparent}
+.workspace[data-graphite] .comment-marker:focus{outline:none;box-shadow:none}
 .timeline-marker-chooser{position:absolute;bottom:52px;width:260px;max-width:100%;max-height:224px;overflow:auto;pointer-events:auto;z-index:30;background:rgba(17,21,25,.94);backdrop-filter:blur(8px);border:1px solid #ffffff16;padding:4px;box-shadow:0 8px 24px #0008}
 .timeline-marker-chooser button{display:block;width:100%;padding:9px 10px;text-align:left;border:0;border-radius:0;background:transparent;color:#c5cdd3;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;font:12px 'Segoe UI',sans-serif}
 .timeline-marker-chooser button:hover,.timeline-marker-chooser button:focus-visible{background:#6f93b029;color:#a8c7df;outline:0}
