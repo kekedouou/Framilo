@@ -1,5 +1,11 @@
 # E53 execution record
 
+## Cadence E selected; six refinements — 2026-11-01
+
+Baseline7a5a08f clean. User chose E's continuous-frame direction and requested refinements to choose from. [E-series board](../../brand/framilo-e-variants/README.md) retains E0 as reference and adds E1 balanced, E2 compact, E3 four-frame, E4 forward lean, E5 joined fold and E6 explicit F. Same palette/wordmark/display scale isolates shape differences; no runtime branding replacement or final selection inferred. Original six concepts remain intact apart from a navigation/status note.
+
+SVG/HTML generated locally; PNG rendered from SVG through ego Canvas, not a screenshot. Visually reviewed seven silhouettes, labels, light/dark and small-size samples. E3/E4 have thinner small-size gaps and require optical work if selected. Browser checks/receipts in verification-runs/e53/framilo-e-*; budget, XML, document/diff checks apply. No media or runtime change, therefore no native/performance tests needed. Product code, installed icon, stable identity, historical releases and evidence remain untouched.
+
 ## Framilo selected; six new logo concepts — 2026-11-01
 
 Baseline d754b4a clean. User selected Framilo and requested multiple redesigned logos. Read frontend-design skill, used a consistent dark/white/pale-blue board and six distinct subjects: cut F, folio, retrace, pinpoint, cadence, insight. Plan and critique are recorded in [brand README](../../brand/framilo-round1/README.md). Original paths, no raster generation, no remote assets/fonts/dependencies. F was revised from a hexagonal mechanical-looking contour to an almond eye during visual critique. Standalone D uses a transparent knockout mask; board samples use matching background knockouts.

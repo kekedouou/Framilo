@@ -2,6 +2,8 @@
 
 用户已确定名称Framilo。本轮只做新品牌设计提案，不替换正式插件图标、不改变插件ID或存储目录。名称选择不代表商标可用性已核查通过。
 
+最新选择：用户偏好E「连续帧」，当前细化见[E系列六款变体](../framilo-e-variants/README.md)。本目录是首轮原稿，保持原构形不变。
+
 [对照图](contact-sheet.png) · [可缩放展板](contact-sheet.svg) · [浏览页](index.html) · [阶段计划](../../experiments/E53/plan.md)
 
 | 方案 | 设计意图 | 取舍 | 原稿 |
