@@ -2,6 +2,8 @@
 
 从特效观察出发的视频参考与标注播放器，流畅拆解每一帧。产品英文名暂定Motionote。
 
+第三阶段先整理为个人长期使用的正式插件，暂不公开发行；这不代表已通过稳定版验收。品牌、自用包和长期检查按[第三阶段方案](docs/experiments/E53/plan.md)推进。
+
 [当前候选、授权与待验](docs/progress.md) · [开发地图](docs/project-profile.md) · [能力与限制](docs/releases/motionote-capabilities.md)
 
 ## 使用
