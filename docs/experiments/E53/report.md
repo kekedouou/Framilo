@@ -1,5 +1,13 @@
 # E53 execution record
 
+## Framilo selected; six new logo concepts — 2026-11-01
+
+Baseline d754b4a clean. User selected Framilo and requested multiple redesigned logos. Read frontend-design skill, used a consistent dark/white/pale-blue board and six distinct subjects: cut F, folio, retrace, pinpoint, cadence, insight. Plan and critique are recorded in [brand README](../../brand/framilo-round1/README.md). Original paths, no raster generation, no remote assets/fonts/dependencies. F was revised from a hexagonal mechanical-looking contour to an almond eye during visual critique. Standalone D uses a transparent knockout mask; board samples use matching background knockouts.
+
+Delivered six standalone SVGs, rebuild script, HTML, SVG/PNG comparison board. Ego space5 verified all six concepts and no horizontal overflow at 1440/800/390px (three/two/one columns); receipt verification-runs/e53/framilo-layout.json. Canvas exported the SVG board as a 1536×1250 PNG, visually inspected before and after F revision; this is not an HTML screenshot. Space closed, existing user preview untouched. Local HTML requires no running service; PNG/SVG remain recovery paths. This is brand review, not player interaction or native-host acceptance. Small-size samples are for selection, not final optical mastering.
+
+README, stage plan, roadmap and handoff now reflect Framilo and pending logo selection. Runtime/installed icon, plugin identity, historical drafts/releases, native binaries and stored annotations are unchanged. Name choice is not trademark clearance. Verification is document/link/diff/asset structure/budget only; no media/performance regression run is needed for these design-only files.
+
 ## Rename and redesign requested — 2026-11-01
 
 Baseline5e6ab70 clean. User explicitly replaced the prior A-selection direction with a new name and logo, asking first for English names that are easy to pronounce/remember and relevant to the product. [User-supplied YouTube link](https://www.youtube.com/watch?v=ii20RxJvz7g) could not be fetched; skeleton-extraction capability is user-reported, not independently verified here. Prior assets preserved as historical concepts; runtime branding unchanged.
