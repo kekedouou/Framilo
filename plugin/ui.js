@@ -81,7 +81,8 @@
     let viewRange = { start: 0, end: 0, focused: false }, timelineWidth = null, rulerKey = null;
     let rateRequest = null, noteRequest = null, exportRequest = null;
     let drawingUI = null, screenUI = null, contextUI = null, shellUI = null;
-    const markerButtons = [], markerTimes = new WeakMap();
+    const markerButtons = [], markerTimes = new WeakMap(), markerGroups = new WeakMap();
+    let markerChooser=null,markerChooserOwner=null;
     const attributes = new Map();
     const loopAttributes = new WeakMap();
     function loopAttribute(node, name, value) {
@@ -341,10 +342,22 @@
       changed() { updateTransport(); updateMemorySettings(); updateComments(); updateExports(); } });
     let transportBusy = false;
     function positionMarkers() {
+      closeMarkerChooser();
       for (const marker of markerButtons) {
         const time = markerTimes.get(marker);
         set(marker, 'hidden', !timelineAPI.contains(time, viewRange));
         set(marker.style, 'left', timelineAPI.ratio(time, viewRange) * 100 + '%');
+      }
+      const groups=new Map();
+      for (const cell of timelineAPI.markerCells(markerButtons.map(m=>markerTimes.get(m)),viewRange,timelineWidth)) {
+        const marker=markerButtons[cell.index];
+        set(marker.style,'marginLeft',(cell.left-cell.x)+'px');set(marker.style,'width',Math.max(0,cell.right-cell.left)+'px');
+        // Draw the tick at its exact time, independently of its hit cell.
+        marker.style.setProperty?.('--marker-x',(cell.x-cell.left)+'px');
+        if(!groups.has(cell.group))groups.set(cell.group,cell.group.map(i=>markerButtons[i]));
+        markerGroups.set(marker,groups.get(cell.group));
+        marker.setAttribute('aria-haspopup',cell.group.length>1?'dialog':'false');
+        marker.title=cell.group.length>1?cell.group.length+' 条相邻标注，点击选择':marker.getAttribute?.('aria-label')||marker.title;
       }
     }
     function updateView() {
@@ -365,6 +378,7 @@
       const key = [viewRange.start, viewRange.end, viewRange.focused, timelineWidth].join(':');
       if (rulerKey === key) return;
       rulerKey = key;
+      positionMarkers();
       if (shellUI) return;
       // Non-DOM unit harnesses may omit createElement; browser/loader tests
       // exercise the actual bounded tick nodes and their geometry.
@@ -585,7 +599,24 @@
           : action === 'delete' ? session.deleteComment(button.dataset.commentId) : session.seekComment(button.dataset.commentId));
       }
     }
-    on(el.commentMarkers, 'click', seekComment); on(el.commentList, 'click', seekComment);
+    function closeMarkerChooser(restore=false){if(!markerChooser)return;markerChooser.remove?.();markerChooser=null;const owner=markerChooserOwner;markerChooserOwner=null;owner?.setAttribute('aria-expanded','false');if(restore)owner?.focus();}
+    function chooseMarker(event){
+      const button=event.target?.closest?.('button[data-comment-id]'),group=markerGroups.get(button);
+      if(!button||button.disabled||!interactive()||selection.snapshot().editing)return;
+      if(!group||group.length<2){closeMarkerChooser();seekComment(event);return;}
+      if(markerChooserOwner===button){closeMarkerChooser(true);return;}
+      closeMarkerChooser();markerChooserOwner=button;button.setAttribute('aria-expanded','true');
+      const panel=markerChooser=doc.createElement('div');panel.className='timeline-marker-chooser';panel.setAttribute('role','dialog');panel.setAttribute('aria-label','选择相邻标注');
+      for(const marker of group){const choice=doc.createElement('button');choice.type='button';choice.dataset.commentId=marker.dataset.commentId;choice.textContent=marker.getAttribute?.('aria-label')||marker.title;panel.appendChild(choice);}
+      const rect=el.commentMarkers.getBoundingClientRect(),x=timelineAPI.ratio(markerTimes.get(button),viewRange)*rect.width;
+      panel.style.left=Math.max(0,Math.min(rect.width-260,x-130))+'px';
+      panel.addEventListener('click',e=>{e.stopPropagation();if(!e.target?.closest?.('button[data-comment-id]'))return;closeMarkerChooser();seekComment(e);el.timeline.focus();});
+      panel.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeMarkerChooser(true);}else if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();const rows=Array.from(panel.children),index=rows.indexOf(doc.activeElement),next=e.key==='Home'?0:e.key==='End'?rows.length-1:(index+(e.key==='ArrowDown'?1:-1)+rows.length)%rows.length;rows[next].focus();}});
+      el.commentMarkers.appendChild(panel);panel.children[0]?.focus();
+    }
+    on(el.commentMarkers, 'click', event=>{if(!markerChooser?.contains?.(event.target))chooseMarker(event);});on(el.commentList, 'click', seekComment);
+    on(win,'pointerdown',event=>{if(markerChooser&&!markerChooser.contains(event.target)&&event.target!==markerChooserOwner)closeMarkerChooser();});
+    on(win,'blur',()=>closeMarkerChooser());
     on(win, 'pointerdown', event => {
       if (selectedComment && !state.comments?.draft && !state.drawings?.draft && !event.target?.closest?.('.comment-row')) showCommentActions(null);
     });
@@ -676,6 +707,7 @@
       let rebuilt = false;
       // The immutable list changes only on loading/read-back, never per frame.
       if (items && (items !== renderedItems || renderedDuration !== state.duration)) {
+        closeMarkerChooser();
         renderedItems = items; renderedDuration = state.duration;
         rebuilt = true;
         el.commentList.replaceChildren(); el.commentMarkers.replaceChildren(); commentButtons.length = 0; markerButtons.length = 0; commentRows.length = 0;
@@ -714,6 +746,7 @@
         showCommentActions(selectedComment);
       }
       if (rebuilt || renderedInteractive !== ready) {
+        if(!ready)closeMarkerChooser();
         for (const entry of commentButtons) set(entry.button, 'disabled', !ready || !entry.inRange);
         for (const button of markerButtons) set(button, 'disabled', !ready);
         renderedInteractive = ready;
@@ -882,6 +915,7 @@
       if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
     }, update,
       destroy({ closing = false } = {}) {
+        closeMarkerChooser();
         if (proxyToastTimer !== null) win.clearTimeout(proxyToastTimer); proxyToastTimer = null;
         if (el.proxyState) el.proxyState.hidden = true;
         if (closing && doc.createElement && doc.body) {

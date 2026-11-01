@@ -414,7 +414,7 @@
       const active = !!d;
       set(el.drawingPanel,'hidden',!active || !value.interactionSettings?.drawingToolbar && d.kind !== 'delete');set(el.drawingMessage,'hidden',!active);set(el.showDrawings,'checked',state?.visible !== false);
       set(el.showDrawings,'disabled',active || !session());set(el.drawingNew,'disabled',!canBegin() || state?.status !== 'ready');
-      set(el.drawingStatus,'textContent',state?.message || '');
+      set(el.drawingStatus,'textContent',state?.message === '圈画与文字已保存。' ? '' : state?.message || '');
       const shown = active ? temporaryVisible : state?.visible !== false;
       if (active && (!shown || d.kind === 'delete')) closeProperties();
       set(el.drawingText,'hidden',!textDraft || !shown);set(el.drawingTextDelete,'hidden',el.drawingText.hidden);
@@ -423,10 +423,10 @@
       hideLayer(!shown || !active && !valueObjects.length || !['paused', 'playing', 'seeking'].includes(value.state));
       if (active) {
         if (geometry === null || normalKey !== key) { layout(); normalKey = key; }
-        message(d.message || (shown ? d.kind === 'delete' ? '确认删除这条圈画标注？' : '右键短点保存 · 甩动/长按选工具 · 滚轮调整 · Esc退出' : '圈画已临时隐藏，按H恢复后继续绘图。'));
+        message(d.message || (shown ? d.kind === 'delete' ? '确认删除这条圈画标注？' : '' : '圈画已临时隐藏，按H恢复后继续绘图。'));
         set(el.drawingSave, 'textContent', '✓');
-        set(el.drawingSave, 'title', d.status === 'unknown' ? '核对并保存' : d.kind === 'delete' ? '确认清除' : '保存（D）');
-        set(el.drawingSave, 'ariaLabel', el.drawingSave.title);
+        set(el.drawingSave.dataset, 'tooltip', d.status === 'unknown' ? '核对并保存' : d.kind === 'delete' ? '确认清除' : '保存（D）');
+        set(el.drawingSave, 'ariaLabel', el.drawingSave.dataset.tooltip);
         set(el.drawingSave, 'disabled', !['editing', 'failed', 'unknown'].includes(d.status));
         for (const control of [...Object.values(buttons), el.drawingColorButton, el.drawingOptions, el.drawingColor, el.drawingWidth, el.drawingSize, el.drawingText, el.drawingDelete]) control.disabled = !shown || d.kind === 'delete' || !['editing', 'failed'].includes(d.status);
         // Playback/status notifications do not change the editor's picture.

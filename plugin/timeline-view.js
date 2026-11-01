@@ -67,5 +67,20 @@
     }
     return result;
   }
-  return { visibleRange, ratio, timeAt, contains, clip, ticks };
+  // Non-overlapping hit cells. Dense neighbours retain their original times;
+  // the UI asks which record instead of relying on DOM stacking order.
+  function markerCells(times, range, width) {
+    if (!(width > 0)) return [];
+    const points = times.map((time,index)=>({time,index,x:ratio(time,range)*width})).filter(p=>contains(p.time,range)).sort((a,b)=>a.time-b.time||a.index-b.index);
+    let group=[];
+    for(let i=0;i<points.length;i++) {
+      const p=points[i],prev=points[i-1],next=points[i+1];
+      if(!prev||p.x-prev.x>=12)group=[];
+      p.group=group;group.push(p.index);
+      p.left=Math.max(0,p.x-10,prev?(p.x+prev.x)/2:0);
+      p.right=Math.min(width,p.x+10,next?(p.x+next.x)/2:width);
+    }
+    return points;
+  }
+  return { visibleRange, ratio, timeAt, contains, clip, ticks, markerCells };
 });

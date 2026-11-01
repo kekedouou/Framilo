@@ -11,7 +11,7 @@ function node(tagName = 'div') {
     clientWidth: 260, clientHeight: 300, scrollTop: 0, textContent: '', offsetWidth: 80,
     style: { setProperty(key, data) { this[key] = data; }, removeProperty(key) { delete this[key]; } },
     classList: { add(key) { classes.add(key); }, remove(key) { classes.delete(key); }, contains(key) { return classes.has(key); }, toggle(key, enabled) { if (enabled) classes.add(key); else classes.delete(key); } },
-    setAttribute(key, data) { attributes[key] = String(data); }, removeAttribute(key) { delete attributes[key]; },
+    setAttribute(key, data) { attributes[key] = String(data); }, removeAttribute(key) { delete attributes[key]; },getAttribute(key){return attributes[key]??null;},hasAttribute(key){return key in attributes;},
     addEventListener(type, fn, capture = false) { if (!handlers.has(type)) handlers.set(type, []); handlers.get(type).push({ fn, capture }); },
     removeEventListener(type, fn) { handlers.set(type, (handlers.get(type) || []).filter(item => item.fn !== fn)); },
     fire(type, data = {}) { const event = { type, target: this, pointerId: 1, button: 0, buttons: 1, clientX: 100, clientY: 100,
@@ -26,6 +26,7 @@ function node(tagName = 'div') {
     contains(child) { return child === this || this.children.some(item => item.contains?.(child)); },
     closest(selector) { return selector.split(',').some(key => key === tagName || key === '[role="slider"]' && attributes.role === 'slider') ? this : this.parentElement?.closest(selector) || null; },
     querySelector(selector) { const key = selector.slice(1); for (const child of this.children) { if (String(child.className || '').split(' ').includes(key)) return child; const found = child.querySelector?.(selector); if (found) return found; } return null; },
+    querySelectorAll(selector){assert.equal(selector,'button[title]');return this.children.flatMap(child=>[...(child.tagName==='button'&&child.hasAttribute('title')?[child]:[]),...child.querySelectorAll(selector)]);},
     getBoundingClientRect() { return { left: 100, top: 0, width: 200, height: 200, right: 300, bottom: 200 }; },
     getContext() { return { clearRect() {}, fillRect() {}, scale() {} }; }, focus() {}, setPointerCapture() {}, hasPointerCapture() { return false; },
     animate() {} };
@@ -93,6 +94,7 @@ async function shellCases() {
     requestAnimationFrame: fn => { fn(); return 1; } });
   const context = { window: win, Event: class { constructor(type) { this.type = type; } },
     setTimeout(fn) { const id = ++serial; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); }, Option: class {} };
+  win.setTimeout=context.setTimeout;win.clearTimeout=context.clearTimeout;
   win.EVAIcons = { svg: () => '<svg></svg>' }; win.EVASettingsView = { create({ settings: host }) { const footer = node(); footer.className = 'shell-settings-footer'; host.append(footer); return { update() {}, close() {}, destroy() {}, contains: () => false }; } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../plugin/graphite-shell.js'), 'utf8'), context);
   const priorities = [], prioritySources = [], state = { epoch: 1, state: 'preparing', duration: 30, source: { id: 'a', name: 'fixture' }, comments: { items: Array.from({ length: 20 }, (_, n) => ({ id: String(n), time: n + 1, text: 'note' })) }, playback: null, drawings: {} };

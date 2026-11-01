@@ -3,12 +3,14 @@
  const clone=x=>JSON.parse(JSON.stringify(x)), source={id:'preview-synthetic',name:'Motionote · 合成交互样本',filePath:'/sample.mp4',sha256:'e'.repeat(64)},libraryPath='/preview-only';
  const frames=Array.from({length:360},(_,id)=>({id,time:id/30,end:(id+1)/30,file:'sample.mp4',bytes:1}));
  const defaults=()=>({comments:[{id:'sample-1',time:1,text:'观察运动方向'},{id:'sample-2',time:4,text:'同帧文字与圈画可一起编辑'},{id:'sample-3',time:8,text:'检查片段范围和记录切换'}],records:[],quality:'720p',ramMiB:1024,interaction:PreviewModules.load('preferences.cjs').DEFAULT_INTERACTION,visible:true,styles:EVADrawingModel.defaultStyles(),version:0});
- let data;try{data=JSON.parse(sessionStorage.getItem('motionote-ui-preview-v1'))||defaults();}catch(_){data=defaults();}
- const persist=()=>sessionStorage.setItem('motionote-ui-preview-v1',JSON.stringify(data));
+ const dense=new URLSearchParams(location.search).get('scenario')==='dense',storageKey='motionote-ui-preview-v1'+(dense?'-dense':'');
+ const sample=()=>{const value=defaults();if(dense)value.comments.splice(2,0,{id:'dense-same',time:4,text:'同帧：检查亮部边缘'},{id:'dense-1',time:4+1/30,text:'运动开始扩散'},{id:'dense-2',time:4+2/30,text:'轮廓变化'},{id:'dense-3',time:4.1,text:'拖尾开始消失'});return value;};
+ let data;try{data=JSON.parse(sessionStorage.getItem(storageKey))||sample();}catch(_){data=sample();}
+ const persist=()=>sessionStorage.setItem(storageKey,JSON.stringify(data));
  let ui,session;
  const bar=document.createElement('aside');bar.setAttribute('aria-label','开发预览状态');bar.style.cssText='position:fixed;top:8px;left:170px;z-index:90;color:#a6b7c5;font:11px sans-serif;display:flex;gap:12px;align-items:center;';
  const label=document.createElement('span');label.textContent='交互预览 · 示例数据';label.title='正式UI与Session；浏览器样本播放。不能验证原生编解码、帧精度、性能或Eagle保存。';
- const reset=document.createElement('button');reset.textContent='重置示例';reset.onclick=async()=>{if(session.hasDrawingDraft()&&!await ui.confirmDrawingExit())return;await session.close();sessionStorage.removeItem('motionote-ui-preview-v1');location.reload();};bar.append(label,reset);document.body.append(bar);
+ const reset=document.createElement('button');reset.textContent='重置示例';reset.onclick=async()=>{if(session.hasDrawingDraft()&&!await ui.confirmDrawingExit())return;await session.close();sessionStorage.removeItem(storageKey);location.reload();};if(dense)label.textContent='交互预览 · 密集标注示例';bar.append(label,reset);document.body.append(bar);
  ui=EVAUI.createUI({hostAction:async action=>{if(action==='fullscreen'){if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}else label.textContent='预览不支持原生窗口操作；请在Eagle中体验';}});
  document.addEventListener('fullscreenchange',()=>{document.documentElement.dataset.evaFullscreen=String(!!document.fullscreenElement);dispatchEvent(new Event('eva-fullscreen-change'));});
  // Host-specific controls have no simulated success path.
