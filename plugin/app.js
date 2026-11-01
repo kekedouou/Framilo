@@ -27,6 +27,7 @@
   let closeTask = null, allowUnload = false, exitScheduled = false;
   let hideTask = Promise.resolve(), closeFailure = null;
   let drawingCloseIntent = null, drawingLoadSequence = 0;
+  let temporaryMedia = null;
   let backend = null, adapter = null, lastPlugin = null, pendingOpen = null, initialSelection = null;
   let entryOverride = null;
   const now = () => performance.now();
@@ -107,10 +108,7 @@
         const signal = options && options.signal;
         if (signal && signal.aborted) throw cancelled();
         const native = options?.playbackBackend === 'proxy';
-        if(native && !['mp4','m4v','mov','3gp'].includes(path.extname(snapshot.filePath).slice(1).toLowerCase())){
-          if(options.requestDecision)await options.requestDecision({kind:'decoder-routing',title:'此格式使用JPEG兼容播放',body:'当前原生读者尚不能确认此容器的准确帧时间。JPEG模式会先准备整片，再逐帧播放；不会修改源视频。',choices:[{value:'jpeg',label:'使用JPEG'},{value:'cancel',label:'取消'}]});
-          if(signal?.aborted)throw cancelled();throw Object.assign(Error('此格式请在设置中选择JPEG序列；代理模式目前支持MP4、M4V、MOV、3GP。'),{code:'MEDIA_CONTAINER_MODE'});
-        }
+        if(native&&!require(path.join(root,'media-policy.cjs')).nativeContainer(snapshot.filePath))throw Object.assign(Error('暂不支持此视频格式。'),{code:'MEDIA_CONTAINER_MODE'});
         const memory = preferences.snapshot();
         const acceleration=preferences.gpuAcceleration?.();
         const decoder=acceleration===undefined?(preferences.decoderPreference?.()||'prefer-hardware'):acceleration?'prefer-hardware':'prefer-software',encoder=acceleration===undefined?(preferences.proxyEncoder?.()||'cpu'):acceleration?'nvidia':'cpu',gpu=acceleration===undefined?preferences.gpuDrawing?.()!==false:acceleration;
@@ -123,9 +121,11 @@
           if (!preparedMedia || key !== backendKey) {
             if (backend) { const previous = backend; preparedMedia = null; backendKey = null; backend = null;
               await previous.close(); if (signal?.aborted) throw cancelled(); }
+            if(native){temporaryMedia=temporaryMedia||require(path.join(root,'temporary-media.cjs')).createTemporaryMedia({pluginRoot:root});
+            await temporaryMedia.ready;if(signal?.aborted)throw cancelled();}
             const onBackground = () => { if (session && !closed) ui.update(session.snapshot()); };
             backend = native ? require(path.join(root, 'native-backend.cjs')).createNativeBackend({ pluginRoot: root, tools,
-              limitBytes:(preferences.proxyDiskGiB?.()||5)*1024**3, ramBytes: memory.ramBytes, decoderPreference: decoder, proxyEncoder: encoder, automaticProxy: true, gpuDrawing: gpu, onBackground })
+              temporaryMedia,cacheRoot:temporaryMedia.directory,limitBytes:100*1024**3, ramBytes: memory.ramBytes, decoderPreference: decoder, proxyEncoder: encoder, automaticProxy: true, gpuDrawing: gpu, onBackground })
               : createTaskClient({ pluginRoot: root, discoverTools: async () => tools,
               onWaiting: () => { if (session && !closed) ui.update({ ...session.snapshot(), progress: { stage: 'handover', message: '正在等待上一个视频任务结束' } }); },
               onBackground,
@@ -211,6 +211,7 @@
       });
       try { result = session ? await session.close() : { status: 'closed' }; } catch (error) { failure = error; }
       try { if (backend) await backend.close(); } catch (error) { failure = failure || error; }
+      if(!failure&&temporaryMedia)try{await temporaryMedia.close();temporaryMedia=null;await backend?.retireLegacy?.();}catch(error){failure=error;}
       await reportClose;
       if (failure) throw failure;
       if (result?.status === 'error') throw new Error(result.error?.message || '资源释放未完成');

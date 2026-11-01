@@ -1,6 +1,6 @@
 # FilmCraft 原生媒体桥
 
-E51扩至4K UHD及竖屏，不放大源图；显式输出长边≤3840、短边≤2160。已重编译并验证短合成H.264的3840×2160与2160×3840准确取帧，CPU/GPU代理同帧接管通路；不是长片性能验收。当前actual PTS回执钩子来自MP4读者，MKV等其它容器不得假称准确原生定位，产品入口提供JPEG兼容选择。
+E51扩至4K UHD及竖屏，不放大源图；显式输出长边≤3840、短边≤2160。已重编译并验证短合成H.264的3840×2160与2160×3840准确取帧，CPU/GPU代理同帧接管通路；不是长片性能验收。E52的actual PTS回执覆盖MP4与Matroska读者；MKV不再将时间起点强制归零，桥核对实际缓存PTS。常用格式按[能力表](../../docs/releases/motionote-capabilities.md)列明本地样本与未验组合，日常JPEG兼容入口撤下。
 
 维护入口，不是另一套播放器。运行文件为 plugin/bin/filmcraft-media.exe；它不读取 prototypes、上游源码、Rust、Q:或 verification-runs。仅开发构建使用既有隔离工具。
 

@@ -13,7 +13,7 @@ async function fixture(t,options={}){
  function producer(config){factoryOptions.push(config);return{pids:()=>[],start(spec){if(options.throwProxy)throw Error('proxy unsupported');let resolve;const job={spec,state:{status:'encoding',stage:'preparing'},ready:new Promise(r=>{resolve=r;}),snapshot(){return this.state;},async cancel(){this.state={status:'cancelled',stage:'cancelled'};resolve(null);return this.ready;},complete(value){this.state={status:'ready',stage:'complete'};resolve(value);}};jobs.push(job);return job;},async close(){await Promise.all(jobs.map(j=>j.cancel()));}};}
  function spawn(exe,args){const c=new EventEmitter();c.stdout=new PassThrough();c.stderr=new PassThrough();c.kill=()=>{c.emit('close',null);};if(options.holdProbe)return c;setImmediate(()=>{
   const audio=args.includes('a:0');let data;
-  if(audio){data={streams:options.audio?[{codec_type:'audio',duration:'0.05',start_time:'0',channels:2,sample_rate:'48000'}]:[]};if(options.mutateDuringProbe)fs.writeFileSync(source,'changed source contents while probing');}
+  if(audio){data={streams:options.audio?[{codec_type:'audio',codec_name:'aac',time_base:'1/48000',start_pts:options.audioStart??0,channels:2,sample_rate:'48000'}]:[],packets:options.audio?(options.audioPackets||[{pts:0,duration:2400}]):[]};if(options.mutateDuringProbe)fs.writeFileSync(source,'changed source contents while probing');}
   else{sourceProbes++;data={streams:[{codec_type:'video',codec_name:'h264',width:options.videoWidth||1920,height:options.videoHeight||1080,time_base:'1/1000',duration_ts:50,start_pts:0,sample_aspect_ratio:'1:1',color_transfer:options.hdr?'smpte2084':'bt709'}],packets:[{pts:0,duration:17},{pts:33,duration:17},{pts:17,duration:16}]};}
   c.stdout.end(JSON.stringify(data));c.emit('close',0);
  });return c;}
@@ -95,4 +95,12 @@ test('odd fitted geometry remains the display/reader geometry while proxy encode
 });
 test('asynchronous clear yields to input and close waits for the owned cleanup',async t=>{
  let done;const gate=new Promise(resolve=>{done=resolve;}),f=await fixture(t,{clearWait:gate}),info=await f.backend.media.prepare({id:'unit',filePath:f.source});await fs.promises.mkdir(path.join(f.pluginRoot,'cache'));await fs.promises.writeFile(path.join(f.pluginRoot,'cache/owner.json'),'fixture');let finished=false;const pending=f.backend.cache.clearOther({sourceSha256:info.source.sha256}).then(()=>{finished=true;});await new Promise(resolve=>setImmediate(resolve));assert.equal(finished,false);let closed=false;const closing=f.backend.close().then(()=>{closed=true;});await new Promise(resolve=>setImmediate(resolve));assert.equal(closed,false);done();await pending;await closing;assert.equal(finished,true);assert.equal(f.clearCalls.length,1);
+});
+
+test('E52 audio without stream duration uses real packet boundary and preserves nonzero start',async t=>{
+ const f=await fixture(t,{audio:true,audioStart:48000,audioPackets:[{pts:50400,duration:2400},{pts:48000,duration:2400}]});
+ const info=await f.backend.media.prepare({id:'audio-bounds',filePath:f.source});assert.equal(info.audio.start,1);assert.equal(info.audio.duration,.1);assert.equal(info.audio.codec,'aac');
+});
+test('E52 missing audio packet end cannot silently become a video-derived or silent duration',async t=>{
+ const f=await fixture(t,{audio:true,audioPackets:[{pts:0}]});await assert.rejects(f.backend.media.prepare({id:'audio-bounds',filePath:f.source}),/声音结束位置无法确认/);assert.equal(f.readers.length,0);assert.equal(f.jobs.length,0);
 });

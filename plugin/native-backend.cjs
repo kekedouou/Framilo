@@ -10,16 +10,17 @@ function aborted(){return Object.assign(Error('视频准备已取消。'),{name:
 function check(signal){if(signal?.aborted)throw aborted();}
 function regular(file){const s=fs.lstatSync(file);if(!s.isFile()||s.isSymbolicLink()||path.resolve(fs.realpathSync(file)).toLowerCase()!==path.resolve(file).toLowerCase())throw Error('源文件或工具路径不是可确认的普通文件。');return s;}
 async function hash(file,signal){const before=regular(file),h=crypto.createHash('sha256');for await(const b of fs.createReadStream(file,{highWaterMark:1024**2})){check(signal);h.update(b);}const after=regular(file);if(before.size!==after.size||before.mtimeMs!==after.mtimeMs)throw Error('读取时源视频发生变化。');return h.digest('hex');}
-function runJson(exe,args,signal,max=64*1024**2){return new Promise((resolve,reject)=>{
- check(signal);const child=spawn(exe,args,{windowsHide:true,stdio:['ignore','pipe','pipe']}),chunks=[];let size=0,tail='',failure;
+function runJson(exe,args,signal,max=64*1024**2,spawnProcess=spawn){return new Promise((resolve,reject)=>{
+ check(signal);const child=spawnProcess(exe,args,{windowsHide:true,stdio:['ignore','pipe','pipe']}),chunks=[];let size=0,tail='',failure;
  const stop=()=>{failure=aborted();child.kill();},timer=setTimeout(()=>{failure=Error('读取源帧索引超时。');child.kill();},120000);
  signal?.addEventListener('abort',stop,{once:true});child.stdout.on('data',b=>{size+=b.length;if(size>max){failure=Error('源帧索引超过64MiB安全上限。');child.kill();}else chunks.push(b);});child.stderr.on('data',b=>{tail=(tail+b).slice(-4096);});child.on('error',e=>{failure=e;});child.on('close',code=>{clearTimeout(timer);signal?.removeEventListener('abort',stop);if(failure||code!==0)return reject(failure||Error('源帧索引读取失败：'+tail));try{resolve(JSON.parse(Buffer.concat(chunks).toString()));}catch(e){reject(e);}});
  });}
-async function inspect(source,tools,quality,signal,onProgress=()=>{}){
+async function inspect(source,tools,quality,signal,onProgress=()=>{},spawnProcess=spawn){
  onProgress({stage:"source-index",message:"读取源帧索引"});
  const sourceBefore=regular(source.filePath),sourceStamp=s=>[s.dev,s.ino,s.size,s.mtimeMs,s.ctimeMs].join(':');
- const raw=await runJson(tools.ffprobe,['-v','error','-show_streams','-show_format','-show_packets','-select_streams','v:0','-show_entries','packet=pts,duration:stream=index,codec_type,codec_name,width,height,time_base,duration,duration_ts,start_pts,sample_aspect_ratio,color_space,color_transfer,color_primaries,color_range:stream_tags=rotate:stream_side_data=rotation','-of','json',source.filePath],signal);
+ const raw=await runJson(tools.ffprobe,['-v','error','-show_streams','-show_format','-show_packets','-select_streams','v:0','-show_entries','packet=pts,duration:stream=index,codec_type,codec_name,width,height,time_base,duration,duration_ts,start_pts,sample_aspect_ratio,color_space,color_transfer,color_primaries,color_range:stream_tags=rotate:stream_side_data=rotation','-of','json',source.filePath],signal,64*1024**2,spawnProcess);
  const video=raw.streams?.find(x=>x.codec_type==='video');if(!video||!raw.packets?.length)throw Error('未找到可靠的视频源帧。');
+ if(video.codec_name==='prores'&&video.color_space!=='bt709')throw Object.assign(Error('暂不能播放此视频。'),{code:'MEDIA_COLOR_UNVERIFIED'});
  const tb=String(video.time_base).split('/').map(Number);if(tb.length!==2||tb.some(x=>!Number.isSafeInteger(x)||x<=0))throw Error('源时间基无效。');
  const packets=raw.packets.map(x=>{if(!Number.isSafeInteger(x.pts))throw Error('源帧时间缺失或超出整数精度。');return x;}).sort((a,b)=>a.pts-b.pts);
  if(packets.length>120000)throw Error('超过120,000源帧安全上限（30fps约66分钟、60fps约33分钟）。请先截取所需部分；源文件未修改。');
@@ -32,33 +33,41 @@ async function inspect(source,tools,quality,signal,onProgress=()=>{}){
  const indexed=frameIndex.buildIndex(packets.map((x,n)=>({id:n,ptsTicks:String(x.pts),file:'native:'+n,bytes:1})),{timeBase:tb,lastFrameEndTicks:String(end)});
  const geometry=preview.dimensions(video,quality);
  onProgress({stage:"audio-index",message:"读取音轨信息"});
- const audioProbe=await runJson(tools.ffprobe,['-v','error','-select_streams','a:0','-show_entries','stream=codec_type,duration,start_time,channels,sample_rate','-of','json',source.filePath],signal,1024**2);
- const a=audioProbe.streams?.[0],origin=Number(indexed.originPtsTicks)*tb[0]/tb[1];
- const audio=a?{file:'native-audio',bytes:1,start:(Number(a.start_time)||0)-origin,duration:Number(a.duration)||indexed.videoDuration,sampleRate:Number(a.sample_rate)||48000,channels:Number(a.channels)||2}:null;
+ const audioProbe=await runJson(tools.ffprobe,['-v','error','-select_streams','a:0','-show_packets','-show_entries','stream=codec_type,codec_name,time_base,start_pts,channels,sample_rate:packet=pts,duration','-of','json',source.filePath],signal,64*1024**2,spawnProcess);
+ const a=audioProbe.streams?.[0],origin=Number(indexed.originPtsTicks)*tb[0]/tb[1];let audio=null;
+ if(a){const ab=String(a.time_base).split('/').map(Number),rows=audioProbe.packets||[];
+  if(ab.length!==2||ab.some(n=>!Number.isSafeInteger(n)||n<=0)||!rows.length||rows.some(r=>!Number.isSafeInteger(r.pts))||!Number.isInteger(Number(a.sample_rate))||Number(a.sample_rate)<=0||!Number.isSafeInteger(a.channels)||a.channels<1)throw Error('暂不能播放此视频：声音信息不完整。');
+  const last=rows.reduce((x,y)=>x.pts>y.pts?x:y),first=rows.reduce((x,y)=>x.pts<y.pts?x:y);
+  if(!Number.isSafeInteger(last.duration)||last.duration<=0)throw Error('暂不能播放此视频：声音结束位置无法确认。');
+  const start=Number.isSafeInteger(a.start_pts)?a.start_pts:first.pts,end=last.pts+last.duration;
+  if(!Number.isSafeInteger(end)||end<=start)throw Error('暂不能播放此视频：声音范围无效。');
+  audio={file:'native-audio',bytes:1,start:start*ab[0]/ab[1]-origin,duration:(end-start)*ab[0]/ab[1],sampleRate:Number(a.sample_rate),channels:a.channels,codec:a.codec_name};
+ }
  onProgress({stage:"source-hash",message:"校验源视频身份"});
  const sha256=await hash(source.filePath,signal);check(signal);
  if(sourceStamp(sourceBefore)!==sourceStamp(regular(source.filePath)))throw Error('源视频在建立帧索引期间发生变化，已停止准备。');
  return {schema:1,owner:'e44-native',source:{...source,sha256,nativeStamp:sourceStamp(sourceBefore),codec:video.codec_name,width:video.width,height:video.height,hasAudioStream:!!audio},
  width:geometry.width,height:geometry.height,duration:Math.max(indexed.videoDuration,audio?audio.start+audio.duration:0),frames:indexed.frames,audio,preview:geometry,sourceVideo:video,videoEncoding:'filmcraft-native',metrics:{reused:false,sourceVideoOrigin:origin}};
 }
-function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024**3,decoderPreference='prefer-hardware',proxyEncoder='cpu',automaticProxy=true,gpuDrawing=true,cacheRoot,limitBytes=5*1024**3}){
+function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024**3,decoderPreference='prefer-hardware',proxyEncoder='cpu',automaticProxy=true,gpuDrawing=true,cacheRoot,limitBytes=5*1024**3,temporaryMedia}){
  const exe=path.join(pluginRoot,'bin/filmcraft-media.exe');regular(exe);let closing=false,maintenance=null,cleaning=null;const owners=new Set(),ownerSources=new Map(),preparing=new Set();
  const cacheDir=cacheRoot||path.join(pluginRoot,'cache/e44-whole');
- const producer=createWholeProxy({cacheRoot:cacheDir,capacityRoot:cacheDir,tools,limitBytes,onChange:onBackground});
+ const spawnProcess=temporaryMedia?.spawn||spawn;
+ const producer=createWholeProxy({spawn:spawnProcess,temporary:!!temporaryMedia,reserveSpace:temporaryMedia?.reserve,cacheRoot:cacheDir,capacityRoot:cacheDir,tools,limitBytes,onChange:onBackground});
  async function prepare(selected,settings={}){
   if(closing)throw Error('播放器正在关闭。');check(settings.signal);
   const controller=new AbortController(),relay=()=>controller.abort();settings.signal?.addEventListener('abort',relay,{once:true});
-  const promise=inspect({...selected,filePath:path.resolve(selected.filePath)},tools,settings.previewQuality||'720p',controller.signal,settings.onProgress),pending={controller,promise};preparing.add(pending);
+  const promise=inspect({...selected,filePath:path.resolve(selected.filePath)},tools,settings.previewQuality||'720p',controller.signal,settings.onProgress,spawnProcess),pending={controller,promise};preparing.add(pending);
   let info;try{info=await promise;check(settings.signal);if(closing)throw aborted();}finally{preparing.delete(pending);settings.signal?.removeEventListener('abort',relay);}
   frameIndex.validateIndex(info);const readers=new Set(),listeners=new Set(),audioJobs=new Set();let released=false,asset=null,job=null,releasing=null;
   const nativeBytes=Math.max(128*1024**2,Math.min(192*1024**2,Math.floor(ramBytes/4)));
   const runtime={nativeBytes,async audioTrack(maxBytes){
-    if(released||closing)throw aborted();const task=createAudioTrack({source:info.source,tools,maxBytes,expectedStamp:info.source.nativeStamp});audioJobs.add(task);
+    if(released||closing)throw aborted();const task=createAudioTrack({spawn:spawnProcess,source:info.source,tools,maxBytes,expectedStamp:info.source.nativeStamp});audioJobs.add(task);
     try{const result=await task.promise;if(released||closing)throw aborted();return result;}finally{audioJobs.delete(task);}
    },cancelAudio(){for(const task of audioJobs)task.cancel();},async createReader({proxy=false}={}){
     if(released||closing)throw aborted();const file=proxy?asset?.filePath:info.source.filePath;if(!file)throw Error('完整代理尚未就绪。');
     const frames=proxy?info.frames.map((f,n)=>({...f,ptsTicks:asset.proxyPts[n],timeBase:asset.proxyTimeBase})):info.frames;
-    const reader=new FilmcraftClient({exe,source:file,frames,software:(settings.decoderPreference||decoderPreference)==='prefer-software',height:parseInt(info.preview.quality),width:info.width,outputHeight:info.height,gpuDrawing,cacheBytes:nativeBytes});
+    const reader=new FilmcraftClient({spawnProcess,exe,source:file,frames,software:(settings.decoderPreference||decoderPreference)==='prefer-software',height:parseInt(info.preview.quality),width:info.width,outputHeight:info.height,gpuDrawing,cacheBytes:nativeBytes});
     readers.add(reader);
     try{await reader.ready;if(released||closing)throw aborted();return reader;}
     catch(failure){await reader.close();readers.delete(reader);throw failure;}
@@ -94,6 +103,6 @@ function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024
   return{status:result.cleared?'cleared':'unchanged',...result,message:result.cleared?'已清除'+result.cleared+'个其它视频缓存，释放'+(result.freedBytes/1024**2).toFixed(1)+' MB；当前与占用中的缓存保留。':'没有可清理的其它视频缓存。此操作保留当前视频（含其它画质）及使用中的缓存；无法确认归属的文件不会删除。'};
  }
  const cache={readAsset(){return Promise.reject(Error('原生视频不读取JPEG或旧分段资源。'));},readFrameBatch(){return Promise.reject(Error('原生视频不读取旧帧包。'));},release:info=>info.nativeRuntime.release(),backgroundStatus:info=>info.nativeRuntime.status(),target(){},prefetch(){},cancelReads(){},isFrameReady:()=>false,prioritizeRecords(){},clearOther};
- return {media:{prepare},cache,beginClose(){closing=true;for(const p of preparing)p.controller.abort();for(const r of owners)r.release().catch(()=>{});},async close(){closing=true;for(const p of preparing)p.controller.abort();await Promise.allSettled([...preparing].map(p=>p.promise));await Promise.allSettled([...owners].map(r=>r.release()));await producer.close();await cleaning?.catch(()=>{});await maintenance?.close();}};
+ return {media:{prepare},cache,beginClose(){closing=true;for(const p of preparing)p.controller.abort();for(const r of owners)r.release().catch(()=>{});},async close(){closing=true;for(const p of preparing)p.controller.abort();await Promise.allSettled([...preparing].map(p=>p.promise));await Promise.allSettled([...owners].map(r=>r.release()));await producer.close();await cleaning?.catch(()=>{});await maintenance?.close();},retireLegacy:()=>require('./legacy-media-cleanup.cjs').cleanLegacy({pluginRoot,tools}),get stopped(){return closing&&!preparing.size&&(!temporaryMedia||temporaryMedia.active()===0);}};
 }
 module.exports={createNativeBackend,inspect,runJson};

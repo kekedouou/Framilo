@@ -10,9 +10,9 @@ async function main(){
  try{
   const legacy=Buffer.from(JSON.stringify({owner:OWNER,ramMiB:1024,previewQuality:'720p'}));fs.writeFileSync(file,legacy);
   let p=open();effective(p,true);assert.equal(p.proxyDiskGiB(),5);assert(fs.readFileSync(file).equals(legacy));
-  p.save(1024,undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined,20);assert.equal(open().proxyDiskGiB(),20);checks++;
+  p.save(1024,undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined,20);assert.equal(open().proxyDiskGiB(),5);checks++;
   saveGpu(p,false);effective(p,false);effective(open(),false);assert.equal(JSON.parse(fs.readFileSync(file)).gpuAcceleration,false);checks++;
-  p=open();p.save(2048,'1080p');effective(open(),false);assert.equal(open().quality(),'1080p');assert.equal(open().proxyDiskGiB(),20);checks++;
+  p=open();p.save(2048,'1080p');effective(open(),false);assert.equal(open().quality(),'1080p');assert.equal(open().proxyDiskGiB(),5);checks++;
   const committed=fs.readFileSync(file),io=Object.create(fs);io.renameSync=()=>{throw Error('before commit');};
   const before=open(io);assert.throws(()=>saveGpu(before,true),/before commit/);effective(before,false);effective(open(),false);
   assert(fs.readFileSync(file).equals(committed));assert(!fs.existsSync(next));checks++;

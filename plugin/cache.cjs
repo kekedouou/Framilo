@@ -173,7 +173,7 @@ function createCache(options = {}) {
   directory(plugin);
   // E44's independent producer owns this namespace. Legacy maintenance may
   // account its bytes, but has no authority to reap its locks or delete assets.
-  const protectedWhole = name => options.protectWholeProxy === true && name === 'e44-whole';
+  const protectedWhole = name => options.protectWholeProxy === true && ['e44-whole','sessions-v1'].includes(name);
   function protectedTreeBytes(start, callbacks = {}) {
     // Independent whole-proxy quota is owned elsewhere. Legacy maintenance has
     // no reason to walk an actively-generated multi-GiB namespace or charge it
@@ -493,7 +493,7 @@ function createCache(options = {}) {
   }
   function assertPlan(job, plan, allowMissing = false) {
     assertWriter(job);
-    if ((!allowMissing && samePath(plan.directory, job.target) && !['damaged-cache', 'obsolete-color-cache'].includes(plan.reason)) || occupancy().has(plan.directory.toLowerCase())) fail('当前或已占用缓存不能删除。');
+    if ((!allowMissing && !job.clearAll && samePath(plan.directory, job.target) && !['damaged-cache', 'obsolete-color-cache'].includes(plan.reason)) || occupancy().has(plan.directory.toLowerCase())) fail('当前或已占用缓存不能删除。');
     if (!fs.existsSync(plan.directory)) { if (allowMissing) return []; fail('清理目录已变化。'); }
     const dir = directory(plan.directory);
     if (!sameDirectoryIdentity(plan.directory, dir, plan.directoryIdentity)) fail('清理目录身份已变化。');
@@ -596,7 +596,7 @@ function createCache(options = {}) {
     }
     if (job.disk + bytes + reserve > diskBytes) fail('清理后空间不足；未执行超额写入。');
   }
-  function cleanOther(job, all) {
+  function cleanOther(job, all, includeCurrent = false) {
     // begin/resumeCleanup already validated and accounted the entire root.
     assertWriter(job);
     const occupied = occupancy(), selected = [], at = (options.now || Date.now)();
@@ -605,13 +605,13 @@ function createCache(options = {}) {
     for (const name of fs.readdirSync(root)) {
       const match = /^media-([0-9a-f]{64})-([0-9a-f]{12})$/.exec(name); if (!match) continue;
       const dir = path.join(root, name), owner = verifyOwner(dir, 'cache');
-      if (samePath(dir, job.target) || (all && match[1] === path.basename(job.target).slice(6, 70)) || occupied.has(dir.toLowerCase())) continue;
+      if ((!includeCurrent && (samePath(dir, job.target) || (all && match[1] === path.basename(job.target).slice(6, 70)))) || occupied.has(dir.toLowerCase())) continue;
       // Missing/future recency never proves one day of non-use.
       if (!all && (!Number.isSafeInteger(owner.lastUsedAt) || at - owner.lastUsedAt < 86400000)) continue;
       const checked = inspectDirectory(dir, 'cache', match[1]);
       // Segment keys are derived from the original SHA. Clearing "other"
       // materials must retain this material's unleased JPEG/AVC segments too.
-      if (all && checked.info.metrics?.sourceSha256 === path.basename(job.target).slice(6, 70)) continue;
+      if (all && !includeCurrent && checked.info.metrics?.sourceSha256 === path.basename(job.target).slice(6, 70)) continue;
       const plan = ownerValue('cleanup-plan', { token: nonce(), writerToken: job.token, directory: dir,
         directoryIdentity: captureDirectoryIdentity(dir), cacheToken: owner.token,
         reason: all ? 'user-clear-other-cache' : 'idle-one-day', createdAt: at,
@@ -1158,7 +1158,7 @@ function createCache(options = {}) {
       throw error;
     }
   }
-  function acquireWriter({ sourceSha256, signal, clearOthers = false, previewQuality } = {}, batchMode = false) {
+  function acquireWriter({ sourceSha256, signal, clearOthers = false, clearAll = false, previewQuality } = {}, batchMode = false) {
     cancelled(signal);
     if (previewQuality !== undefined) previewProfile.quality(previewQuality);
     if (typeof sourceSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sourceSha256)) fail('源内容指纹不正确。');
@@ -1171,7 +1171,7 @@ function createCache(options = {}) {
     const writer = ownerValue('writer', { token, pid: process.pid, sourceSha256, ...(batchMode ? { mode: 'batch-v1' } : {}), ...(previewQuality === undefined ? {} : { previewQuality }), processIdentity: processIdentity.self(), children: [] });
     const lockData = jsonBytes(writer);
     cancelled(signal);
-    const job = { token, signal, closed: false, partial: null, published: false, disk: 0, initializing: true,
+    const job = { token, signal, closed: false, partial: null, published: false, disk: 0, initializing: true, clearAll: clearOthers && clearAll === true,
       target: path.join(root, cacheLeaf(sourceSha256, previewQuality)),
       files: new Map(), streams: new Set(), closingStreams: new Set(), lockIdentity: null, lockSha: sha(lockData), maxSequence: 0,
       writer, ...(batchMode ? { batch: { active: null, current: null, sequence: 0, closing: false } } : {}) };
@@ -1200,7 +1200,7 @@ function createCache(options = {}) {
       assertWriter(job);
       job.initializing = false;
       resumeCleanup(job);
-      cleanup = cleanOther(job, clearOthers);
+      cleanup = cleanOther(job, clearOthers, job.clearAll);
     } catch (error) {
       try { fs.closeSync(fd); } catch (_) { /* Already closed. */ }
       try {

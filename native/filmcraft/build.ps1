@@ -53,6 +53,6 @@ $buildInfo = [ordered]@{
     dependencyNoticesSha256=(Get-FileHash -LiteralPath (Join-Path $OutputDirectory 'filmcraft-third-party.txt')).Hash.ToLowerInvariant();
     compiler='rustc 1.95.0 x86_64-pc-windows-gnu'; linker='rust-lld / ld.lld / link-self-contained'; buildLog=(Split-Path $logPath -Leaf)
 }
-[IO.File]::WriteAllText((Join-Path $OutputDirectory 'filmcraft-media.build.json'), ($buildInfo | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText((Join-Path $OutputDirectory 'filmcraft-media.build.json'), (($buildInfo | ConvertTo-Json) -replace "`r`n", "`n"), [Text.UTF8Encoding]::new($false))
 Write-Output "Built standalone native media bridge: $OutputDirectory"
 exit 0

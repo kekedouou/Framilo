@@ -12,11 +12,11 @@ function targetAt(frames, ordinal) {
 }
 class FilmcraftClient {
   static async create(options) { const client=new FilmcraftClient(options);try{await client.ready;return client;}catch(e){await client.close();throw e;} }
-  constructor({exe,source,frames,software=false,height=720,width,outputHeight,gpuDrawing=true,cacheBytes=384*1024**2,draw=()=>{},blank=()=>{}}) {
+  constructor({exe,source,frames,software=false,height=720,width,outputHeight,gpuDrawing=true,cacheBytes=384*1024**2,draw=()=>{},blank=()=>{},spawnProcess=spawn}) {
     Object.assign(this,{frames,draw,blank,id:0,current:null,dead:false,stats:{frames:0,stale:0,wrong:0,errors:0,hwFrames:0,hwFallbacks:0}});
     this.packets=new PacketReader((header,pixels)=>this.receive(header,pixels));
     this.ready=new Promise((resolve,reject)=>{this.openResolve=resolve;this.openReject=reject;});
-    this.proc=spawn(exe,[source,software?'software':'hardware',String(height),String(cacheBytes),...(width&&outputHeight?[String(width),String(outputHeight),gpuDrawing?'yuv420p':'rgba']:[])],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+    this.proc=spawnProcess(exe,[source,software?'software':'hardware',String(height),String(cacheBytes),...(width&&outputHeight?[String(width),String(outputHeight),gpuDrawing?'yuv420p':'rgba']:[])],{windowsHide:true,stdio:['pipe','pipe','pipe']});
     this.stderr=''; this.proc.stderr.on('data',d=>{this.stderr=(this.stderr+d.toString()).slice(-8192);});
     this.proc.on('error',e=>this.fail(e));
     this.proc.on('exit',(code,signal)=>{this.exit={code,signal};if(!this.dead)this.fail(Error('Native reader exited: '+code));});
@@ -72,6 +72,7 @@ class FilmcraftClient {
         if(!this.proc.stdin.destroyed&&!this.proc.stdin.writableEnded)this.proc.stdin.end('close\n');
         let timer;await Promise.race([done,new Promise(resolve=>{timer=setTimeout(resolve,2000)})]);clearTimeout(timer);
         if(!this.processClosed){this.proc.kill();let killTimer;await Promise.race([done,new Promise(r=>{killTimer=setTimeout(r,1000);})]);clearTimeout(killTimer);}}
+      if(!this.processClosed)throw Error('视频读者尚未退出，缓存保留。');
       this.packets.reset();return {ms:performance.now()-at,ack:this.closedInfo||null,exit:this.exit||null};
     })();return this.closeTask;
   }

@@ -3,8 +3,8 @@ const { test } = require('node:test'), assert = require('node:assert/strict');
 const fs = require('fs'), path = require('path'), crypto = require('crypto'), { EventEmitter } = require('events'), { PassThrough } = require('stream');
 const { createWholeProxy, _test } = require('../plugin/whole-proxy.cjs');
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
-async function fixture(t, mode = 'normal') {
-  const root = path.resolve(__dirname, '../verification-runs/e44/whole-proxy-unit'); await fs.promises.mkdir(root, { recursive: true });
+async function fixture(t, mode = 'normal', options = {}) {
+  const root = path.resolve(__dirname, options.temporary?'../verification-runs/e52/whole-proxy-unit':'../verification-runs/e44/whole-proxy-unit'); await fs.promises.mkdir(root, { recursive: true });
   const dir = await fs.promises.mkdtemp(path.join(root, 'case-'));
   t.after(async () => { await fs.promises.rm(dir, { recursive: true, force: true }); });
   const source = path.join(dir, 'source.mp4'), ffmpeg = path.join(dir, 'ffmpeg.exe'), ffprobe = path.join(dir, 'ffprobe.exe');
@@ -46,7 +46,7 @@ async function fixture(t, mode = 'normal') {
     setImmediate(() => run().catch(e => { c.emit('error', e); c.kill(); })); children.push(c); return c;
   }
   const cacheRoot = path.join(dir, 'cache'), states = [];
-  const service = createWholeProxy({ cacheRoot, tools: { ffmpeg, ffprobe }, spawn, onChange: s => states.push(s), limitBytes: 128 * 1024 ** 2 });
+  const service = createWholeProxy({ cacheRoot, tools: { ffmpeg, ffprobe }, spawn, onChange: s => states.push(s), limitBytes: 128 * 1024 ** 2, ...options });
   t.after(() => service.close());
   return { dir, source, ffmpeg, ffprobe, cacheRoot, spec, service, calls, states, children, spawn, release: () => release?.() };
 }
@@ -267,4 +267,23 @@ test('physical disk exhaustion is distinguished from configured quota after part
  assert.equal(await h.ready,null);assert.equal(h.snapshot().cleanupComplete,true);assert.equal(h.snapshot().bytes,0);
  assert.match(h.snapshot().message,/硬盘可用空间不足/);assert.match(h.snapshot().message,/已回收/);
  assert(!fs.readdirSync(path.join(f.cacheRoot,'whole-v1')).some(n=>n.startsWith('.pending-')));
+});
+
+// E52 consent is window cumulative, not the retired preference quota.
+test('E52 estimated oversize decline and close while awaiting consent start no encoder',async t=>{
+ for(const cancel of [false,true]){const f=await fixture(t,'normal',{temporary:true,limitBytes:100*1024**3,freeBytes:async()=>20*1024**3});let entered;const waiting=new Promise(r=>entered=r);
+ const frames=Array.from({length:5000},(_,n)=>({id:n,ptsTicks:String(n),timeBase:[1,25],time:n/25,end:(n+1)/25}));
+ const h=f.service.start({...f.spec,frames,requestDecision:async(d,signal)=>{assert.match(d.title,/1 GB/);entered();if(!cancel)return 'source';return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(Error('cancelled')),{once:true}));}});
+ await waiting;if(cancel)await h.cancel();assert.equal(await h.ready,null);assert.equal(f.calls.length,0);assert.equal(h.snapshot().status,'cancelled');assert.deepEqual(await fs.promises.readdir(path.join(f.cacheRoot,'whole-v1')),[]);
+ }
+});
+test('E52 underestimated output is removed before confirmation and restarted only after consent',async t=>{
+ for(const choice of ['source','generate']){const f=await fixture(t,'quota-once',{temporary:true,limitBytes:100*1024**3,freeBytes:async()=>20*1024**3});let prompts=0;
+ const h=f.service.start({...f.spec,requestDecision:async d=>{prompts++;assert.match(d.body,/未完成文件已回收/);const pending=(await fs.promises.readdir(path.join(f.cacheRoot,'whole-v1'))).find(n=>n.startsWith('.pending-'));assert(!fs.existsSync(path.join(f.cacheRoot,'whole-v1',pending,'video.mp4')));return choice;}});
+ const result=await h.ready;assert.equal(prompts,1);assert.equal(!!result,choice==='generate');assert.equal(h.snapshot().status,choice==='generate'?'ready':'cancelled');
+ }
+});
+test('E52 physical reserve exhaustion never starts an encoder or requests unlimited consent',async t=>{
+ const f=await fixture(t,'normal',{temporary:true,limitBytes:100*1024**3,freeBytes:async()=>2*1024**3});let prompts=0;const h=f.service.start({...f.spec,requestDecision:async()=>{prompts++;return 'generate';}});
+ assert.equal(await h.ready,null);assert.equal(prompts,0);assert.equal(f.calls.length,0);assert.equal(h.snapshot().error.code,'WHOLE_BUDGET');assert.deepEqual(await fs.promises.readdir(path.join(f.cacheRoot,'whole-v1')),[]);
 });

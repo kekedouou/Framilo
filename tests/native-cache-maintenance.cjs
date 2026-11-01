@@ -45,6 +45,12 @@ async function main(){
   const h=harness(),info=await prepared(h);h.cache.release(info);whole(h);assert.throws(()=>h.cache.clearOther({sourceSha256:'b'.repeat(64)}),/未知/);
   assert.throws(()=>h.api.createCache({pluginRoot:'D:\\fixtures\\plugin',protectWholeProxy:'yes'}),/保护选项/);
  });
+ await test('E52 all-media migration clears same-source only after release and protects window namespaces',async()=>{
+  const h=harness({protectWholeProxy:true,independentWholeProxy:true}),info=await prepared(h);
+  const sessions=path.join(h.root,'sessions-v1');h.make(sessions,'dir');h.make(path.join(sessions,'active-window'),'dir');h.make(path.join(sessions,'active-window','session.json'),'file','active-owner');
+  assert.equal(h.cache.clearOther({sourceSha256:SOURCE_SHA,clearAll:true}).cleared,0);assert(h.nodes.has(info.cacheDir));
+  h.cache.release(info);assert.equal(h.cache.clearOther({sourceSha256:SOURCE_SHA,clearAll:true}).cleared,1);assert(!h.nodes.has(info.cacheDir));assert(h.nodes.has(path.join(sessions,'active-window','session.json')));assert(!h.deleted.some(f=>f.startsWith(sessions+'\\')));
+ });
  console.log('Native cache maintenance: '+count+' in-memory cleanup/accounting guards passed; no real cache/media deletion.');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

@@ -2,12 +2,13 @@
 // Read-only process evidence. No process is terminated by recovery.
 const { spawnSync } = require('child_process');
 const path = require('path');
-function snapshot() {
-  if (process.platform !== 'win32') throw new Error('Automatic orphan recovery requires Windows process identity evidence.');
-  const code = '$ErrorActionPreference="Stop"; [Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false); $rows=@(Get-CimInstance Win32_Process | ForEach-Object { '
+const snapshotCode = '$ErrorActionPreference="Stop"; [Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false); $rows=@(Get-CimInstance Win32_Process | ForEach-Object { '
     + '[pscustomobject]@{pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId;'
     + 'startTicks=$(if($_.CreationDate){[string]$_.CreationDate.ToUniversalTime().Ticks}else{$null});image=$_.ExecutablePath} }); '
     + 'ConvertTo-Json -InputObject $rows -Compress';
+function snapshot() {
+  if (process.platform !== 'win32') throw new Error('Automatic orphan recovery requires Windows process identity evidence.');
+  const code=snapshotCode;
   const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', code],
     { windowsHide: true, shell: false, encoding: 'utf8', maxBuffer: 2 * 1024 ** 2, timeout: 5000 });
   if (result.error || result.status !== 0) throw new Error('Cannot obtain a complete process snapshot; orphan records retained.');
@@ -17,6 +18,18 @@ function snapshot() {
     throw new Error('Process snapshot is incomplete or invalid; orphan records retained.');
   return rows;
 }
+function snapshotAsync(pids){return new Promise((resolve,reject)=>{
+ if(process.platform!=='win32'){reject(Error('Process evidence unavailable'));return;}
+ if(pids&&(!Array.isArray(pids)||pids.some(p=>!Number.isSafeInteger(p)||p<1))){reject(Error('Invalid process query'));return;}
+ // Live children are already bound by the spawn handle. A small .NET lookup
+ // avoids a full WMI inventory on every decoder/probe startup. Orphan recovery
+ // still takes the full parent/descendant snapshot above.
+ const code=pids?`$ErrorActionPreference='Stop'; $rows=@(foreach($n in @(${pids.join(',')})){try{$p=[Diagnostics.Process]::GetProcessById($n); [pscustomobject]@{pid=$p.Id;parentPid=${process.pid};startTicks=[string]$p.StartTime.ToUniversalTime().Ticks;image=$p.MainModule.FileName}}catch{}}); ConvertTo-Json -InputObject $rows -Compress`:snapshotCode;
+ const child=require('child_process').spawn('powershell.exe',['-NoProfile','-NonInteractive','-Command',code],{windowsHide:true,stdio:['ignore','pipe','pipe']});let output='',failed=null;
+ const timer=setTimeout(()=>{failed=Error('Process query timeout');child.kill();},5000);
+ child.stdout.on('data',b=>{if(output.length+b.length>2*1024**2){failed=Error('Process query exceeds limit');child.kill();}else output+=b;});child.stderr.resume();child.on('error',e=>{failed=e;});
+ child.on('close',code=>{clearTimeout(timer);try{if(failed||code!==0)throw failed||Error('Process query failed');const rows=JSON.parse(output.replace(/^\uFEFF/,''));if(!Array.isArray(rows)||rows.length>16384||new Set(rows.map(r=>r.pid)).size!==rows.length||rows.some(r=>!Number.isSafeInteger(r.pid)||r.pid<0||!Number.isSafeInteger(r.parentPid)||r.parentPid<0))throw Error('Incomplete process evidence');resolve(rows);}catch(e){reject(e);}});
+});}
 function valid(identity) {
   return identity && Number.isSafeInteger(identity.pid) && identity.pid > 0 && typeof identity.startTicks === 'string' &&
     /^\d{16,20}$/.test(identity.startTicks) && typeof identity.image === 'string' && !identity.image.includes('\ufffd') && path.win32.isAbsolute(identity.image);
@@ -101,4 +114,4 @@ function createIdentity(options = {}) {
   }
   return Object.freeze({ self, child, inspect, claimEmptyWriter });
 }
-module.exports = { createIdentity, claimEmptyWriter, _test: { valid, same, proveGone, snapshot } };
+module.exports = { createIdentity, claimEmptyWriter, snapshotAsync, _test: { valid, same, proveGone, snapshot } };

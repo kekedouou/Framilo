@@ -54,8 +54,8 @@ async function main() {
   });
   await test('save/reopen and old save call shapes retain chosen backend and interaction settings', async () => {
     const h = model(), p = h.create(); p.save(1024, '1080p', false, { wheelFrames: 2, showCacheStrip: false }, 'jpeg');
-    assert.equal(p.backend(), 'jpeg'); assert.equal(h.create().backend(), 'jpeg'); assert.equal(JSON.parse(h.io.readFileSync(h.file)).playbackBackend, 'jpeg');
-    p.save(2048); assert.equal(h.create().backend(), 'jpeg'); assert.equal(h.create().quality(), '1080p'); assert.equal(h.create().interaction().wheelFrames, 2);
+    assert.equal(p.backend(), 'proxy'); assert.equal(h.create().backend(), 'proxy'); assert.equal(JSON.parse(h.io.readFileSync(h.file)).playbackBackend, 'proxy');
+    p.save(2048); assert.equal(h.create().backend(), 'proxy'); assert.equal(h.create().quality(), '1080p'); assert.equal(h.create().interaction().wheelFrames, 2);
     p.save(2048, '720p', true, p.interaction(), 'proxy'); assert.equal(h.create().backend(), 'proxy'); assert.equal(h.files.size, 1);
   });
   await test('invalid explicit or persisted backend preserves the original file', async () => {
@@ -67,7 +67,7 @@ async function main() {
     for (const fault of ['partialWrite', 'failRename']) {
       const h = model(), p = h.create(); p.save(1024, '720p', true, p.interaction(), 'jpeg'); const before = h.io.readFileSync(h.file);
       h.io[fault] = true; assert.throws(() => p.save(2048, '1080p', true, p.interaction(), 'proxy'));
-      assert.equal(p.backend(), 'jpeg'); assert.equal(h.create().backend(), 'jpeg'); assert(before.equals(h.io.readFileSync(h.file))); assert(!h.files.has(h.next));
+      assert.equal(p.backend(), 'proxy'); assert.equal(h.create().backend(), 'proxy'); assert(before.equals(h.io.readFileSync(h.file))); assert(!h.files.has(h.next));
     }
   });
   await test('post-rename interruption reopens complete new backend; foreign staging is preserved', async () => {

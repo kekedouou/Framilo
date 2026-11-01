@@ -12,7 +12,7 @@ const NAMES = [...RUNTIME, 'README.md', 'CHANGELOG.md', 'BUILD-INFO.json'].sort(
 // This profile only validates the registered local development directory. It is
 // deliberately separate from the frozen Beta distribution recipe and its 2MiB cap.
 const NATIVE_LIMIT = 64 * 1024 ** 2, NATIVE_ID = 'EVAVIDEOANALYSIS20261011';
-const NATIVE_RUNTIME = Object.freeze([...RUNTIME, 'native-backend.cjs', 'native-audio.cjs', 'native-reader.cjs', 'native-wire.cjs',
+const NATIVE_RUNTIME = Object.freeze([...RUNTIME, 'temporary-media.cjs', 'media-space.cjs', 'legacy-media-cleanup.cjs', 'native-backend.cjs', 'native-audio.cjs', 'native-reader.cjs', 'native-wire.cjs',
   'native-player.js', 'native-renderer.js', 'whole-proxy.cjs', 'bin/filmcraft-media.exe',
   'bin/filmcraft-media.build.json', 'bin/FilmCraft-LICENSE-MIT', 'bin/FilmCraft-LICENSE-APACHE',
   'bin/FilmCraft-NOTICE', 'bin/filmcraft-third-party.json', 'bin/filmcraft-third-party.txt']);

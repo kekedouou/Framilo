@@ -33,6 +33,8 @@
 | node scripts/check-handoff.cjs --base HEAD | 提交前只读检查；使用本轮基线或精确文件清单隔离其他任务 |
 | node scripts/check-handoff.cjs --require-clean | 提交后核对；有其他任务差异会失败，须登记且不能声称干净 |
 | node scripts/package-release.cjs native-experience | 只读核对原生运行文件及许可闭包，不生成ZIP；仅运行文件变化时需要 |
+| node scripts/frontend-preview.cjs | 按需启动仅本机同源UI预览；生成一个合成样本和服务回执到verification-runs/e52/frontend，不访问Eagle/真实素材；由Codex打开/恢复并保护待反馈草稿 |
+| node scripts/e52-format-check.cjs / scripts/e52-lifecycle-check.cjs | 仅在E52授权预算内显式运行；生成合成素材/使用原生工具，证据写e52；不加载Eagle或写库，不属于默认检查 |
 | node scripts/build-task-host.cjs | 构建Windows后台程序并写本机指纹；相关源码变更/新检出时由Codex执行 |
 
 历史Beta打包build/verify/extract/verify-install、旧原型reset/媒体/清理命令须先读对应计划与局部规则；旧验收目录可能已清，不默认复跑。发布包、标签和原始证据含义不同；本地提交不会自动发布。

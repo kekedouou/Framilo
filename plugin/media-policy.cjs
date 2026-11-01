@@ -1,9 +1,9 @@
 'use strict';
 const fs=require('fs');
-const EXTENSIONS=Object.freeze(['mp4','m4v','mov','mkv','webm','avi','ts','mts','m2ts','mpeg','mpg','3gp','flv','f4v','wmv','ogv','rm','rmvb','av1','hevc','vp8','vp9']);
-const CONTAINERS=Object.freeze(['mov','mp4','m4a','3gp','3g2','mj2','matroska','webm','avi','mpegts','mpeg','flv','asf','ogg','rm','av1','obu','hevc','ivf']);
+const EXTENSIONS=Object.freeze(['mp4','m4v','mov','mkv','webm']);
+const CONTAINERS=Object.freeze(['mov','mp4','m4a','3gp','3g2','mj2','matroska','webm']);
 const sourceExt=p=>require('path').extname(p).slice(1).toLowerCase();
-const nativeContainer=file=>['mp4','m4v','mov','3gp'].includes(sourceExt(file));
+const nativeContainer=file=>EXTENSIONS.includes(sourceExt(file));
 function probeDuration(exe,file,signal){return new Promise((resolve,reject)=>{
  if(signal?.aborted){reject(Object.assign(Error('准备已取消。'),{name:'AbortError',code:'MEDIA_CANCELLED'}));return;}
  const child=require('child_process').spawn(exe,['-v','error','-show_entries','format=duration','-of','json',file],{windowsHide:true,stdio:['ignore','pipe','pipe']});

@@ -72,11 +72,11 @@ function createMemoryPreferences(options) {
     if (value.gpuDrawing !== undefined && typeof value.gpuDrawing !== 'boolean') throw new Error('GPU视频绘制必须为开或关。');
     if(value.gpuAcceleration!==undefined&&typeof value.gpuAcceleration!=='boolean')throw Error('GPU加速必须为开或关。');
     selectedGpuAcceleration=value.gpuAcceleration??(value.decoderPreference!=='prefer-software'&&value.gpuDrawing!==false);
-    const backend = backendValue(value.playbackBackend);
+    backendValue(value.playbackBackend); const backend = 'proxy'; // Retired JPEG preference migrates without changing other settings.
     const interaction = interactionValue(value.wheelFrames, value.showCacheStrip, value.rateStep, value.drawingFadeSeconds, value.drawingToolbar, value.showProxyStrip), selected = quality(value.previewQuality), memory = memoryValue(total, value.ramMiB, true);
     selectedPredecode = true;
     selectedQuality = selected; selectedInteraction = interaction; selectedBackend = backend; selectedEncoder = proxyEncoding.encoder(value.proxyEncoder); selectedDecoder = proxyEncoding.decoder(value.decoderPreference);
-    selectedDiskGiB=diskValue(value.proxyDiskGiB);
+    selectedDiskGiB=5; // Legacy disk quota no longer controls media storage.
     selectedAutoProxy = true;
     selectedGpuDrawing=selectedGpuAcceleration;selectedEncoder=selectedGpuAcceleration?'nvidia':'cpu';selectedDecoder=selectedGpuAcceleration?'prefer-hardware':'prefer-software';
     return memory;
@@ -93,10 +93,10 @@ function createMemoryPreferences(options) {
     if(gpuAcceleration!==undefined&&typeof gpuAcceleration!=='boolean')throw Error('GPU加速必须为开或关。');
     const acceleration=gpuAcceleration??selectedGpuAcceleration;
     proxyEncoder=acceleration?'nvidia':'cpu';decoderPreference=acceleration?'prefer-hardware':'prefer-software';gpuDrawing=acceleration;
-    forwardPredecode=true;autoProxy=true;
+    forwardPredecode=true;autoProxy=true;playbackBackend='proxy';proxyDiskGiB=5;
     const nextInteraction = interactionValue(interaction.wheelFrames, interaction.showCacheStrip, interaction.rateStep, interaction.drawingFadeSeconds, interaction.drawingToolbar, interaction.showProxyStrip);
     const next = memoryValue(total, ramMiB, true); checkRoot(); read(); const before = identity(stat(file));
-    const bytes = Buffer.from(JSON.stringify({ owner: OWNER, ramMiB, previewQuality, forwardPredecode, ...nextInteraction, playbackBackend, proxyEncoder, decoderPreference, autoProxy, gpuDrawing,proxyDiskGiB,gpuAcceleration:acceleration }, null, 2));
+    const bytes = Buffer.from(JSON.stringify({ owner: OWNER, ramMiB, previewQuality, forwardPredecode, ...nextInteraction, playbackBackend, proxyEncoder, decoderPreference, autoProxy, gpuDrawing,gpuAcceleration:acceleration }, null, 2));
     let fd = null, owned = null;
     try {
       fd = io.openSync(temp, 'wx'); owned = io.fstatSync(fd);

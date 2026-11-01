@@ -318,12 +318,23 @@ function createWholeProxy(options = {}) {
         if (regular(path.join(destination, 'video.mp4')).size !== metadata.bytes || await hashFile(path.join(destination, 'video.mp4'), task) !== metadata.sha256) throw error('WHOLE_CACHE_INVALID', '已存整片代理内容校验失败。');
         check(task);if(stamp(regular(spec.source.filePath))!==sourceInitialStamp)throw error('WHOLE_SOURCE_CHANGED','源视频在复用校验过程中发生变化。');await storage.touch(key);const result = asset(metadata, destination, true); notify(task, { status: 'ready', message: '已使用完整代理', progress: 1, bytes: metadata.bytes, asset: result }); return result;
       } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      const space=require('./media-space.cjs');
+      const estimateRange=require('./media-policy.cjs').largeProxy(spec,limitBytes);
+      const confirmSpace=async actual=>{const used=await diskUsage(capacityRoot),free=await (options.freeBytes||space.freeBytes)(capacityRoot);check(task);
+        if(!input.requestDecision)throw error('WHOLE_BUDGET','临时空间需要确认，继续播放原片。');
+        notify(task,{status:'awaiting',message:'临时文件将超过1 GB，等待确认；原片可继续播放'});
+        const choice=await input.requestDecision(space.decision({...estimateRange,used,free,actual}),task.decisionController.signal);check(task);
+        if(choice!=='generate'){task.cancelled=true;check(task);}task.spaceConsented=true;
+      };
+      if(options.temporary){if(!task.spaceConsented&&await diskUsage(capacityRoot)+estimateRange.high>=space.CONSENT_BYTES)await confirmSpace(false);}
+      else {
       const estimateRange=require('./media-policy.cjs').largeProxy(spec,limitBytes);
       if(estimateRange.confirm && input.requestDecision){
         notify(task,{status:'awaiting',message:'大代理待确认，原片可继续播放'});
         const gib=n=>(n/1024**3).toFixed(1);
         const choice=await input.requestDecision({kind:'large-proxy',title:'生成较大的代理？',body:'预计约 '+gib(estimateRange.low)+'–'+gib(estimateRange.high)+' GiB（内容复杂时可能超出），当前额度 '+gib(limitBytes)+' GiB。会先清理可淘汰旧缓存；仍不足则回收本次未完成代理，继续原片。',choices:[{value:'generate',label:'生成代理'},{value:'source',label:'继续原片'}]},task.decisionController.signal);
         check(task);if(choice!=='generate'){task.cancelled=true;check(task);}
+      }
       }
       const lock = path.join(directory, key + '.lock'), lockBody = JSON.stringify({ schema: SCHEMA, token: task.token, pid: process.pid, createdAt: new Date().toISOString() });
       try { await fs.promises.writeFile(lock, lockBody, { flag: 'wx' }); }
@@ -337,8 +348,9 @@ function createWholeProxy(options = {}) {
       task.lock = lock;
       task.allocation=await storage.allocation();
       const estimate=Math.min(limitBytes,Math.max(RESERVE+1024**2,Math.ceil(spec.width*spec.height*spec.sourcePts.length*.25)+RESERVE));
-      await storage.makeRoom(limitBytes,estimate,spec.source.sha256);
-      const used = await diskUsage(capacityRoot), available = limitBytes - used;
+      if(!options.temporary)await storage.makeRoom(limitBytes,estimate,spec.source.sha256);
+      const used = await diskUsage(capacityRoot);if(options.reserveSpace)task.spaceLease=await options.reserveSpace({used,consented:task.spaceConsented});
+      const available = task.spaceLease?task.spaceLease.bytes:options.temporary?space.allowance({used,free:await (options.freeBytes||space.freeBytes)(capacityRoot),consented:task.spaceConsented}):limitBytes-used;
       if (available <= RESERVE) throw error('WHOLE_BUDGET', '缓存剩余额度不足，继续使用原片。');
       task.temp = path.join(directory, '.pending-' + task.token); await fs.promises.mkdir(task.temp);
       await fs.promises.writeFile(path.join(task.temp, 'owner.json'), JSON.stringify({ schema: SCHEMA, token: task.token, pid: process.pid,sourceHash:spec.source.sha256 }));
@@ -352,14 +364,14 @@ function createWholeProxy(options = {}) {
           const seconds = Number(value) / 1e6, elapsed = (Date.now() - started) / 1000;
           if (Number.isFinite(seconds) && seconds >= 0) notify(task, { processedSeconds: seconds, progress: Math.min(.99, seconds / spec.duration), elapsedSeconds: elapsed, speed: elapsed > 0 ? seconds / elapsed : 0, remainingSeconds: seconds > 0 ? Math.max(0, (spec.duration - seconds) * elapsed / seconds) : null });
         } else if (name === 'total_size') {
-          const bytes = Number(value); if (Number.isFinite(bytes) && bytes >= 0) { notify(task, { bytes }); if (bytes > outputLimit) throw error('WHOLE_BUDGET', '当前视频代理超出可用磁盘额度；旧的未占用代理已清理，可提高代理磁盘额度。原片仍可播放。'); }
+          const bytes = Number(value); if (Number.isFinite(bytes) && bytes >= 0) { notify(task, { bytes }); if (bytes > outputLimit) throw error('WHOLE_BUDGET', '当前视频临时文件达到可用空间边界，继续播放原片。'); }
         }
       });
       check(task); bytes = regular(output).size;
-      if (bytes > outputLimit || await diskUsage(capacityRoot) > limitBytes - MAX_JSON) throw error('WHOLE_BUDGET', '当前视频代理超出可用磁盘额度；旧的未占用代理已清理，可提高代理磁盘额度。原片仍可播放。');
+      if (bytes > outputLimit || await diskUsage(capacityRoot) > limitBytes - MAX_JSON) throw error('WHOLE_BUDGET', '当前视频临时文件达到可用空间边界，继续播放原片。');
       notify(task, { status: 'validating', message: '正在校验完整代理', progress: .99, bytes, remainingSeconds:null });
       try { verified = await verifyAsset(task,spec,output); }
-      catch (failure) { if (bytes >= outputLimit - 8 * 1024 ** 2) throw error('WHOLE_BUDGET', '当前视频代理超出可用磁盘额度；旧的未占用代理已清理，可提高代理磁盘额度。原片仍可播放。'); throw failure; }
+      catch (failure) { if (bytes >= outputLimit - 8 * 1024 ** 2) throw error('WHOLE_BUDGET', '当前视频临时文件达到可用空间边界，继续播放原片。'); throw failure; }
       break;
       }catch(failure){
         check(task);
@@ -367,14 +379,21 @@ function createWholeProxy(options = {}) {
         // The initial estimate is not a promise about compressed size. Before
         // reporting quota exhaustion, release remaining eligible old proxies and
         // retry the owned temporary output once with the recovered room.
-        const room=await storage.makeRoom(limitBytes,limitBytes,spec.source.sha256);
-        if(!room.removed)throw failure;
         const owner=JSON.parse(await fs.promises.readFile(path.join(task.temp,'owner.json'),'utf8'));
         if(owner.token!==task.token||owner.pid!==process.pid||!inside(directory,output))throw error('WHOLE_PATH','临时代理身份变化，停止重试。');
         regular(output);await fs.promises.unlink(output);
-        outputLimit=limitBytes-await diskUsage(capacityRoot)-RESERVE;
+        if(options.temporary){
+          if(task.spaceConsented)throw failure;
+          await task.spaceLease?.release();task.spaceLease=null;
+          await confirmSpace(true);
+          const used=await diskUsage(capacityRoot);if(options.reserveSpace)task.spaceLease=await options.reserveSpace({used,consented:true});
+          outputLimit=(task.spaceLease?task.spaceLease.bytes:space.allowance({used,free:await (options.freeBytes||space.freeBytes)(capacityRoot),consented:true}))-RESERVE;
+        }else{
+          const room=await storage.makeRoom(limitBytes,limitBytes,spec.source.sha256);if(!room.removed)throw failure;
+          outputLimit=limitBytes-await diskUsage(capacityRoot)-RESERVE;
+        }
         if(outputLimit<=0)throw failure;
-        notify(task,{status:'encoding',message:'已释放旧代理空间，重新生成整片代理',progress:0,bytes:0});
+        notify(task,{status:'encoding',message:options.temporary?'已确认临时占用，重新生成整片代理':'已释放旧代理空间，重新生成整片代理',progress:0,bytes:0});
       }}
       const metadata = { schema: SCHEMA, identity, key, sourceHash: spec.source.sha256, sourcePts: spec.sourcePts, sourceTimeBase: spec.sourceTimeBase, ids: spec.ids, ...verified.mapping, allKeyFrames: true, width: spec.width, height: spec.height, displayWidth:spec.displayWidth,displayHeight:spec.displayHeight,sampleAspectRatio:spec.sampleAspectRatio,duration: spec.duration, bytes, sha256: verified.sha256,validation:verified.validation, encoder: spec.encoder, recipe: spec.recipe, sourceDecoder: 'cpu', audio: 'original-source-clock', generatedAt: new Date().toISOString(), generationMs: Date.now() - started };
       const json = JSON.stringify(metadata); if (Buffer.byteLength(json) > MAX_JSON) throw error('WHOLE_METADATA', '整片代理映射超过控制文件上限。');
@@ -391,7 +410,7 @@ function createWholeProxy(options = {}) {
       if(!cancelled&&task.spec?.encoder==='nvidia'&&unavailable){
         await cleanup(task);if(task.allocation){await task.allocation();task.allocation=null;}if(task.readLease){await task.readLease();task.readLease=null;}
         if(task.state.cleanupComplete){
-        task.temp=null;task.lock=null;task.key=null;
+        await task.spaceLease?.release();task.spaceLease=null;task.temp=null;task.lock=null;task.key=null;
         notify(task,{status:'checking',message:'GPU编码不可用，自动改用CPU生成代理',encoder:'cpu',encoderFallback:true});
         return await execute(task,{...input,encoder:'cpu'},null);
         }
@@ -400,11 +419,11 @@ function createWholeProxy(options = {}) {
       await cleanup(task);task.failureCleaned=true;
       const incomplete=!task.state.cleanupComplete;
       const message=incomplete?(task.state.cleanupMessage||'临时代理清理未完成，请关闭当前视频后重试；原片仍可播放。'):
-        cancelled?'整片代理已取消，临时文件已回收':failure.code==='WHOLE_BUDGET'?'代理磁盘额度不足；未完成文件已回收，继续播放原片。可在高级设置提高额度或降低预览画质。':/ENOSPC|No space left on device/i.test(failure.code+' '+failure.message)?'硬盘可用空间不足；未完成文件已回收，继续播放原片。请释放硬盘空间后重试。':failure.message;
+        cancelled?'整片代理已取消，临时文件已回收':failure.code==='WHOLE_BUDGET'?'临时空间不足；未完成文件已回收，继续播放原片。':/ENOSPC|No space left on device/i.test(failure.code+' '+failure.message)?'硬盘可用空间不足；未完成文件已回收，继续播放原片。请释放硬盘空间后重试。':failure.message;
       notify(task, { status: cancelled&&!incomplete ? 'cancelled' : 'failed', bytes:task.state.temporaryReleased?0:task.state.bytes, message,
         error:cancelled&&!incomplete?null:{code:incomplete?'WHOLE_CLEANUP_FAILED':failure.code||'WHOLE_FAILED',message} });
       return null;
-    } finally { if(!task.failureCleaned)await cleanup(task);if(task.allocation){await task.allocation();task.allocation=null;}if(task.state.status!=='ready'&&task.readLease){await task.readLease();task.readLease=null;} }
+    } finally { await task.spaceLease?.release();task.spaceLease=null;if(!task.failureCleaned)await cleanup(task);if(task.allocation){await task.allocation();task.allocation=null;}if(task.state.status!=='ready'&&task.readLease){await task.readLease();task.readLease=null;} }
   }
   function start(spec) {
     if (closed) throw error('WHOLE_CLOSED', '整片代理服务已关闭。');

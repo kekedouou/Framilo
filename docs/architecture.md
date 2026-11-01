@@ -1,12 +1,12 @@
 # 现行架构与模块边界
 
 本页按职责维护运行链；完成情况见[当前交接](progress.md)，批准行为见[产品](product.md)。源码主线只有plugin；旧原型和退休模块存在不表示仍运行。
-第二阶段优化的开发预览适配、格式修复和临时缓存生命周期见[拟实施方案](experiments/E52/plan.md)，以下仍描述已有运行链；不将待实施模块写成已部署架构。
+第二阶段优化的开发预览适配、格式修复和临时缓存生命周期见[实施方案](experiments/E52/plan.md)，实际检查与限制见[报告](experiments/E52/report.md)。
 
 ## 运行链与数据边界
 app装配/宿主生命周期 → UI发操作 → Session持有库/源快照和任务代次 → Eagle适配、媒体/缓存、播放器分别执行 → UI显示状态。
 只有eagle调用素材/标注API；UI不直接读写素材或媒体目录，媒体不自行淘汰文件，缓存不调UI/素材API。入口不承载这些业务。
-原片及完整代理统一FilmCraft原生读者，整数源PTS/序号及实际帧回执；音频是唯一播放时钟，YUV/WebGL准确绘制并可同帧CPU回退。JPEG保持独立整片准备/Canvas/Web Audio路径，不作为隐式低清补位。
+原片及完整代理统一FilmCraft原生读者，整数源PTS/序号及实际帧回执；音频是唯一播放时钟，YUV/WebGL准确绘制并可同帧CPU回退。日常入口统一proxy，旧JPEG代码保留共享依赖/回归，不再作为格式兼容选择。
 
 ## 现行模块地图
 | 文件 | 职责与边界 |
@@ -36,7 +36,7 @@ app装配/宿主生命周期 → UI发操作 → Session持有库/源快照和�
 | plugin/media.cjs | 只读源媒体、分析和 FFmpeg；转发proxyBudget/closeProxyBatch，通过缓存句柄受限写入，不自行淘汰目录 |
 | plugin/media-wire.cjs | 整数PTS/共同时间基准/显式结束时间的紧凑控制协议，≤6MiB/120000帧、摘要/版本检查及无损重建；不读素材或改源SHA |
 | plugin/cache.cjs | 文件所有权、路径、预算、锁、完整提交、淘汰与清理；openBatch/beginSegment/snapshot/close、双槽目标记录、失败退款与原计划恢复；完整manifest备忘仍每次SHA核对字节，不备忘可变归属记录，不操作UI或素材元数据 |
-| plugin/preferences.cjs | RAM档位/物理上限、画质、JPEG/代理方式与交互偏好、旧格式只读兼容和本地原子保存；不访问素材库或清理媒体缓存 |
+| plugin/preferences.cjs | RAM档位/物理上限、画质与交互偏好、旧JPEG/额度只读迁移和本地原子保存；不访问素材库或清理媒体缓存 |
 | plugin/process-identity.cjs | Windows进程出生/后代只读证明；独占句柄核对后接管空writer记录；未知时保留，不终止进程、不调用Eagle API |
 | plugin/task-client.cjs、task-worker.cjs、native/task-host.cs | 窗口与后台请求、按回执合并最新位置/记录意图、Windows互斥与任务组；worker单队列处理同源抢占及维护/换源/关闭时batch收尾，客户端原租约借读；控制消息不传图片，历史基础见A-07 |
 | plugin/frame-pack.cjs | 校验集中JPEG/AVC帧包的纯布局及videoEncoding；物理文件读写仍归cache |
@@ -59,10 +59,10 @@ app装配/宿主生命周期 → UI发操作 → Session持有库/源快照和�
 ## 准备选择与取消
 preview-profile统一720p～2160p几何/身份，原生桥像素边界支持UHD及竖屏；格式与阈值的单一参数入口见[能力表](releases/motionote-capabilities.md)。
 media-policy只算策略，load-decisions一次一个选择并绑定请求ID/代次/AbortSignal，只有当前合法答复生效。换源/切模式/关闭使旧选择失效。
-JPEG选择在守护任务启动前，whole-proxy在完整复用核验后、取得写锁前确认大任务；拒绝/取消不留下挂起任务。非原生准确PTS容器显式转JPEG兼容选择；JPEG缺流级边界时有界读取整数packet PTS/末包duration，仍缺信息拒绝，不用平均FPS猜。
+whole-proxy在同窗口完整复用核验后、写锁前确认累计预计超过1 GB的任务；实际超额停止/回收未完成文件，再确认重启。MP4族与Matroska族实际PTS分别取自原生读者，禁止用请求时间冒充回执。音轨边界从真实packet PTS/末包duration得出；MKV/WebM/PCM使用原文件HTMLAudio，其它仍优先已验证压缩音轨，复制边界不符时使用原文件；先确认音轨可读，不静默无声。
 
 ## 缓存、持久化与退出
-- cache负责JPEG文件所有权、真实路径、锁、预算和完整提交；proxy-storage独立管理整片资产租约/容量锁/LRU，不将独立代理计入JPEG5GiB。受管额度与OS/驱动进程占用不同。
+- cache保留旧JPEG文件所有权、真实路径、锁和完整提交以安全迁移；proxy-storage管理本窗口代理资产/读者租约，正式temporary路径不靠跨次LRU复用。受管额度与OS/驱动进程占用不同。
 - 原生单读者GOP约128～192MiB，接管预留第二读者；帧、缩略图、YUV/RGBA、绘制表面及在途纳入账本。管道/驱动边界与采样另报，不假称程序硬上限。
 - whole-proxy失败先进入cleaning，等待受管进程停止，再核对realpath、owner token/pid、文件身份与白名单，只回收本任务未完成产物；确认后发布终态。失败保留锁及WHOLE_CLEANUP_FAILED，不把缺owner误当已清空；NVENC回退CPU前同样确认回收。
 - 清理保护当前源所有画质、活动读写和未知文件；进程归属以出生/后代/独占访问证明，不凭PID消失或锁年龄删除。文件整理见[F规则](development-plan.md#文件整理f-01f-07)。
@@ -72,6 +72,12 @@ JPEG选择在守护任务启动前，whole-proxy在完整复用核验后、取�
 usage用异步lstat/realpath/opendir逐文件扫描，支持AbortSignal；单文件消失只跳过该文件，不归零既有累计。
 资源约2.5秒采样、磁盘至少5秒校准，不堆积扫描；关监测取消扫描/自有采样进程，源切换旧结果失效。相同事件不重算快照，等待时间仍每100ms更新。分类口径和验证见[工作流](performance/WORKFLOW.md)。
 Session仅在释放成功后将SELECTION_EMPTY映射正常empty；SDK/释放故障保持error，不隐藏故障。
+
+## 临时媒体与开发预览
+- `temporary-media.cjs`为每个窗口建立`cache/sessions-v1/<随机id>`，登记owner/启动身份/子进程意图；全程生成路径局限其中。关闭必须先停止原生读者、探测与编码子进程，再核验目录归属并原子改名为retiring后删除；未知文件/活动进程/不完整出生身份保留。无遗留时身份查询异步，不阻塞首帧或关闭；恢复旧会话才使用完整进程快照。
+- `media-space.cjs`统一十进制1 GB累计确认、2 GiB物理余量、100 GiB内部保护与跨窗口原子预留；预留与输出字节上限都由生成层执行，UI不直接计数。`space.json`在任务终止后释放，崩溃由owner恢复处理。
+- `legacy-media-cleanup.cjs`在正常关闭新运行链后，调用旧cache所有权/读者检查清理已确认的旧JPEG与完整代理；旧PID-only读者记录缺出生证据时保护，不猜测删除。旧cache不再复用，首次升级的旧数据在首次正常关闭迁移。原片、annotation-data、偏好和验收证据不进入删除白名单。
+- `scripts/frontend-preview.cjs`仅开发使用：loopback随机令牌/Host-Origin/GET白名单；共享正式HTML/CSS/UI和Session，`scripts/preview`只替换播放器与Eagle/存储适配。示例写入sessionStorage，不进入产品包。原生窗控、GPU、缓存清理及性能入口禁用；浏览器样本不能证明原生精度、音画、缓存或Eagle数据读写。
 
 ## JPEG保留与退休模块
 | 模块 | 保留用途 |

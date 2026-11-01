@@ -143,6 +143,7 @@ async function execute(message, controller) {
     handles.delete(message.leaseId);recordPriorities.delete(message.leaseId);return true;
   }
   if (message.method === 'clearOther') {
+    if(message.settings?.clearAll===true&&handles.size)throw Error('活动视频缓存不能整批清理。');
     await closeProxyBatches();
     const maintenance=message.settings?.independentWholeProxy===true
       ? require('./cache.cjs').createCache({pluginRoot:root,taskOwner,processIdentity:identity,packFrames:true,protectWholeProxy:true,independentWholeProxy:true}) : cache;

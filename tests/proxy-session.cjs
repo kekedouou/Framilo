@@ -58,7 +58,8 @@ async function entryModel(mode = 'proxy') {
     'diagnostics.cjs': require('../plugin/diagnostics.cjs'),
     'task-client.cjs': { createTaskClient(options) { clientOptions = options; return backend; } },
     'native-backend.cjs': { createNativeBackend(options) { clientOptions = options; return backend; } },
-    'media-policy.cjs': {createJpegGate:()=>async()=>{}},
+    'media-policy.cjs': {...require('../plugin/media-policy.cjs'),createJpegGate:()=>async()=>{}},
+    'temporary-media.cjs': {createTemporaryMedia:()=>({directory:'model-temporary',ready:Promise.resolve(),close:async()=>({status:'cleared'})})},
     'session.cjs': { createSession(options) { configured = options; return session; } }
   };
   const win = { addEventListener() {}, close() {}, EVAUI: { createUI: () => ({ canvas: {}, bindSession() {}, update(value) { updates.push(value); }, destroy() {} }) },

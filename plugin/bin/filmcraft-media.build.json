@@ -1,16 +1,16 @@
 {
     "schema":  1,
-    "created":  "2026-10-31T20:36:19.4534462+08:00",
+    "created":  "2026-11-01T10:44:22.1349718+08:00",
     "upstream":  "https://github.com/storytold/filmcraft",
     "upstreamCommit":  "176e6a9c585fd29e4b18d691663fe88a936c5b37",
     "version":  "0.13.0",
     "protocol":  2,
-    "bridgeSha256":  "2583e81bd10af2338c0704e582d5094736e3502a648b75266a061eb82f644792",
-    "patchSha256":  "1d5b04700a035e46cd65cb0cae82aa9bdbd0fcd846e0071c1f51add174684ab3",
-    "binarySha256":  "e2a6826a1031f2bf9abd39b6947659c4413537f96876ab0434ac70a11e903c4b",
-    "binaryBytes":  29211648,
+    "bridgeSha256":  "fc75155bde9e7977dd2d7bd558ee8987be688aab986adf6fb6d713a53347306a",
+    "patchSha256":  "1ebcb64cb550a684983125f58f4b3dd7bc1d9e2daec76e5f6b18998e3bfe739c",
+    "binarySha256":  "cd8cc84baf1098e391e37f1c455d0c084512e4bd5ccdded8b8fdef449b62148a",
+    "binaryBytes":  29210112,
     "dependencyNoticesSha256":  "0439b48f1e02a2d6af042c6c25e0f27834a615d84338475727d6d598c0c98fbf",
     "compiler":  "rustc 1.95.0 x86_64-pc-windows-gnu",
     "linker":  "rust-lld / ld.lld / link-self-contained",
-    "buildLog":  "native-build-1793450159227.log"
+    "buildLog":  "native-build-1793501058864.log"
 }

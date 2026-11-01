@@ -34,12 +34,18 @@
   async load(info){this.canvas.style.visibility='hidden';this.frameHeld=true;this.info=info;this.index.validateIndex(info);this.state='loading';this._change();
    if(root.EVANativeRenderer){this.renderToken=this.budget.reserve(info.width*info.height*20,'video-render-surfaces');this.renderer=root.EVANativeRenderer.create({document:root.document,width:info.width,height:info.height,enabled:this.o.gpuDrawing!==false});}
    this.reader=await this.runtime.createReader();if(this.disposed){await this.runtime.closeReader(this.reader);return;}
-   if(info.audio){this.audioTask=this._prepareAudioURL();const src=await this.audioTask;if(this.disposed)return;const a=this.o.createAudio?.()||document.createElement('audio');a.preload='auto';a.src=src;a.playbackRate=this.playbackRate;this.audio=a;}
+   if(info.audio){this.audioTask=this._prepareAudioURL();const src=await this.audioTask;if(this.disposed)return;const a=this.o.createAudio?.()||document.createElement('audio');a.preload='auto';a.src=src;a.playbackRate=this.playbackRate;this.audio=a;await this._audioReady(a);if(this.disposed)return;}
    this.unsub=this.runtime.subscribeProxy(()=>{this._takeProxy().catch(e=>{this.lastIssue='代理接管失败，继续原片：'+e.message;this._change();});});
    this.state='paused';await this.seek(0,{final:true,kind:'initial'});if(this.runtime.proxyAsset())await this._takeProxy();return this.snapshot();
   }
+  async _audioReady(a){if(typeof a.readyState!=='number'||a.readyState>=2)return;
+   return new Promise((resolve,reject)=>{let timer;const clean=()=>{clearTimeout(timer);a.removeEventListener('loadeddata',done);a.removeEventListener('error',bad);if(this.audioLoadCancel===cancel)this.audioLoadCancel=null;},done=()=>{clean();resolve();},bad=()=>{clean();reject(Error('暂不能播放此视频：声音读取失败。'));},cancel=()=>{clean();resolve();};
+    this.audioLoadCancel=cancel;a.addEventListener('loadeddata',done,{once:true});a.addEventListener('error',bad,{once:true});timer=setTimeout(bad,10000);a.load();if(a.error)bad();else if(a.readyState>=2)done();
+   });
+  }
   async _prepareAudioURL(){let token;
-   try{if(!this.runtime.audioTrack||!root.Blob||!root.URL?.createObjectURL)return require('url').pathToFileURL(this.info.source.filePath).href;
+   try{if(/\.(?:mkv|webm)$/i.test(this.info.source.filePath)||/^pcm_/.test(this.info.audio?.codec||'')){this.audioSourceKind='original';return require('url').pathToFileURL(this.info.source.filePath).href;}
+    if(!this.runtime.audioTrack||!root.Blob||!root.URL?.createObjectURL)return require('url').pathToFileURL(this.info.source.filePath).href;
     if((this.info.metrics.sourceVideoOrigin||0)!==0||this.info.audio.start!==0)throw Error('非零原声起点暂未验证，保留原片音轨。');
     const maximum=Math.min(32*1024**2,Math.floor((this.budget.limit-this.budget.used)/3));if(maximum<64*1024)throw Error('独立原声的RAM余量不足。');
     token=this.budget.reserve(maximum*3,'audio-source-inflight');const track=await this.runtime.audioTrack(maximum);if(this.disposed)return null;
@@ -222,7 +228,7 @@
    catch(e){if(!this.disposed)this.forwardIssue=e.message;}
    finally{this.thumbRunning=false;this._scheduleFill();}
   }
-  dispose(){if(this.disposeTask)return this.disposeTask;this.disposed=true;this.serial++;clearTimeout(this.fillTimer);this.fillTimer=undefined;this.pause(false);this.runtime.cancelAudio?.();this.state='disposed';this.unsub?.();if(this.audio){this.audio.pause();this.audio.removeAttribute('src');this.audio.load();this.audio=null;}if(this.audioURL){root.URL.revokeObjectURL(this.audioURL);this.audioURL=null;}
+  dispose(){if(this.disposeTask)return this.disposeTask;this.disposed=true;this.serial++;clearTimeout(this.fillTimer);this.fillTimer=undefined;this.pause(false);this.runtime.cancelAudio?.();this.audioLoadCancel?.();this.state='disposed';this.unsub?.();if(this.audio){this.audio.pause();this.audio.removeAttribute('src');this.audio.load();this.audio=null;}if(this.audioURL){root.URL.revokeObjectURL(this.audioURL);this.audioURL=null;}
    this.disposeTask=(async()=>{await this.audioTask?.catch(()=>{});this.budget.release(this.audioSourceToken);await this.runtime.cancelReaders?.();if(this.candidateReader)await this.runtime.closeReader(this.candidateReader);if(this.reader)await this.runtime.closeReader(this.reader);await this.switchTask?.catch(()=>{});await this.fillTask;for(const lease of [...this.leases])lease.release();for(const e of this.cache.values())this.budget.release(e.token);this.cache.clear();for(const e of this.thumbCache.values())this.budget.release(e.token);this.thumbCache.clear();this.renderer?.dispose();this.budget.release(this.renderToken);this.budget.release(this.nativeToken);})();return this.disposeTask;
   }
  }

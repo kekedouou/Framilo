@@ -7,11 +7,20 @@ const upstream=process.argv[2]||path.join(root,'filmcraft-source/filmcraft-176e6
 const backupDir=path.join(root,'filmcraft-test');
 const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
 const expected={
+ 'crates/codecs/src/mkv.rs':'807b2e89c534a71e7855923cb94df62ff3d252f42c79b71526c28ea0b7814286',
  'crates/codecs/src/gop.rs':'fdb53061261a7e5b7bd9cd6f8076f6db1e0ee3ca8bcde66ba012ae454b48f49d',
  'crates/codecs/src/mp4.rs':'88ffe768bfa8769fafc85fa6afb039829f7e63f3a74943cc809e2750934b9430',
  'crates/platform/src/media_foundation.rs':'bea74ec7a7c15a41eb8be78be7ab5d21d1ede5bff6f80562c16d642b7363ede3'
 };
 const changes=[
+ ['crates/codecs/src/mkv.rs','        let origin = media_origin(&file, vtrack, &atracks);\n        rebase(&mut file, origin);',
+ `        // Preserve external source timestamps, including nonzero starts.
+        let origin = 0;`],
+ ['crates/codecs/src/mkv.rs','        Ok(self.video.frame_late(&MkvVideo { src: self, track: ti }, target, late)?)',
+ `        E52_ACTUAL_PTS.set(None);
+        let result = self.video.frame_late(&MkvVideo { src: self, track: ti }, target, late)?;
+        E52_ACTUAL_PTS.set(self.video.e44_cached_pts(&result).map(|pts| to_tick(&self.file.tracks[ti], pts)));
+        Ok(result)`],
  ['crates/codecs/src/gop.rs','    pub fn frame(&self, s: &dyn VideoSamples, target: i64)',
  `    /// Eagle bridge: recover the returned Arc's actual decoded timestamp.
     pub fn e44_cached_pts(&self, frame: &Arc<VideoFrame>) -> Option<i64> {
@@ -60,6 +69,11 @@ fn e44_budget() -> usize { E44_CACHE_BUDGET.load(Ordering::Relaxed) }
 // Returned timestamp is actual decoded/cache identity, adjusted by the container edit list.
 thread_local! { static E44_ACTUAL_PTS: std::cell::Cell<Option<Tick>> = const { std::cell::Cell::new(None) }; }
 pub fn e44_actual_pts() -> Option<Tick> { E44_ACTUAL_PTS.get() }
+`;
+ if(file.endsWith('mkv.rs'))text+=`
+// Actual returned cache identity; never substitute the requested timestamp.
+thread_local! { static E52_ACTUAL_PTS: std::cell::Cell<Option<Tick>> = const { std::cell::Cell::new(None) }; }
+pub fn e52_actual_pts() -> Option<Tick> { E52_ACTUAL_PTS.get() }
 `;
  if(fs.readFileSync(filename,'utf8')!==text)fs.writeFileSync(filename,text);
  receipts.push({file,originalHash:wanted,patchedHash:hash(text),modified:file.includes('/codecs/')});

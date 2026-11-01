@@ -86,9 +86,6 @@
           <button id="loopCancel" type="button" hidden>取消（Esc）</button>
           <label title="L开启循环并展开片段，关闭恢复整段、保留范围"><input id="loopEnabled" type="checkbox" disabled>循环（L）</label>
           <output id="loopRange" class="muted">未设置范围</output>
-          <details class="shortcut-help"><summary title="查看现有操作和快捷键">操作提示</summary>
-            <div class="shortcut-panel">单击画面／空格：播放／暂停<br>Z：还原1×；X：减速；C：加速<br>【／】：前后逐帧；画面或时间轴滚轮：逐帧<br>R短按：选择／确认／清除片段<br>长按R：暂停并临时查看整段、拖动端点；松开确认，Esc取消<br>L：循环并展开片段／关闭并查看整段<br>N：添加／修改本帧文字；D：进入／保存圈画；H：屏幕标注显隐<br>绘图中：Enter保存，Esc退出，Ctrl+Z撤销，Delete删除选中对象<br>S：导出当前画面；E：导出所选片段<br>标注输入：Enter保存，Shift+Enter换行</div>
-          </details>
         </div>
       </div>
     </section>
@@ -104,10 +101,6 @@
         <label for="qualitySelect">预览画质</label>
         <select id="qualitySelect" aria-label="预览画质" disabled><option value="720p">720p</option><option value="1080p">1080p</option><option value="1440p">2K（1440p）</option><option value="2160p">4K UHD（2160p）</option></select>
         <p class="muted">保持比例，不放大小视频。</p>
-        <label for="playbackBackend">播放方式</label>
-        <select id="playbackBackend" aria-label="播放方式" disabled><option value="proxy">代理</option><option value="jpeg">JPEG 序列</option></select>
-        <label for="proxyDiskGiB">代理磁盘额度</label>
-        <select id="proxyDiskGiB" aria-label="代理磁盘额度" disabled><option value="1">1 GiB</option><option value="2">2 GiB</option><option value="5">5 GiB</option><option value="10">10 GiB</option><option value="20">20 GiB</option><option value="50">50 GiB</option><option value="100">100 GiB</option></select>
         <label class="predecode-option"><input id="gpuAcceleration" type="checkbox" checked disabled> GPU加速</label>
         <input id="forwardPredecode" type="checkbox" checked hidden disabled aria-hidden="true">
         <label class="predecode-option"><input id="showDrawings" type="checkbox" checked> 显示屏幕标注（H）</label>

@@ -169,7 +169,7 @@ fn worker(path: String, height: u32, cache_bytes: usize, requested: Option<(u32,
                     "\"decodeMs\":{},\"convertMs\":{},\"workerMs\":{},\"cacheBytes\":{},\"hits\":{},\"misses\":{},",
                     "\"seeks\":{},\"decoded\":{},\"hwFrames\":{},\"hwSessions\":{},\"hwFallbacks\":{},\"hwDeclined\":{},\"skippedReadbacks\":{},\"codecMs\":{},",
                     "\"pixelFormat\":\"{}\",\"colorMatrix\":{},\"fullRange\":{}}}"),
-                    job.id, filmcraft_codecs::mp4::e44_actual_pts().ok_or("actual cache PTS unavailable")?.0, ow, oh, decode_ms, conversion.elapsed().as_secs_f64()*1000.0,
+                    job.id, filmcraft_codecs::mp4::e44_actual_pts().or_else(filmcraft_codecs::mkv::e52_actual_pts).ok_or("actual cache PTS unavailable")?.0, ow, oh, decode_ms, conversion.elapsed().as_secs_f64()*1000.0,
                     job.sent.elapsed().as_secs_f64()*1000.0, filmcraft_codecs::cached_bytes(), stats.hits, stats.misses,
                     stats.seeks, stats.decoded, hw.frames-hw0.frames, hw.sessions-hw0.sessions, hw.fallbacks-hw0.fallbacks, hw.declined-hw0.declined,
                     0, stats.decode_ns as f64/1e6, pixel_format, color_matrix, full_range);
