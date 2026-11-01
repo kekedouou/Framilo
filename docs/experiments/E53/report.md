@@ -1,5 +1,11 @@
 # E53 execution record
 
+## Rename and redesign requested — 2026-11-01
+
+Baseline5e6ab70 clean. User explicitly replaced the prior A-selection direction with a new name and logo, asking first for English names that are easy to pronounce/remember and relevant to the product. [User-supplied YouTube link](https://www.youtube.com/watch?v=ii20RxJvz7g) could not be fetched; skeleton-extraction capability is user-reported, not independently verified here. Prior assets preserved as historical concepts; runtime branding unchanged.
+
+Creative shortlist and rationale are in the plan. Exact-name public-web searches screened out existing software such as [FrameCue](https://framecue.vercel.app/), [FrameTrail](https://frametrail.org/), [Framio](https://framio-app.com/) and [FramePin](https://framepin.com/). Retained candidates Glimark, Framilo, Frameglint, Framint and Fraylo were not cleared legally: search results include a Glimark cosmetics company, [FRAMILO LIMITED](https://find-and-update.company-information.service.gov.uk/company/08434195), Fraylo corporate/domain references and Framint plant-name references. No obvious exact-name video software found for these in this limited search is not evidence of availability. No domain registration or trademark registry clearance performed. Documentation-only governance/diff checks apply, no runtime test or visual preview needed; no new logo artwork claimed.
+
 ## A selected; name screening — 2026-11-01
 
 Baseline367ee8b clean. User selected concept A and raised a possible MotionNote name conflict, supplying [IEEE document9090443](https://ieeexplore.ieee.org/document/9090443). IEEE retrieval failed and exact-URL search returned no result; its identity/content have not been verified. Independently, [NOVA's January2020 description](https://novainnovation.unl.pt/web-based-video-annotation-tool-in-real-time/) and [Europeana's project page](https://pro.europeana.eu/page/motionnotes) establish MotionNotes as a video annotation tool with timelines, text and drawings. Do not silently equate the inaccessible IEEE document with that project.
