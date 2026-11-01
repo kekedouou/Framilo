@@ -1,5 +1,11 @@
 # E53 execution record
 
+## A selected; name screening — 2026-11-01
+
+Baseline367ee8b clean. User selected concept A and raised a possible MotionNote name conflict, supplying [IEEE document9090443](https://ieeexplore.ieee.org/document/9090443). IEEE retrieval failed and exact-URL search returned no result; its identity/content have not been verified. Independently, [NOVA's January2020 description](https://novainnovation.unl.pt/web-based-video-annotation-tool-in-real-time/) and [Europeana's project page](https://pro.europeana.eu/page/motionnotes) establish MotionNotes as a video annotation tool with timelines, text and drawings. Do not silently equate the inaccessible IEEE document with that project.
+
+Name similarity and related function justify a recommendation to consider a more distinctive name before final branding, not a finding of infringement. [CNIPA infringement criteria](https://www.cnipa.gov.cn/art/2020/6/15/art_546_146311.html) and [USPTO confusion guidance](https://www.uspto.gov/trademarks/search/likelihood-confusion) provide general context; no territory-specific registry clearance, rights-holder assessment or legal opinion was completed. A is the selected visual direction; final wordmark and runtime branding remain pending. Existing draft assets/README codename are preserved, no rename approved. Documentation-only change: handoff/link/diff checks apply; runtime, native binaries, historical evidence and installed plugin are unaffected.
+
 ## Scope transition and brand round 1 — 2026-11-01
 
 Baseline298f18f clean. User authorized phase3, requested a task breakdown and at least five logo concepts, and replaced the public-release objective with private daily use and longitudinal observation. Plan/navigation/roadmap/README now distinguish a production-path personal build from a stable or public release. E52 host/manual gaps carry forward; frozen history and native binary remain unchanged.
