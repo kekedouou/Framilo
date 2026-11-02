@@ -1,12 +1,12 @@
 # 当前交接
 
 当前阶段：E-55
-候选提交：E55工作区（基线14edb4e）
-候选状态：减重/监测移除及本地回归完成；待干净提交后生成自用包，不缩兼容。
+候选提交：89830c6（E55运行代码）
+候选状态：减重/监测移除及自用包本地检查完成；真实Eagle/长稳待验，不缩兼容。
 
 ## 当前授权与结果
-2026-11-01用户选定新A流线F，批准五包连续推进，确认Eagle载入本项目plugin目录；长期自用，不发行。既有宿主待验及[能力限制](releases/motionote-capabilities.md)不变。
-本轮按[E55计划](experiments/E55/plan.md)减重，结果见[E55报告](experiments/E55/report.md)。既有[E54圈画](experiments/E54/report.md)、[E53自用](experiments/E53/report.md)待验延续，E49冻结不改。
+用户批准五包自用推进及E55减重/移除监测，明确保留视频兼容；Eagle载入本项目plugin目录。Framilo/A标识、不发行及[能力限制](releases/motionote-capabilities.md)不变。[E55计划](experiments/E55/plan.md)/[结果](experiments/E55/report.md)；E53/E54待验延续，E49冻结不改。
+新包：dist/framilo-0.2.0-private.2-89830c6-win-x64.zip，4.30 MiB（减少63.16%），包/许可/CPU-GPU读帧校验通过；旧包保留回退。项目入口关闭重开即用新版，不另装/推送。
 
 ## 集中体验待验
 1. 在真实Eagle打开用户此前失败的MKV，以及常用MP4/MOV/WebM，检查声音、播放/拖动/松手/逐帧/片段/记录；没有用合成浏览器结果代替这些检查。
@@ -22,7 +22,7 @@
 维护记录：[E55执行记录](experiments/E55/report.md)
 
 ## 检查与工作区
-E55全量回归、原生17组合255次帧结果一致、三轮定点计时和72文件/许可闭包通过，证据及限制见本轮报告；原生程序29,210,112→9,693,696字节。旧包保留恢复，长期计数仍见[E53清单](experiments/E53/acceptance.md)。无推送/发行，真实Eagle音画/手感待验。
+全量回归、原生17组合255次帧结果一致及三轮计时通过；原生程序29,210,112→9,693,696字节。仅本地证明，真实Eagle音画/手感待验；长期计数见[E53清单](experiments/E53/acceptance.md)。
 工作区登记：[当前保留清单](workspace-exceptions.json)
 无其它任务差异。E55证据≤128 MiB；复用E52样本，不生成媒体/写库。E44工具累计≤8 GiB、dist≤256 MiB；旧包/媒体/历史证据保留。
 

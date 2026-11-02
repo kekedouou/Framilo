@@ -1,6 +1,6 @@
 # E55 execution record
 
-Baseline 14edb4e, clean inherited worktree. User approved package slimming and user-monitor removal, explicitly retaining video compatibility. Implementation/local verification complete; private ZIP creation follows the clean source commit. No Eagle installation, library/annotation/settings writes, media generation, dependency installation, publication or remote push.
+Baseline 14edb4e, clean inherited worktree. User approved package slimming and user-monitor removal, explicitly retaining video compatibility. Implementation/local verification and private snapshot complete; runtime source commit89830c6. No Eagle installation, library/annotation/settings writes, media generation, dependency installation, publication or remote push.
 
 ## Implemented scope and size
 
@@ -18,7 +18,7 @@ Removed the user performance monitor entry, detached window and observer wiring.
 
 No installed verified text minifier was available. Did not install another dependency or apply unsafe whitespace stripping for small prospective gains. Existing animation/material/settings/record behavior remains. Manifest is `0.2.0-private.2`; plugin ID unchanged.
 
-Native runtime/license closure: 72 files, 11,097,000 bytes, 132 dependency packages / 68 license texts, all artifact/license/source guards passed. Final ZIP size/source commit will be recorded after snapshot creation; old packages are retained for recovery.
+Native runtime/license closure: 72 files, 11,097,000 working-tree bytes / 11,088,255 packaged Git-source bytes (line endings), 132 dependency packages / 68 license texts, all artifact/license/source guards passed. Old packages are retained for recovery.
 
 ## Native evidence and timing limits
 
@@ -45,8 +45,21 @@ Shared frontend preview: `http://127.0.0.1:5800/8c201fc539f8a31e3b9e2246c4e5088e
 
 Preview uses shared product UI plus synthetic sample/host adapters, not Eagle, native window controls, GPU or real cache operations. Existing preview drafts/servers untouched. If stopped, use the standard preview command and new receipt URL; before stopping identify the exact process/command from this receipt, never kill another service. Real Eagle audio/handfeel/long-use and prior E53/E54 acceptance gaps remain.
 
-## Maintenance, budgets and remaining delivery
+## Delivery, maintenance and cleanup
+
+`node scripts/package-private.cjs build HEAD` built and verified `dist/framilo-0.2.0-private.2-89830c6-win-x64.zip` from clean source89830c645a547caf5b2344823ac2631d33bd4c05. ZIP SHA256 `f6117488bb004f941a59517224bf433ed61846c3aed8d40bf556c60512768cc6`; companion .sha256 and directory BUILD-INFO.json retain archive/file/source hashes. This is a private ZIP, not a published Eagle installation package. User's existing project-plugin entry receives the same runtime on reopening; no import/install performed.
+
+| Delivered artifact | Previous private.1 /70515ca | New private.2 /89830c6 |
+| --- | ---: | ---: |
+| ZIP | 12,232,100 bytes (11.67 MiB) | 4,506,366 bytes (4.30 MiB) |
+| Runtime files only | 30,760,929 bytes | 11,088,255 bytes |
+
+ZIP reduction63.16%; new extracted folder including README/build inventory11,099,584 bytes. Previous snapshot predates the E54 drawing-lifetime change; native candidate comparisons above use the immediate14edb4e baseline. Do not attribute all cross-release differences to E55.
+
+`verification-runs/e55/package-build.json` preserves the build/verification receipt. Packaged native-backend/native-reader and executable additionally read ten exact frames across CPU/GPU and acknowledge both closes, using existing E52 H.264; receipt `package-smoke-1793591318300.json`. No user media or source writes. Package inventory, license closure and ZIP-versus-directory file hashes agree. Subsequent maintenance-only documentation commit does not change the snapshot's source identity.
 
 Product records monitor/JPEG retirement; architecture records helper/runtime/archive ownership; verification and performance workflow record parity/timing/package gates; roadmap retains compatibility and prioritizes private stability; native build and private-package guide record new build/recovery behavior. Project map links the new retired monitor archive. README branding/use and E49/E53 historical results stay frozen because product identity, accepted historical evidence and release scope did not change. AGENTS and development workflow need no new general rule.
 
-E55 output budget128 MiB, existing E44 tool/build budget8 GiB, dist256 MiB unchanged. E44 measured 4,399,116,304 bytes after rebuilding. Preserve raw measurements/failures/screenshots, old snapshots and all user data; after new ZIP verification remove only owned rebuildable candidate duplicates, with path/hash/byte receipt. No old evidence is deleted to meet quotas. Package receipt and final cleanup results follow in this record.
+E55 output budget128 MiB, existing E44 tool/build budget8 GiB, dist256 MiB unchanged. E44 measured4,399,116,304 bytes after rebuilding. After snapshot/smoke verification, inspected canonical paths, ownership, byte hashes and file identities, then removed stripped candidate and seven duplicated thin-build outputs plus their empty directory:35,863,177 bytes reclaimed. Receipt `verification-runs/e55/cleanup-1793591363801.json` lists each target and result; no recursive or external deletion. Rebuild from baseline Git/native build script; raw timing/failure/build records, screenshots, chosen binary, packages and source media remain. E55 evidence afterwards1,528,143 bytes; dist101,717,446 bytes, both within budget. Small later receipts/scripts do not approach the quota.
+
+Practice: compare full candidate behavior before promotion, preserve rollback packages and exact source/byte provenance. Mistake: retired components left stale consumers in initial regression attempts, requiring harness/fixture repairs; full default checks only passed after those repairs. Verified correction covers local native/models/UI/package, not real-host acceptance. Text minification deferred; no unapproved format cuts or animation reductions.
