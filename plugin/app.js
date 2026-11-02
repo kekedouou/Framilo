@@ -76,7 +76,8 @@
       const { createDiagnostics } = require(path.join(root, 'diagnostics.cjs'));
       const { createMemoryPreferences } = require(path.join(root, 'preferences.cjs'));
       const { createAnnotationStore } = require(path.join(root, 'drawing-store.cjs'));
-      const preferences = createMemoryPreferences({ pluginRoot: root });
+      const preferences = createMemoryPreferences({ pluginRoot: root,
+        display: { width: window.screen?.width, height: window.screen?.height, scaleFactor: window.devicePixelRatio || 1 } });
       const annotationStore = createAnnotationStore({ pluginRoot: root });
       const frameIndex = require(path.join(root, 'frame-index.cjs'));
       if (!diagnostics) {

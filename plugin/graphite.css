@@ -114,7 +114,11 @@
 .workspace[data-fullscreen="true"][data-header-open="false"] .shell-header{transform:translateY(-100%);opacity:0;pointer-events:none}
 .shell-alerts #drawingStatus,.shell-alerts #commentStatus{transition:opacity 260ms ease,visibility 260ms}
 .shell-alerts [data-faded="true"]{opacity:0;visibility:hidden;pointer-events:none}
-.screen-gesture-ring[data-direction="left"] .gesture-left,.screen-gesture-ring[data-direction="right"] .gesture-right{background:transparent}
+.screen-gesture-ring[data-direction="left"] span,.screen-gesture-ring[data-direction="right"] span{background:transparent!important;clip-path:none!important;transition:none}
+.screen-gesture-ring[data-direction="left"] .gesture-up,.screen-gesture-ring[data-direction="left"] .gesture-down,.screen-gesture-ring[data-direction="right"] .gesture-up,.screen-gesture-ring[data-direction="right"] .gesture-down,.screen-gesture-ring[data-direction="left"] small,.screen-gesture-ring[data-direction="right"] small{display:none}
+.screen-gesture-ring[data-direction="left"],.screen-gesture-ring[data-direction="right"]{background:none;border:0;transition:none;transform:translate(-50%,-50%)}
+.screen-gesture-ring[data-direction="left"] .gesture-right,.screen-gesture-ring[data-direction="right"] .gesture-left{opacity:0}
+.screen-gesture-ring[data-direction="left"] i,.screen-gesture-ring[data-direction="right"] i{display:none}
 .shell-dock .shell-icon:hover:enabled,.shell-dock .shell-icon[aria-expanded="true"],.workspace[data-annotating="true"] .shell-dock .shell-icon:first-child{background:rgba(111,147,176,.18);color:#a8c7df}
 .workspace[data-graphite][data-record-motion="true"]>.player-pane{transition:margin-right 220ms cubic-bezier(.2,.7,.2,1)}
 .shell-records{animation:record-reveal 220ms cubic-bezier(.2,.7,.2,1) both}

@@ -77,7 +77,7 @@
     for (const id of ['autoProxy', 'gpuDrawing', 'gpuAcceleration', 'proxyGenerate', 'proxyCancel', 'proxyState']) el[id] = doc.getElementById(id);
     const backendControl = !!el.playbackBackend && String(el.playbackBackend.tagName).toUpperCase() === 'SELECT';
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
-    let seekIntent = null;
+    let seekIntent = null, screenSelectionPoint = null;
     let viewRange = { start: 0, end: 0, focused: false }, timelineWidth = null, rulerKey = null;
     let rateRequest = null, noteRequest = null, exportRequest = null;
     let drawingUI = null, screenUI = null, contextUI = null, shellUI = null;
@@ -448,9 +448,9 @@
       }
       set(el.loopBand, 'hidden', !start || !endPoint);
       if (start && endPoint && state.duration > 0) { set(el.loopBand.style, 'left', timelineAPI.ratio(start.time, viewRange) * 100 + '%'); set(el.loopBand.style, 'width', Math.max(0, timelineAPI.ratio(endPoint.time, viewRange) - timelineAPI.ratio(start.time, viewRange)) * 100 + '%'); }
-      const help = editing.message || (editing.editing ? editing.busy ? '正在固定画面…' :
-        (!start ? '在画面或时间轴拖动起点，再拖动终点。' : !endPoint ? '在画面或时间轴拖动终点。' : '画面横拖或时间轴拖动调整端点；【／】微调当前端点。') +
-        ' 右键左/右选头尾；' + (editing.mode === 'hold' ? '松R或右键短点结束' : 'R或右键短点结束') + '，未齐取消、同帧清除；Esc取消。' : '');
+      const nextPoint = gesture?.point || screenSelectionPoint || (!start ? 'start' : !endPoint ? 'end' : null);
+      const help = editing.message || (editing.editing ?
+        nextPoint === 'start' ? '请拖动起点' : nextPoint === 'end' ? '请拖动终点' : '' : '');
       set(el.loopHelp, 'textContent', help); set(el.loopHelp, 'hidden', !help); loopAttribute(el.loopHelp, 'data-fading', String(!!editing.messageFading));
     }
     on(el.playbackRate, 'change', () => { if (!el.playbackRate.disabled) requestRate(Number(el.playbackRate.value)); });
@@ -481,11 +481,17 @@
       updateTransport();
     }
     function requestAt(event, final, inputAt = now()) {
-      const time = event && gesture ? pointerTime(event.clientX, gesture.rect, gesture.range) : lastRequestedTime;
+      const raw = event && gesture ? pointerTime(event.clientX, gesture.rect, gesture.range) : lastRequestedTime;
+      if (raw === null || raw === undefined) return;
+      const point = gesture?.point, editing = selection.snapshot();
+      const loop = state.playback?.transport?.loop;
+      const bounds = point === 'start' ? { maxOrdinal: editing.end?.ordinal } : point === 'end' ? { minOrdinal: editing.start?.ordinal } :
+        viewRange.focused && loop?.valid && loop.enabled ? { minOrdinal: loop.startOrdinal, maxOrdinal: loop.endOrdinal } : {};
+      const frame = session?.loopFrameAt?.(raw, bounds), time = frame?.time ?? raw;
       if (time === null) return;
       lastRequestedTime = time; thumb(time);
       if (gesture && gesture.point) selection.move(gesture.point, time, final, inputAt);
-      else requestSeek(time, { kind: final ? 'release' : 'rapid', final: !!final, inputAt });
+      else requestSeek(time, { kind: final ? 'release' : 'rapid', final: !!final, inputAt, ...(frame ? { index: frame.ordinal } : {}) });
     }
     function end(event) {
       const inputAt = now();
@@ -537,6 +543,12 @@
     on(el.retry, 'click', () => { if (session) invoke(() => session.retry()); });
     on(win, 'keydown', event => {
       if (event.defaultPrevented) return;
+      for (const [key, action] of [['B','records'],['O','settings']]) if (letterKey(event,key)) {
+        if (shellUI?.[action] && !gesture && !screenUI?.active() && !contextUI?.active() && !state.drawings?.draft && !state.comments?.draft && !selection.snapshot().editing && !selection.snapshot().busy) {
+          event.preventDefault(); shellUI[action]();
+        }
+        return;
+      }
       if (event.key === 'Escape' && contextUI?.active()) return;
       if (event.key === 'Escape' && state.comments?.draft) {
         if (!commentComposing && !event.isComposing && event.keyCode !== 229 && now() - commentCompositionEnd >= 50) { event.preventDefault(); invoke(() => session.cancelComment()); }
@@ -849,7 +861,6 @@
     }
     drawingUI = drawingAPI.createDrawingUI({ document: doc, window: win, getSession: () => session, getState: () => state, menuActive: () => !!contextUI?.active(),
       canBegin: () => shortcutReady() && !transportBusy && state.exportState?.status !== 'unknown' && state.playback?.frameHeld !== true, isKey: letterKey });
-    let screenSelectionPoint = null;
     screenUI = screenGestureAPI.createScreenGestureUI({ document: doc, window: win, now,
       getContext: () => ({ epoch: state.epoch, enabled: interactive() && !gesture && !memoryBusy && !cleaning &&
           !selection.snapshot().busy,
@@ -861,7 +872,7 @@
         maxOrdinal:viewRange.focused?state.playback?.transport?.loop?.endOrdinal:state.playback?.frameCount-1,
         frameAt:(time,bounds)=>session?.loopFrameAt?.(time,bounds),step: state.interactionSettings?.rateStep || .1 }),
       start: () => { const s = selection.snapshot(); screenSelectionPoint = s.editing ? (s.controlled ? s.active : selection.nextPoint() || s.active || (Math.abs((state.playback?.time || 0) - s.start.time) <= Math.abs((state.playback?.time || 0) - s.end.time) ? 'start' : 'end')) : null; },
-      release: () => { screenSelectionPoint = null; },
+      release: () => { screenSelectionPoint = null; updateTransport(); },
       seek: (time, final, ordinal) => { clearHint(); if (screenSelectionPoint && selection.snapshot().editing) selection.move(screenSelectionPoint, time, final, now(),ordinal); else requestSeek(time, { index:ordinal,final, kind: final ? 'release' : 'rapid', inputAt: now() }); },
       rate: value => requestRate(value),
       toggle: () => { if ((shortcutReady() || interactive() && state.playback?.buffering) && !transportBusy) invoke(() => state.state === 'playing' || state.playback?.buffering ? session.pause() : session.play()); } });

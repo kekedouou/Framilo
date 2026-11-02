@@ -9,12 +9,18 @@ const DISK_OPTIONS=Object.freeze([1,2,5,10,20,50,100]);
 function diskValue(v=5){if(!DISK_OPTIONS.includes(v))throw Error('请选择有效的代理磁盘额度。');return v;}
 const WHEEL_OPTIONS = Object.freeze([1, 2, 5, 10]);
 const RATE_STEP_OPTIONS = Object.freeze([.1, .2, .25, .5]);
-const DEFAULT_INTERACTION = Object.freeze({ wheelFrames: 1, showCacheStrip: false, rateStep: .1, drawingFadeSeconds: .25, drawingToolbar: false, showProxyStrip: false });
+const DEFAULT_INTERACTION = Object.freeze({ wheelFrames: 1, showCacheStrip: false, rateStep: .1, drawingFadeSeconds: .25, drawingToolbar: true, showProxyStrip: false });
+function defaultQuality(display) {
+  const { width, height, scaleFactor = 1 } = display || {};
+  if (![width, height, scaleFactor].every(n => Number.isFinite(n) && n > 0)) return '1080p';
+  const short = Math.min(width, height) * scaleFactor;
+  return short >= 2160 ? '2160p' : short >= 1440 ? '1440p' : '1080p';
+}
 function backendValue(value = 'proxy') {
   if (!['proxy', 'jpeg'].includes(value)) throw new Error('播放方式只支持代理或JPEG序列。');
   return value;
 }
-function interactionValue(wheelFrames = 1, showCacheStrip = false, rateStep = .1, drawingFadeSeconds = .25, drawingToolbar = false, showProxyStrip = false) {
+function interactionValue(wheelFrames = 1, showCacheStrip = false, rateStep = .1, drawingFadeSeconds = .25, drawingToolbar = true, showProxyStrip = false) {
   if (!WHEEL_OPTIONS.includes(wheelFrames)) throw new Error('滚轮灵敏度请选择1、2、5或10帧。');
   if (typeof showCacheStrip !== 'boolean') throw new Error('缓存绿条显示设置必须为开或关。');
   if (!RATE_STEP_OPTIONS.includes(rateStep)) throw new Error('倍速步长请选择0.1、0.2、0.25或0.5。');
@@ -31,7 +37,7 @@ function memoryValue(total, ramMiB, persisted = false) {
   return Object.freeze({ ramMiB, ramBytes, compressedRamBytes: Math.floor(ramBytes / 8), totalRamBytes: total, persisted });
 }
 function createMemoryPreferences(options) {
-  let selectedQuality = '720p';
+  let selectedQuality = defaultQuality(options.display);
   let selectedPredecode = true;
   let selectedBackend = 'proxy', selectedEncoder = 'nvidia', selectedDecoder = 'prefer-hardware';
   let selectedAutoProxy = true, selectedDiskGiB=5;
@@ -73,7 +79,7 @@ function createMemoryPreferences(options) {
     if(value.gpuAcceleration!==undefined&&typeof value.gpuAcceleration!=='boolean')throw Error('GPU加速必须为开或关。');
     selectedGpuAcceleration=value.gpuAcceleration??(value.decoderPreference!=='prefer-software'&&value.gpuDrawing!==false);
     backendValue(value.playbackBackend); const backend = 'proxy'; // Retired JPEG preference migrates without changing other settings.
-    const interaction = interactionValue(value.wheelFrames, value.showCacheStrip, value.rateStep, value.drawingFadeSeconds, value.drawingToolbar, value.showProxyStrip), selected = quality(value.previewQuality), memory = memoryValue(total, value.ramMiB, true);
+    const interaction = interactionValue(value.wheelFrames, value.showCacheStrip, value.rateStep, value.drawingFadeSeconds, value.drawingToolbar, value.showProxyStrip), selected = value.previewQuality === undefined ? selectedQuality : quality(value.previewQuality), memory = memoryValue(total, value.ramMiB, true);
     selectedPredecode = true;
     selectedQuality = selected; selectedInteraction = interaction; selectedBackend = backend; selectedEncoder = proxyEncoding.encoder(value.proxyEncoder); selectedDecoder = proxyEncoding.decoder(value.decoderPreference);
     selectedDiskGiB=5; // Legacy disk quota no longer controls media storage.
@@ -112,4 +118,4 @@ function createMemoryPreferences(options) {
     }
   } });
 }
-module.exports = { createMemoryPreferences, memoryValue, interactionValue, DEFAULT_INTERACTION, WHEEL_OPTIONS, RATE_STEP_OPTIONS, OWNER, DEFAULT_BYTES, OPTIONS,DISK_OPTIONS,diskValue };
+module.exports = { createMemoryPreferences, defaultQuality, memoryValue, interactionValue, DEFAULT_INTERACTION, WHEEL_OPTIONS, RATE_STEP_OPTIONS, OWNER, DEFAULT_BYTES, OPTIONS,DISK_OPTIONS,diskValue };

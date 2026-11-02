@@ -42,7 +42,7 @@ window.PreviewPlayer = class {
   async applyLoopRange({startOrdinal,endOrdinal}){await this.seek(0,{index:startOrdinal});this.loopStart=startOrdinal;this.loopEnd=endOrdinal;this.loopEnabled=true;return this.play();}
   async clearLoop(){this.loopStart=this.loopEnd=null;this.loopEnabled=false;this.emit();return{status:'applied'};}
   async setLoopEnabled(enabled){if(enabled&&!this.transportSnapshot().loop.valid)return{status:'ignored',reason:'invalid-loop'};this.loopEnabled=enabled;this.emit();return{status:'applied'};}
-  loopFrameAt(time,bounds={}){const ordinal=Math.max(bounds.minOrdinal??0,Math.min(bounds.maxOrdinal??359,bounds.ordinal??this.index.frameAt(this.info.frames,time)));return{ordinal,frameId:ordinal,time:this.info.frames[ordinal].time};}
+  loopFrameAt(time,bounds={}){const ordinal=Math.max(bounds.minOrdinal??0,Math.min(bounds.maxOrdinal??359,bounds.ordinal??this.index.nearestFrame(this.info.frames,time)));return{ordinal,frameId:ordinal,time:this.info.frames[ordinal].time};}
   async restoreTransport(value){this.playbackRate=value.rate;this.loopStart=value.loop.startOrdinal;this.loopEnd=value.loop.endOrdinal;this.loopEnabled=value.loop.enabled;this.emit();}
   cacheCoverageSnapshot(){return null;}
   setForwardPredecode(){}

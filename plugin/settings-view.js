@@ -22,10 +22,8 @@
   let path=[],hintTimer=null,signature='',rendering=false,alignFrame=null,scrubbing=false;
   const fade=find('drawingFadeSeconds'),cancelScrub=fade?bindSecondsScrub(fade,win,on,value=>{scrubbing=value;if(!value)signature='';}):()=>{};
   const names={qualitySelect:'画质',display:'显示',drawingFadeSeconds:'标注淡入淡出',wheelFrames:'滚轮逐帧',advanced:'高级',memoryMiB:'内存额度',rateStep:'倍速步长',proxyEncoder:'代理生成',decoderPreference:'播放解码'};
-  const helps={proxyEncoder:'GPU使用NVIDIA NVENC；需兼容显卡与驱动。整片代理后台生成，应用后保持暂停。',decoderPreference:'原生播放器使用系统硬件解码；不支持时明确回退CPU。优先CPU会关闭硬件解码，应用后生效。',qualitySelect:'保持比例，不放大小视频；应用后生效。',drawingFadeSeconds:'标注帧前后淡入淡出时长，0为关闭。应用后生效。',wheelFrames:'每次滚轮移动的源帧数，应用后生效。',memoryMiB:'播放器管理的缓存额度，不是整个Eagle或GPU的内存。',rateStep:'每次调整的倍速步长，应用后生效。',showDrawings:'立即生效，H也可切换；隐藏不删除标注。',drawingToolbar:'立即生效；隐藏后仍可用轮盘选工具。',showCacheStrip:'绿色表示RAM中已还原的画面，应用后生效。',showProxyStrip:'蓝色表示完整且已校验的代理位置；不代表已进入RAM。应用后生效。',forwardPredecode:'提前准备周围帧，应用后生效。'};
-  helps.autoProxy='打开视频后从头到尾生成完整代理；关闭会取消当前生成。点击应用生效，原片可继续播放。';
-  helps.gpuAcceleration='代理模式统一加速代理编码、播放解码和视频绘制；硬件不支持时回退CPU。GPU绘制不降低分辨率，代理压缩画质由编码方式决定。应用后生效。';
-  helps.gpuDrawing='只控制视频色彩转换与绘制，不是整个Eagle的GPU开关。关闭后由CPU准确转换；点击应用生效。';
+  const helps={qualitySelect:'画面清晰度。选择后点“应用”。',drawingFadeSeconds:'标注在前后几帧逐渐显隐；0为关闭。',wheelFrames:'滚轮每格前进或后退几帧。',memoryMiB:'用于缓存画面的内存上限。',rateStep:'每次加速或减速的幅度。',showDrawings:'显示或隐藏标注，H也可切换。',drawingToolbar:'显示圈画按钮，也可用右键轮盘。',showCacheStrip:'绿色表示已放进内存的画面。'};
+  helps.gpuAcceleration='使用显卡加快播放和准备画面。不支持时自动使用CPU。';
   function hideHint(){clearTimeout(hintTimer);hintTimer=null;tooltip.hidden=true;}
   function help(n,id){if(!helps[id])return;n.onpointerenter=n.onfocus=()=>{hideHint();hintTimer=setTimeout(()=>{if(settings.hidden||!n.isConnected)return;tooltip.textContent=helps[id];tooltip.hidden=false;const r=n.getBoundingClientRect();tooltip.style.left=Math.max(8,Math.min(win.innerWidth-tooltip.offsetWidth-8,r.left))+'px';tooltip.style.top=Math.max(8,Math.min(win.innerHeight-tooltip.offsetHeight-8,r.bottom+6))+'px';},450);};n.onpointerleave=n.onblur=hideHint;}
   function button(label,fn){const b=make('button','shell-setting-choice',label);b.type='button';b.onclick=fn;return b;}

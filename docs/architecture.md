@@ -42,7 +42,7 @@ app装配/宿主生命周期 → UI发操作 → Session持有库/源快照和�
 | plugin/process-identity.cjs | Windows进程出生/后代只读证明；独占句柄核对后接管空writer记录；未知时保留，不终止进程、不调用Eagle API |
 | plugin/task-client.cjs、task-worker.cjs、native/task-host.cs | 窗口与后台请求、按回执合并最新位置/记录意图、Windows互斥与任务组；worker单队列处理同源抢占及维护/换源/关闭时batch收尾，客户端原租约借读；控制消息不传图片，历史基础见A-07 |
 | plugin/frame-pack.cjs | 校验集中JPEG/AVC帧包的纯布局及videoEncoding；物理文件读写仍归cache |
-| plugin/frame-index.cjs | 纯时间/源帧映射；整数 PTS、呈现编号与源时间关系 |
+| plugin/frame-index.cjs | 纯时间/源帧映射；整数PTS、呈现编号与源时间；播放取所在帧，交互用二分查找取最近帧，不改源身份 |
 | plugin/playback-common.js | 原RAM账本、倍速、邻域规划和覆盖范围纯规则；供UI/native-player使用，不含旧JPEG播放类 |
 | tests/、scripts/check.cjs | 隔离测试与统一检查；正式代码不依赖 prototypes，开发检查不进入产品 UI |
 
@@ -54,7 +54,7 @@ app装配/宿主生命周期 → UI发操作 → Session持有库/源快照和�
 - native-backend管理源身份/异步packet索引，native-reader/wire管理常驻原生进程、有界协议及关闭回执。重复/缺失PTS不猜测；定位/逐帧/标注基于实际源帧，旧代次不能覆盖。
 - 原片先可播放，whole-proxy后台连续生产一份H.264全I，完整帧数/时间映射/尺寸/内容核验后原子发布并同帧接管；不随鼠标重启。CPU/NVENC保留原配方，奇数尺寸用偶数编码/SAR恢复；2160p由编码器选level，旧尺寸维持5.1。
 - native-audio无损复制压缩音轨到有界stdout，逐包内容/PTS/DTS/有效边界/编码初始化核对；任务前后核对inspect的source.nativeStamp。零起点已验，其它形态保守回原声，源改变/取消不能静默回退。
-- Player先为收集/合并/Blob峰值预留，音轨上限剩余额度1/3且≤32MiB，完成按实际字节×2计费；关闭卸载、撤销URL、释放预算。播放不等待audio.play承诺才启动绘图，静止时钟不抢跑；暂停复用有效音频游标，显式seek清旧续播归属。
+- Player先为收集/合并/Blob峰值预留，音轨上限剩余额度1/3且≤32MiB，完成按实际字节×2计费；关闭卸载、撤销URL、释放预算。播放不等待audio.play承诺才启动绘图，静止时钟不抢跑；暂停复用有效音频游标，显式seek清旧续播归属。UI时间轴先经Session.loopFrameAt取得最近源帧，再以同一time/index画光标和seek；循环视图传入头尾ordinal边界，显式端点编辑仍用全范围。
 - 原生热帧单次通知/绘制，预算按kind增量统计；暂停/热拖动用同一reader闲时补邻域，冷目标抢占。最多4096邻域帧、受RAM/像素/在途额度限制；后台不画面、不改标注身份、不无限重试。JPEG仅已完成热目标豁免80ms静默期。
 
 ## 准备选择与取消

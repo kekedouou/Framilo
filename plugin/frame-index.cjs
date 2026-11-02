@@ -168,6 +168,13 @@ function frameAt(frames, time) {
   return Math.max(0, low - 1);
 }
 
+// Interactive targeting uses the nearest source PTS; clock playback keeps
+// frameAt's containing-frame semantics. Ties retain the earlier frame.
+function nearestFrame(frames, time) {
+  const before = frameAt(frames, time), after = before + 1;
+  return after < frames.length && frames[after].time - time < time - frames[before].time - 1e-12 ? after : before;
+}
+
 function stepIndex(frames, currentIndex, delta) {
   frameList(frames);
   if (!Number.isSafeInteger(currentIndex) || currentIndex < 0 || currentIndex >= frames.length || !Number.isSafeInteger(delta)) {
@@ -190,4 +197,4 @@ function audioStartPlan(mediaTime, audioStart, audioDuration, contextTime) {
   return { when: when, offset: offset };
 }
 
-module.exports = { buildIndex, validateIndex, frameAt, stepIndex, audioStartPlan };
+module.exports = { buildIndex, validateIndex, frameAt, nearestFrame, stepIndex, audioStartPlan };

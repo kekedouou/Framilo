@@ -79,6 +79,11 @@ test('button hints replace native titles after dwell and leave on click, blur an
  h.workspace.fire('focusin',{target:b});h.run();assert(!tip.hidden);h.win.fire('blur',{});assert(tip.hidden);
  h.workspace.fire('pointerover',{target:b});hints.destroy();assert.equal(h.timers.size,0);assert(!tip.isConnected);assert.equal(b.getAttribute('title'),'记录');
 });
+test('annotation marker tooltip is centred above its actual frame tick and clamps to the window',()=>{
+ const h=visualHarness(),b=h.node();b.setAttribute('title','标注');b.classList.contains=name=>name==='comment-marker';b.style.getPropertyValue=()=> '6px';b.getBoundingClientRect=()=>({left:100,top:200,right:138,width:38,height:38});
+ h.workspace.querySelectorAll=()=>[b];const hints=globalThis.EVAGraphite.createButtonHints(h.doc,h.win,h.workspace),tip=h.workspace.children[0];
+ h.workspace.fire('pointerover',{target:b});h.run();assert.equal(tip.style.left,'72px');assert.equal(tip.style.top,'158px');hints.destroy();
+});
 test('removing redundant drawing success does not suppress failures or unknown results',()=>{
  const h=harness();h.state.drawings={status:'ready',message:'圈画与文字已保存。',records:[]};h.update();assert.equal(h.el('drawingStatus').textContent,'');
  for(const message of ['保存失败，请重试。','保存结果未知，请核对。']){h.state.drawings={...h.state.drawings,message};h.update();assert.equal(h.el('drawingStatus').textContent,message);}h.ui.destroy();

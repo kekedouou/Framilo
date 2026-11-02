@@ -5,7 +5,7 @@ const { createUI } = require('../plugin/ui.js');
 const { visibleRange } = require('../plugin/timeline-view.js');
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const near = (a, b) => assert(Math.abs(a - b) < 1e-7, a + ' != ' + b);
-function harness(enabled = false) {
+function harness(enabled = false, shell = null) {
   const h = { width: 800, calls: [], paints: [], measurements: 0, intervals: new Map(), timers: new Map() };
   let serial = 0;
   function element(tag = 'div') {
@@ -41,7 +41,7 @@ function harness(enabled = false) {
     async seek(time, options) { h.calls.push(['seek', time, options]); h.state.state = 'paused';
       const index = options.index ?? Math.max(0, Math.min(99, Math.floor(time * 10 + 1e-8)));
       h.state.playback = { ...h.state.playback, time: index / 10, frameOrdinal: index }; h.update(); return { status: 'drawn' }; },
-    loopFrameAt(time, bounds) { const ordinal = Math.max(bounds.minOrdinal ?? 0, Math.min(bounds.maxOrdinal ?? 99, bounds.ordinal ?? Math.floor(time * 10 + 1e-8)));
+    loopFrameAt(time, bounds) { const ordinal = Math.max(bounds.minOrdinal ?? 0, Math.min(bounds.maxOrdinal ?? 99, bounds.ordinal ?? require('../plugin/frame-index.cjs').nearestFrame(Array.from({length:100},(_,i)=>({time:i/10})),time)));
       return { ordinal, time: ordinal / 10 }; },
     async applyLoopRange(value) { h.calls.push(['apply', value]); h.state.playback.transport.loop = { ...value, valid: true, enabled: true,
       startTime: value.startOrdinal / 10, endTime: value.endOrdinal / 10, endBoundary: (value.endOrdinal + 1) / 10 };
@@ -55,6 +55,7 @@ function harness(enabled = false) {
     cacheCoverageSnapshot: () => ({ sessionEpoch: h.state.epoch, epoch: 1, revision: 1, duration: 10, decodedFrames: 50, totalFrames: 100,
       ranges: [{ start: 0, end: 1 }, { start: 2, end: 3 }, { start: 7, end: 8 }] })
   };
+  if (shell) h.win.EVAGraphite = { createShell: () => shell };
   h.ui = createUI({ document: h.doc, window: h.win });
   h.el('timeline').setAttribute('role', 'slider'); h.ui.bindSession(h.session); h.update();
   h.key = (key, extra = {}) => h.win.fire('keydown', { key, code: 'Key' + key, ...extra });
@@ -121,7 +122,7 @@ async function main() {
     near(parseFloat(markers[1].style.left), (3 - range.start) / (range.end - range.start) * 100);
     assert.equal(h.paints.length, 1); near(h.paints[0][0], (2 - range.start) / (range.end - range.start) * 800);
     h.el('timeline').fire('pointerdown', { clientX: 500 }); await flush();
-    near(h.calls.find(c => c[0] === 'seek')[1], (range.start + range.end) / 2);
+    near(h.calls.find(c => c[0] === 'seek')[1], 3);
     assert.equal(h.el('timeHint').textContent, h.el('currentTime').textContent);
     h.win.fire('pointerup', { clientX: 500, buttons: 0 }); h.key('L'); await flush();
     assert.strictEqual(h.el('commentMarkers').children, markers); assert(markers.every(m => !m.hidden)); h.ui.destroy();

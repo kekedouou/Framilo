@@ -2,7 +2,7 @@
 (async()=>{'use strict';
  const clone=x=>JSON.parse(JSON.stringify(x)), source={id:'preview-synthetic',name:'Framilo · 合成交互样本',filePath:'/sample.mp4',sha256:'e'.repeat(64)},libraryPath='/preview-only';
  const frames=Array.from({length:360},(_,id)=>({id,time:id/30,end:(id+1)/30,file:'sample.mp4',bytes:1}));
- const defaults=()=>({comments:[{id:'sample-1',time:1,text:'观察运动方向'},{id:'sample-2',time:4,text:'同帧文字与圈画可一起编辑'},{id:'sample-3',time:8,text:'检查片段范围和记录切换'}],records:[],quality:'720p',ramMiB:1024,interaction:PreviewModules.load('preferences.cjs').DEFAULT_INTERACTION,visible:true,styles:EVADrawingModel.defaultStyles(),version:0});
+ const defaults=()=>({comments:[{id:'sample-1',time:1,text:'观察运动方向'},{id:'sample-2',time:4,text:'同帧文字与圈画可一起编辑'},{id:'sample-3',time:8,text:'检查片段范围和记录切换'}],records:[],quality:PreviewModules.load('preferences.cjs').defaultQuality({width:screen.width,height:screen.height,scaleFactor:devicePixelRatio||1}),ramMiB:1024,interaction:PreviewModules.load('preferences.cjs').DEFAULT_INTERACTION,visible:true,styles:EVADrawingModel.defaultStyles(),version:0});
  const scenario=new URLSearchParams(location.search).get('scenario'),dense=scenario==='dense',storageKey='motionote-ui-preview-v1'+(scenario?'-'+scenario:'');
  const sample=()=>{const value=defaults();if(dense)value.comments.splice(2,0,{id:'dense-same',time:4,text:'同帧：检查亮部边缘'},{id:'dense-1',time:4+1/30,text:'运动开始扩散'},{id:'dense-2',time:4+2/30,text:'轮廓变化'},{id:'dense-3',time:4.1,text:'拖尾开始消失'});return value;};
  let data;try{data=JSON.parse(sessionStorage.getItem(storageKey))||sample();}catch(_){data=sample();}

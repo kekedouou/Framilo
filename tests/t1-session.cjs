@@ -426,8 +426,8 @@ async function main() {
     await h.session.loadSelected();await h.session.seek(2);await h.session.play();const player=h.players[0],transport={rate:.5,loop:{startId:0,endId:2,enabled:true}};player.change({transport});
     assert.equal((await h.session.setPlaybackSettings({ramMiB:1024,previewQuality:'720p',forwardPredecode:true,wheelFrames:5,showCacheStrip:false})).status,'applied');
     assert.strictEqual(h.players[0],player);assert.equal(h.prepared.length,1);assert.equal(h.calls,1);assert.equal(h.session.snapshot().state,'paused');assert.equal(h.session.snapshot().playback.frameId,2);
-    assert.deepEqual(h.session.snapshot().playback.transport,transport);assert.deepEqual(h.session.snapshot().interactionSettings,{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false,showProxyStrip:false});assert(!h.events.some(e=>e.startsWith('forward-')));
-    await h.session.setPlaybackSettings({ramMiB:1024,previewQuality:'1080p'});assert.deepEqual(h.session.snapshot().interactionSettings,{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false,showProxyStrip:false});await h.session.close();
+    assert.deepEqual(h.session.snapshot().playback.transport,transport);assert.deepEqual(h.session.snapshot().interactionSettings,{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:true,showProxyStrip:false});assert(!h.events.some(e=>e.startsWith('forward-')));
+    await h.session.setPlaybackSettings({ramMiB:1024,previewQuality:'1080p'});assert.deepEqual(h.session.snapshot().interactionSettings,{wheelFrames:5,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:true,showProxyStrip:false});await h.session.close();
   });
   await test('Invalid or failed interaction settings keep the old preferences/player; closing or switching during pause prevents writes',async()=>{
     for(const abort of ['close','switch']){
@@ -441,7 +441,7 @@ async function main() {
     }
     const prefs={snapshot:()=>({ramMiB:1024}),quality:()=> '720p',preview(){},save(){throw Error('write refused');}};
     const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>({...m.makeInfo(v),preview:{quality:o.previewQuality}})});assert.equal((await h.session.loadSelected()).status,'ready');await assert.rejects(()=>h.session.setPlaybackSettings({ramMiB:1024,wheelFrames:5,showCacheStrip:false}));
-    assert.equal(h.players.length,1);assert.equal(h.session.snapshot().state,'paused');assert.deepEqual(h.session.snapshot().interactionSettings,{wheelFrames:1,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false,showProxyStrip:false});await h.session.close();
+    assert.equal(h.players.length,1);assert.equal(h.session.snapshot().state,'paused');assert.deepEqual(h.session.snapshot().interactionSettings,{wheelFrames:1,showCacheStrip:false,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:true,showProxyStrip:false});await h.session.close();
   });
   await test('Only changing rate step pauses in place without recreating media or losing a nonpreset speed/range',async()=>{
     let interaction={wheelFrames:1,showCacheStrip:true,rateStep:.1,drawingFadeSeconds:.25,drawingToolbar:false,showProxyStrip:false},saves=0;
