@@ -5,7 +5,7 @@
   // Page scripts must use the helper already loaded by index.html instead.
   const view = typeof window === 'object' && window ? window : root && root.document ? root : null;
   const api = factory(view ? view.EVALoopSelection : require('./loop-selection.js'),
-    view ? view.EVATimelineView : require('./timeline-view.js'), view ? view.EVAPlayer : require('./player.js'),
+    view ? view.EVATimelineView : require('./timeline-view.js'), view ? (view.EVAPlaybackCommon || view.EVAPlayer) : require('./playback-common.js'),
     view ? view.EVADrawingUI : require('./drawing-ui.js'), view ? view.EVAScreenGestureUI : require('./screen-gesture-ui.js'),
     view ? view.EVAContextWheel : require('./context-wheel.js'));
   if (typeof module === 'object' && module.exports) module.exports = api;

@@ -13,7 +13,9 @@ const NAMES = [...RUNTIME, 'README.md', 'CHANGELOG.md', 'BUILD-INFO.json'].sort(
 // deliberately separate from the frozen Beta distribution recipe and its 2MiB cap.
 const NATIVE_LIMIT = 64 * 1024 ** 2, NATIVE_ID = 'EVAVIDEOANALYSIS20261011';
 const NATIVE_VERSION = require('../plugin/manifest.json').version;
-const NATIVE_RUNTIME = Object.freeze([...RUNTIME, 'temporary-media.cjs', 'media-space.cjs', 'legacy-media-cleanup.cjs', 'native-backend.cjs', 'native-audio.cjs', 'native-reader.cjs', 'native-wire.cjs',
+const NATIVE_EXCLUDED = new Set(['player.js','proxy-decoder.js','scrub-preview.js','quick-preview.js','record-previews.js',
+  'performance-core.cjs','performance-stages.cjs','performance-runtime.cjs','performance-view.js','performance-window.html','performance-window.js','performance.css','live-resources.cjs']);
+const NATIVE_RUNTIME = Object.freeze([...RUNTIME.filter(name => !NATIVE_EXCLUDED.has(name)), 'playback-common.js', 'temporary-media.cjs', 'media-space.cjs', 'legacy-media-cleanup.cjs', 'native-backend.cjs', 'native-audio.cjs', 'native-reader.cjs', 'native-wire.cjs',
   'native-player.js', 'native-renderer.js', 'whole-proxy.cjs', 'bin/filmcraft-media.exe',
   'bin/filmcraft-media.build.json', 'bin/FilmCraft-LICENSE-MIT', 'bin/FilmCraft-LICENSE-APACHE',
   'bin/FilmCraft-NOTICE', 'bin/filmcraft-third-party.json', 'bin/filmcraft-third-party.txt']);
@@ -95,7 +97,8 @@ function validateRuntime(files, options = {}) {
 function validateNativeBinary(files) {
   const meta = JSON.parse(files['bin/filmcraft-media.build.json']);
   assert.deepStrictEqual(Object.keys(meta).sort(), ['schema', 'created', 'upstream', 'upstreamCommit', 'version', 'protocol',
-    'bridgeSha256', 'patchSha256', 'binarySha256', 'binaryBytes', 'dependencyNoticesSha256', 'compiler', 'linker', 'buildLog'].sort(), 'Unexpected native build metadata.');
+    'bridgeSha256', 'patchSha256', 'binarySha256', 'binaryBytes', 'dependencyNoticesSha256', 'compiler', 'linker', 'buildLog', ...(Object.hasOwn(meta, 'wholeProgram') ? ['wholeProgram','stripped'] : [])].sort(), 'Unexpected native build metadata.');
+  if(Object.hasOwn(meta,'wholeProgram')){assert(['false','thin'].includes(meta.wholeProgram));assert.equal(meta.stripped,'symbols');}
   assert.equal(meta.schema, 1); assert.equal(meta.protocol, 2); assert.equal(meta.version, '0.13.0');
   assert.equal(meta.upstream, 'https://github.com/storytold/filmcraft'); assert.equal(meta.upstreamCommit, FILMCRAFT_COMMIT);
   assert(Number.isFinite(Date.parse(meta.created)), 'Invalid native build time.');

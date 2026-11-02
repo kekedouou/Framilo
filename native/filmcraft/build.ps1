@@ -1,4 +1,4 @@
-param([string]$OutputDirectory = '')
+param([string]$OutputDirectory = '', [ValidateSet('false','thin')][string]$WholeProgram = 'thin')
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $e44Root = [IO.Path]::GetFullPath((Join-Path $projectRoot 'verification-runs/e44'))
@@ -18,8 +18,9 @@ $env:CARGO_HOME='Q:\filmcraft-tools\cargo'
 $env:PATH="Q:\filmcraft-tools\shims;$env:CARGO_HOME\bin;$env:PATH"
 $env:CARGO_TARGET_DIR='Q:\filmcraft-tools\target'
 $env:CARGO_BUILD_JOBS='2'
-$env:CARGO_PROFILE_RELEASE_LTO='false'
+$env:CARGO_PROFILE_RELEASE_LTO=$WholeProgram
 $env:CARGO_PROFILE_RELEASE_DEBUG='0'
+$env:CARGO_PROFILE_RELEASE_STRIP='symbols'
 $env:CARGO_INCREMENTAL='0'
 $used = (Get-ChildItem -LiteralPath $e44Root -Recurse -File | Measure-Object Length -Sum).Sum
 if ($used -gt 7.5GB) { throw 'Approaching 8 GiB cumulative developer budget' }
@@ -51,7 +52,7 @@ $buildInfo = [ordered]@{
     bridgeSha256=(Get-FileHash -LiteralPath $bridge).Hash.ToLowerInvariant(); patchSha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'patch-upstream.cjs')).Hash.ToLowerInvariant();
     binarySha256=(Get-FileHash -LiteralPath (Join-Path $OutputDirectory 'filmcraft-media.exe')).Hash.ToLowerInvariant(); binaryBytes=(Get-Item -LiteralPath (Join-Path $OutputDirectory 'filmcraft-media.exe')).Length;
     dependencyNoticesSha256=(Get-FileHash -LiteralPath (Join-Path $OutputDirectory 'filmcraft-third-party.txt')).Hash.ToLowerInvariant();
-    compiler='rustc 1.95.0 x86_64-pc-windows-gnu'; linker='rust-lld / ld.lld / link-self-contained'; buildLog=(Split-Path $logPath -Leaf)
+    compiler='rustc 1.95.0 x86_64-pc-windows-gnu'; linker='rust-lld / ld.lld / link-self-contained'; wholeProgram=$WholeProgram; stripped='symbols'; buildLog=(Split-Path $logPath -Leaf)
 }
 [IO.File]::WriteAllText((Join-Path $OutputDirectory 'filmcraft-media.build.json'), (($buildInfo | ConvertTo-Json) -replace "`r`n", "`n"), [Text.UTF8Encoding]::new($false))
 Write-Output "Built standalone native media bridge: $OutputDirectory"

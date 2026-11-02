@@ -23,7 +23,7 @@
 | 未来需求、优先级与待决项 | [路线图](roadmap.md) |
 | 某阶段方案、实测或失败 | [实验索引](experiments/README.md)，只读目标阶段 |
 | 自用安装/恢复、历史发布 | [Framilo自用](releases/framilo-private.md)、[E49冻结](releases/e49-frozen-2026-10-30.md)、[Beta2发行](releases/v0.1.0-beta.2.md) |
-| 追溯旧规则与旧入口 | [整理与历史索引](progress/2026-10-31-document-reorganization.md)；[退休性能源码](history/retired-performance-2026-10-31/README.md)（只读，不执行） |
+| 追溯旧规则与旧入口 | [整理索引](progress/2026-10-31-document-reorganization.md)；[旧性能体系](history/retired-performance-2026-10-31/README.md)、[退役监测](history/retired-monitor-e55/README.md)（只读，不执行） |
 
 ## 命令及副作用
 | 命令 | 用途与边界 |

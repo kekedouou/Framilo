@@ -6,7 +6,7 @@ const { pathToFileURL } = require('url');
 const SCHEMA = 'eva-window-host-entry-v1', LIMIT = 256 * 1024;
 const OUTPUTS = ['index.local.html', 'manifest.json', 'logo.local.png'];
 const SOURCES = ['plugin/manifest.json', 'plugin/index.html', 'plugin/styles.css', 'plugin/logo.png',
-  ...['app.js', 'ui.js', 'player.js', 'frame-index.cjs', 'diagnostics.cjs', 'session.cjs', 'eagle.cjs', 'media.cjs', 'cache.cjs', 'process-identity.cjs', 'preferences.cjs'].map(n => 'plugin/' + n),
+  ...['app.js', 'ui.js', 'playback-common.js', 'frame-index.cjs', 'diagnostics.cjs', 'session.cjs', 'eagle.cjs', 'media.cjs', 'cache.cjs', 'process-identity.cjs', 'preferences.cjs'].map(n => 'plugin/' + n),
   'scripts/prepare-window-host.cjs', 'tests/host/window/bootstrap.js', 'tests/support/window-launch.cjs', 'tests/support/window-host.cjs',
   'tests/support/window-resource.cjs', 'tests/support/window-annotations.cjs', 'tests/support/t0-protocol.cjs', 'tests/support/t0-gate.cjs', 'tests/support/t2-evidence.cjs',
   'tests/support/ram-diagnostic.cjs', 'tests/support/window-reuse.cjs'];
@@ -34,7 +34,7 @@ function paths(repo, io) {
 function sourceHashes(root, io) { return Object.fromEntries(SOURCES.map(name => [name, sha(read(path.join(root, name), io))])); }
 function render(html, plugin, hashes, mode = 'performance') {
   let out = html;
-  for (const name of ['styles.css', 'player.js', 'ui.js', 'app.js']) {
+  for (const name of ['styles.css', 'playback-common.js', 'ui.js', 'app.js']) {
     const attribute = name.endsWith('.css') ? 'href' : 'src', token = attribute + '="' + name + '"';
     if (out.split(token).length !== 2) throw new Error('Product HTML entry changed: ' + name);
     const url = pathToFileURL(path.join(plugin, name)).href + '?verify=' + hashes['plugin/' + name];
@@ -89,7 +89,8 @@ function verify(repo, io = fs, verifySources = true) {
   const beforeRam = JSON.stringify(SOURCES.filter(name => name !== 'tests/support/ram-diagnostic.cjs').sort());
   const beforePreferences = JSON.stringify(SOURCES.filter(name => name !== 'plugin/preferences.cjs').sort());
   const beforeReuse = JSON.stringify(SOURCES.filter(name => name !== 'tests/support/window-reuse.cjs').sort());
-  const knownSourceList = keys === current || !verifySources && (keys === previous || keys === preceding || keys === beforeAnnotations || keys === beforeRam || keys === beforePreferences || keys === beforeReuse);
+  const beforeSlimming = JSON.stringify(SOURCES.map(name => name === 'plugin/playback-common.js' ? 'plugin/player.js' : name).sort());
+  const knownSourceList = keys === current || !verifySources && (keys === previous || keys === preceding || keys === beforeAnnotations || keys === beforeRam || keys === beforePreferences || keys === beforeReuse || keys === beforeSlimming);
   if (marker.mode !== undefined && !['performance', 'resource', 'annotations', 'preferences', 'reuse', 'window-checks'].includes(marker.mode) || !validApproval(marker.writeApproval) ||
       !validRam(marker.ramDiagnostic) || marker.ramDiagnostic && !['performance', 'reuse'].includes(marker.mode) ||
       marker.mode === 'reuse' && (!marker.ramDiagnostic || marker.ramDiagnostic.schema !== 'T2-ram-host-v2')) throw new Error('Unknown measurement protocol.');

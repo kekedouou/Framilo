@@ -1,0 +1,54 @@
+{
+  "sourceCommit": "14edb4e",
+  "reason": "User approved removing the monitor; private regression source only",
+  "files": [
+    {
+      "source": "plugin/performance-core.cjs",
+      "destination": "docs/history/retired-monitor-e55/plugin/performance-core.cjs",
+      "originalSha256": "3df0b862992c5cf5ab4230416f11a6db1eab209d9bcc9e06db929e985bf4605f",
+      "archivedSha256": "3df0b862992c5cf5ab4230416f11a6db1eab209d9bcc9e06db929e985bf4605f"
+    },
+    {
+      "source": "plugin/performance-stages.cjs",
+      "destination": "docs/history/retired-monitor-e55/plugin/performance-stages.cjs",
+      "originalSha256": "35e0cfc8a7520dbb38c61fb073486651b7b264e95fb241c4ae9f79f7d3d82f72",
+      "archivedSha256": "35e0cfc8a7520dbb38c61fb073486651b7b264e95fb241c4ae9f79f7d3d82f72"
+    },
+    {
+      "source": "plugin/performance-runtime.cjs",
+      "destination": "docs/history/retired-monitor-e55/plugin/performance-runtime.cjs",
+      "originalSha256": "8a03143e033aca55e9aeb1697a642db8a36e5a575d365c3f6da80acdc6f7b879",
+      "archivedSha256": "8a03143e033aca55e9aeb1697a642db8a36e5a575d365c3f6da80acdc6f7b879"
+    },
+    {
+      "source": "plugin/performance-view.js",
+      "destination": "docs/history/retired-monitor-e55/plugin/performance-view.js",
+      "originalSha256": "15fc5bb9a399f5a346e6ad972895ce78db61ec3a6d706a46b59780d39bb3f845",
+      "archivedSha256": "15fc5bb9a399f5a346e6ad972895ce78db61ec3a6d706a46b59780d39bb3f845"
+    },
+    {
+      "source": "plugin/performance-window.html",
+      "destination": "docs/history/retired-monitor-e55/plugin/performance-window.html",
+      "originalSha256": "84bc9a35678ce20e668efe95faedee8f504a6e215b97e5f4c2b4030a2737d9f9",
+      "archivedSha256": "84bc9a35678ce20e668efe95faedee8f504a6e215b97e5f4c2b4030a2737d9f9"
+    },
+    {
+      "source": "plugin/performance-window.js",
+      "destination": "docs/history/retired-monitor-e55/plugin/performance-window.js",
+      "originalSha256": "a3bb9fdd9e72ffc1a58cdc220ef6aaa10f9366c62f3e24cd3530ec8db75eda51",
+      "archivedSha256": "a3bb9fdd9e72ffc1a58cdc220ef6aaa10f9366c62f3e24cd3530ec8db75eda51"
+    },
+    {
+      "source": "plugin/performance.css",
+      "destination": "docs/history/retired-monitor-e55/plugin/performance.css",
+      "originalSha256": "430403d11a1eaa42af59d6a4fe5206e787d938b9ee0a8418e57d7be6e1350b2e",
+      "archivedSha256": "430403d11a1eaa42af59d6a4fe5206e787d938b9ee0a8418e57d7be6e1350b2e"
+    },
+    {
+      "source": "plugin/live-resources.cjs",
+      "destination": "docs/history/retired-monitor-e55/plugin/live-resources.cjs",
+      "originalSha256": "9f6b401f62c704fea1c9f2ea23b9f643156fd17da826ede2caa9349ed7118c01",
+      "archivedSha256": "80d73e61c2069e030dda925c8f41b439535eb95fbd4aa0d9815e5adbf823d365"
+    }
+  ]
+}

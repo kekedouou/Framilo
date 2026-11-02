@@ -23,7 +23,7 @@
   }
   let ui = window.EVAUI.createUI({hostAction});
   let session = null, diagnostics = null, initializing = false, closed = false;
-  let performanceMonitor = null, performanceView = null, activePlayer = null;
+  let activePlayer = null;
   let closeTask = null, allowUnload = false, exitScheduled = false;
   let hideTask = Promise.resolve(), closeFailure = null;
   let drawingCloseIntent = null, drawingLoadSequence = 0;
@@ -153,48 +153,26 @@
       const exports = { create: (...args) => exportOperation('create', args), publish: (...args) => exportOperation('publish', args),
         discard: (...args) => exportOperation('discard', args) };
       session = createSession({ eagleAdapter: sessionAdapter, media, cache, now, memoryPreferences: preferences, annotationStore, exports,
-        createPreviewServices: ({ info, player, isCurrent, onChange, read, busy, register }) => {
-          // The native core owns its exact thumbnails and has a single display
-          // output; old video/sparse/segment preview services never attach to it.
-          if (info.videoEncoding === 'filmcraft-native') return {};
-          const { budget, evict } = player.auxiliaryBudget();
-          const quick = info.videoEncoding ? window.EVAQuickPreview.createQuickPreview({ canvas: ui.canvas, info, budget, evict, onChange,
-              onPerformance: event => performanceMonitor?.observe(event, { sessionEpoch: session.snapshot().epoch }),
-              sourceUrl: require('url').pathToFileURL(info.source.filePath).href,
-              scrubSource:{find:time=>backend.cache.findScrubFrame(info,time),read:frame=>backend.cache.readScrubFrame(info,frame)},
-              isCurrent: () => isCurrent() && (player.snapshot().pendingTargets > 0 || player.snapshot().state === 'loading') }) : null;
-          register('quick', quick);
-          const records = window.EVARecordPreviews.createRecordPreviews({ info, budget, evict, read, isCurrent, busy });
-          register('records', records); return { quick, records };
-        },
+        // Exact previews/thumbnails belong to the native player; no legacy overlay service.
+        createPreviewServices: () => ({}),
         createPlayer: options => {
           const value = session.snapshot(), identity = value.sourceIdentity;
           const binding = Object.freeze({ sessionEpoch: value.epoch, libraryEpoch: value.libraryEpoch,
             itemId: identity && identity.itemId, sourceSha256: identity && identity.sha256 });
           const memory = preferences.snapshot();
           const nativeInfo = options.mediaInfo?.videoEncoding === 'filmcraft-native' ? options.mediaInfo : null;
-          const Player = nativeInfo ? window.EVANativePlayer?.Player : window.EVAPlayer.Player;
+          const Player = nativeInfo ? window.EVANativePlayer?.Player : window.EVAPlayer?.Player;
           if (!Player) throw Error('原生播放器组件尚未加载，请重新打开插件。');
           activePlayer = new Player({ ...options,
             ...(nativeInfo ? { nativeRuntime: nativeInfo.nativeRuntime, gpuDrawing: preferences.gpuDrawing() } : {}),
-            createFrameDecoder: settings => { if (!window.EVAProxyDecoder) throw Error('帧内代理解码组件没有加载，请切换JPEG序列。'); return window.EVAProxyDecoder.createProxyDecoder({...settings, hardwareAcceleration: preferences.decoderPreference?.() || 'prefer-hardware'}); }, ramBytes: memory.ramBytes, compressedRamBytes: memory.compressedRamBytes,
+            ramBytes: memory.ramBytes, compressedRamBytes: memory.compressedRamBytes,
             forwardPredecode: preferences.forwardPredecode(), canvas: ui.canvas, frameIndex,
-            emit: event => { performanceMonitor?.observe(event, binding); diagnostics.publish('player', () => ({ binding, event })); } });
-          activePlayer.observeCanvas = !!performanceMonitor?.enabled();
-          activePlayer.observePerformance = !!performanceMonitor?.enabled();
+            emit: event => { diagnostics.publish('player', () => ({ binding, event })); } });
+          activePlayer.observeCanvas = false;
+          activePlayer.observePerformance = false;
           return activePlayer;
         }, onChange: snapshot => { ui.update(snapshot); windowFit?.update(snapshot); diagnostics.publish('state', snapshot); } });
       ui.bindSession(session);
-      performanceView = window.EVAPerformanceView?.create({
-        createMonitor: onUpdate => {
-          const api = require(path.join(root, 'performance-runtime.cjs'));
-          performanceMonitor = api.createMonitor({ root,
-            context: api.playerContext(() => activePlayer, () => session.snapshot()),
-            seek: (time, settings) => session.seek(time, settings), pause: () => session.pause(),
-            onUpdate: value => { if (activePlayer) activePlayer.observeCanvas = activePlayer.observePerformance = value.state !== 'off'; onUpdate(value); } });
-          return performanceMonitor;
-        }
-      });
       drawingLifetime = require(path.join(root, 'drawing-lifetime.cjs')).createDrawingLifetime({
         store: annotationStore, adapter,
         protectedItem: () => session?.snapshot().sourceIdentity,
@@ -221,13 +199,9 @@
       // Arm the independent deadline before awaiting potentially stuck media
       // cleanup. Player reads still drain before the owner releases its leases.
       try { if (backend) backend.beginClose(); } catch (error) { failure = error; }
-      const reportClose = Promise.resolve().then(() => performanceView?.destroy()).catch(error => {
-        diagnostics?.publish('monitor-close-failed', { message: String(error.message).slice(0,512) });
-      });
       try { result = session ? await session.close() : { status: 'closed' }; } catch (error) { failure = error; }
       try { if (backend) await backend.close(); } catch (error) { failure = failure || error; }
       if(!failure&&temporaryMedia)try{await temporaryMedia.close();temporaryMedia=null;await backend?.retireLegacy?.();}catch(error){failure=error;}
-      await reportClose;
       if (failure) throw failure;
       if (result?.status === 'error') throw new Error(result.error?.message || '资源释放未完成');
       return result;

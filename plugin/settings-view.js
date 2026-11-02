@@ -31,7 +31,7 @@
   function button(label,fn){const b=make('button','shell-setting-choice',label);b.type='button';b.onclick=fn;return b;}
   const triggers=new Map();
   for(const id of ['qualitySelect','display','drawingFadeSeconds','wheelFrames','advanced']){const b=button(names[id],()=>openPath(path[0]===id?[]:[id]));b.setAttribute('aria-expanded','false');b.dataset.setting=id;if(id==='advanced')b.classList.add('shell-settings-advanced');help(b,id);body.append(b);triggers.set(id,b);}
-  const apply=find('memoryApply');move(footer,apply);move(footer,find('performanceMonitor'));
+  const apply=find('memoryApply');move(footer,apply);
   function openPath(next){cancelScrub();path=next;signature='';hideHint();render();position();}
   function restoreControls(){for(const {n,parent,next} of placements)if(panels.some(p=>p.node.contains(n)))parent.insertBefore(n,next?.parentNode===parent?next:null);}
   function toggle(parent,id,label){const row=make('label','shell-setting-row is-toggle'),text=make('span','',label);row.append(text);move(row,find(id));help(row,id);parent.append(row);}

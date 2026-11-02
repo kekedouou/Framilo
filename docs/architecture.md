@@ -6,7 +6,7 @@
 ## 运行链与数据边界
 app装配/宿主生命周期 → UI发操作 → Session持有库/源快照和任务代次 → Eagle适配、媒体/缓存、播放器分别执行 → UI显示状态。
 只有eagle调用素材/标注API；UI不直接读写素材或媒体目录，媒体不自行淘汰文件，缓存不调UI/素材API。入口不承载这些业务。
-原片及完整代理统一FilmCraft原生读者，整数源PTS/序号及实际帧回执；音频是唯一播放时钟，YUV/WebGL准确绘制并可同帧CPU回退。日常入口统一proxy，旧JPEG代码保留共享依赖/回归，不再作为格式兼容选择。
+原片及完整代理统一FilmCraft原生读者，整数源PTS/序号及实际帧回执；音频是唯一播放时钟，YUV/WebGL准确绘制并可同帧CPU回退。日常入口统一proxy，共用规则抽入playback-common；旧JPEG前端退出HTML与打包，只供开发回归，不作为格式兼容选择。
 
 ## 现行模块地图
 | 文件 | 职责与边界 |
@@ -43,13 +43,12 @@ app装配/宿主生命周期 → UI发操作 → Session持有库/源快照和�
 | plugin/task-client.cjs、task-worker.cjs、native/task-host.cs | 窗口与后台请求、按回执合并最新位置/记录意图、Windows互斥与任务组；worker单队列处理同源抢占及维护/换源/关闭时batch收尾，客户端原租约借读；控制消息不传图片，历史基础见A-07 |
 | plugin/frame-pack.cjs | 校验集中JPEG/AVC帧包的纯布局及videoEncoding；物理文件读写仍归cache |
 | plugin/frame-index.cjs | 纯时间/源帧映射；整数 PTS、呈现编号与源时间关系 |
-| plugin/player.js | JPEG及历史播放器；当前proxy模式使用native-player。Canvas、Web Audio、旧代理解码注入与调度；通过缓存读取/预算句柄取得资源，不调用标注API |
+| plugin/playback-common.js | 原RAM账本、倍速、邻域规划和覆盖范围纯规则；供UI/native-player使用，不含旧JPEG播放类 |
 | tests/、scripts/check.cjs | 隔离测试与统一检查；正式代码不依赖 prototypes，开发检查不进入产品 UI |
 
 | plugin/media-policy.cjs、load-decisions.cjs | 纯格式/时长/体积策略与Session持有的可取消选择；不写媒体/Eagle，绑定任务代次 |
 | plugin/proxy-storage.cjs | 整片代理独立预算、文件归属、读者租约、最近使用和安全淘汰；不碰原视频或标注 |
-| plugin/performance-runtime.cjs、performance-core.cjs、performance-stages.cjs、live-resources.cjs | 有界即时等待/资源观察与采样生命周期；关闭取消，旧源结果不发布 |
-| plugin/performance-view.js、performance-window.html/js、performance.css | 独立即时监测界面；无旧记录/报告/标准测试产品流程 |
+| docs/history/retired-monitor-e55/ | 退役监测源码，仅供开发回归；正式入口、打包及播放器不依赖它 |
 
 ## 媒体、音频与调度
 - native-backend管理源身份/异步packet索引，native-reader/wire管理常驻原生进程、有界协议及关闭回执。重复/缺失PTS不猜测；定位/逐帧/标注基于实际源帧，旧代次不能覆盖。
@@ -75,18 +74,17 @@ eagle.drawingDeletion唯一核对当前库API、普通images/<id>.info目录缺�
 - 清理保护当前源所有画质、活动读写和未知文件；进程归属以出生/后代/独占访问证明，不凭PID消失或锁年龄删除。文件整理见[F规则](development-plan.md#文件整理f-01f-07)。
 - Session等待实际取消、子进程/流/读者/租约/缓存收尾，宿主关闭请求不等同完成；未知结果/草稿保留。偏好、圈画和永久标注独立于可淘汰缓存；偏好原子保存、旧格式兼容和全部读写端见验证协议。
 
-## 即时监测
-usage用异步lstat/realpath/opendir逐文件扫描，支持AbortSignal；单文件消失只跳过该文件，不归零既有累计。
-资源约2.5秒采样、磁盘至少5秒校准，不堆积扫描；关监测取消扫描/自有采样进程，源切换旧结果失效。相同事件不重算快照，等待时间仍每100ms更新。分类口径和验证见[工作流](performance/WORKFLOW.md)。
-Session仅在释放成功后将SELECTION_EMPTY映射正常empty；SDK/释放故障保持error，不隐藏故障。
+## 内部诊断与开发检查
+用户监测窗口和设置入口已删除，app不再创建采样器或传递监测开关；按需订阅的diagnostics仍供开发定位问题。播放器资源账本、计时与安全护栏保留。退役源/迁移摘要见[监测归档](history/retired-monitor-e55/README.md)，历史测试只读该归档，不回接产品。
+Session仅在释放成功后将SELECTION_EMPTY映射正常empty；SDK/释放故障保持error。
 
 ## 临时媒体与开发预览
 - `temporary-media.cjs`为每个窗口建立`cache/sessions-v1/<随机id>`，登记owner/启动身份/子进程意图；全程生成路径局限其中。关闭必须先停止原生读者、探测与编码子进程，再核验目录归属并原子改名为retiring后删除；未知文件/活动进程/不完整出生身份保留。无遗留时身份查询异步，不阻塞首帧或关闭；恢复旧会话才使用完整进程快照。
 - `media-space.cjs`统一十进制1 GB累计确认、2 GiB物理余量、100 GiB内部保护与跨窗口原子预留；预留与输出字节上限都由生成层执行，UI不直接计数。`space.json`在任务终止后释放，崩溃由owner恢复处理。
 - `legacy-media-cleanup.cjs`在正常关闭新运行链后，调用旧cache所有权/读者检查清理已确认的旧JPEG与完整代理；旧PID-only读者记录缺出生证据时保护，不猜测删除。旧cache不再复用，首次升级的旧数据在首次正常关闭迁移。原片、annotation-data、偏好和验收证据不进入删除白名单。
-- `scripts/frontend-preview.cjs`仅开发使用：loopback随机令牌/Host-Origin/GET白名单；共享正式HTML/CSS/UI和Session，`scripts/preview`只替换播放器与Eagle/存储适配。示例写入sessionStorage，不进入产品包。原生窗控、GPU、缓存清理及性能入口禁用；浏览器样本不能证明原生精度、音画、缓存或Eagle数据读写。
+- `scripts/frontend-preview.cjs`仅开发使用：loopback随机令牌/Host-Origin/GET白名单；共享正式HTML/CSS/UI和Session，`scripts/preview`只替换播放器与Eagle/存储适配。示例写入sessionStorage，不进入产品包。原生窗控、GPU、缓存清理禁用；浏览器样本不能证明原生精度、音画、缓存或Eagle数据读写。
 
-## JPEG保留与退休模块
+## JPEG开发保留与退休模块
 | 模块 | 保留用途 |
 | --- | --- |
 | plugin/long-media.cjs | JPEG及历史分段共享实现（原生不调用分段链）；源帧索引、JPEG或全IDR AVC/PCM分段与源身份核对；120000帧/64MiB索引上限，持有同源batch、分段取消与统一关闭；音轨起点/两秒预热及audio-preroll-v2派生键 |
@@ -95,5 +93,5 @@ Session仅在释放成功后将SELECTION_EMPTY映射正常empty；SDK/释放故�
 | plugin/proxy-background.cjs | 前台优先的渐进代理准备、段描述/租约保留及writer账本额度判断；背景完整/容量停止先等batch核对关闭，不把整片图像常驻RAM |
 | plugin/segment-reader.cjs、segment-audio.cjs | 受限分段读取/借用归还、共享时钟音频排程；关闭等待实际读取与释放 |
 
-上表分段/AVC/WebCodecs实现仅供JPEG共享或历史追溯，不在当前原生代理前台链调用。旧性能dashboard/explainer/inbox/protocol/report/runner及标准测试脚本已退役，不进现行模块地图或发行清单；40份旧源码已保存在[历史归档](history/retired-performance-2026-10-31/README.md)，原位置文件按批准范围移除。
+player.js、proxy-decoder.js、quick-preview.js、scrub-preview.js、record-previews.js退出正式HTML及NATIVE_RUNTIME，源码仍供旧回归使用；native-player/UI仅使用新playback-common，不为取几项工具加载旧播放器。其余共用模块仍支持旧缓存安全清理与开发回归，不能按文件名盲删。上表分段/AVC/WebCodecs实现仅供JPEG共享或历史追溯，不在当前原生代理前台链调用。旧性能dashboard/explainer/inbox/protocol/report/runner及标准测试脚本已退役，不进现行模块地图或发行清单；40份旧源码已保存在[历史归档](history/retired-performance-2026-10-31/README.md)，原位置文件按批准范围移除。
 A-01～A-08、双槽记录/维护事务、关闭互斥与旧JPEG细节按任务查[原架构条款](history/2026-10-31/architecture.md#模块依赖与数据流)、[A-07生命周期](history/2026-10-31/architecture.md#a-07-任务生命周期与快速关闭交接2026-10-15-用户批准整改)、[A-08帧包](history/2026-10-31/architecture.md#a-08-jpeg集中存储与批量预载2026-10-16)。未被现行链明确替代的安全约束继续有效，历史限额/授权不自动恢复。

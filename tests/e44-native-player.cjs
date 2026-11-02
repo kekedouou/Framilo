@@ -2,7 +2,8 @@
 // Interaction/ownership model only. Timing numbers here are not performance evidence.
 const assert=require('node:assert/strict'),{test}=require('node:test');
 const index=require('../plugin/frame-index.cjs');
-global.EVAPlayer=require('../plugin/player.js');
+global.EVAPlaybackCommon=require('../plugin/playback-common.js');
+global.EVAPlayer=global.EVAPlaybackCommon;
 global.ImageData=class ImageData{constructor(data,width,height){if(data.length!==width*height*4)throw Error('bad fake image');Object.assign(this,{data,width,height});}};
 function canvas(){
  const c={width:1,height:1,style:{},draws:[],visibilityWrites:[]};let visibility;

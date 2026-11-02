@@ -5,10 +5,16 @@ const { spawnSync } = require('child_process');
 const pack = require('../scripts/package-release.cjs'), root = path.resolve(__dirname, '..');
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const base = Object.fromEntries(pack.RUNTIME.filter(n => !/native\/task-host\.local\.(exe|json)$/.test(n))
-  .map(n => [n, fs.readFileSync(path.join(root, 'plugin', n))]));
+  .map(n => {
+    const file=path.join(root,'plugin',n);
+    if(fs.existsSync(file))return[n,fs.readFileSync(file)];
+    // Retired monitor inputs belong to the legacy fixture, never the new package.
+    assert(/^(?:performance[-.]|live-resources\.cjs)/.test(n),n);
+    const r=spawnSync('git',['show','14edb4e:plugin/'+n],{cwd:root,windowsHide:true});assert.equal(r.status,0);return[n,r.stdout];
+  }));
 // Preserve the frozen Beta entry recipe. The current entry now requires the
 // native experience runtime and must not be laundered into the old 2MiB ZIP.
-for (const name of ['app.js', 'index.html', 'manifest.json']) {
+for (const name of ['app.js', 'index.html', 'manifest.json', 'ui.js']) {
   const r = spawnSync('git', ['show', 'v0.1.0-beta.2:plugin/' + name], { cwd: root, windowsHide: true, maxBuffer: 1024 ** 2 });
   assert.equal(r.status, 0, 'Frozen Beta2 entry must remain available in Git: ' + name); base[name] = r.stdout;
 }

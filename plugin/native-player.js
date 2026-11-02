@@ -1,10 +1,11 @@
 /* E44 native video, one original-audio clock, bounded displayed-frame RAM. */
 (function(root){
  'use strict';
+ const playback=root.EVAPlaybackCommon||root.EVAPlayer;
  class Player{
   constructor(o){
    this.o=o;this.info=null;this.runtime=o.nativeRuntime;this.index=o.frameIndex;this.canvas=o.canvas;this.ctx=this.canvas.getContext('2d',{alpha:false});
-   this.budget=new root.EVAPlayer.ManagedBudget(o.ramBytes);this.nativeToken=this.budget.reserve(this.runtime.nativeBytes,'native-gop');
+   this.budget=new playback.ManagedBudget(o.ramBytes);this.nativeToken=this.budget.reserve(this.runtime.nativeBytes,'native-gop');
    this.cache=new Map();this.revision=0;this.state='empty';this.currentIndex=null;this.time=0;this.targetTime=0;this.pendingTargets=0;this.frameHeld=true;this.serial=0;this.epoch=1;this.drawCount=0;
    this.playbackRate=1;this.loopStart=null;this.loopEnd=null;this.loopEnabled=false;this.forwardPredecode=!!o.forwardPredecode;this.disposed=false;this.lastIssue=null;this.lastErrorCode=null;
    this.now=o.env?.now||(()=>performance.now());this.raf=o.env?.raf||(fn=>requestAnimationFrame(fn));this.caf=o.env?.caf||(id=>cancelAnimationFrame(id));
@@ -178,7 +179,7 @@
    const fixed=ledger.used-(ledger.kinds['native-frame-pixels']||0),capacity=Math.max(1,Math.min(4096,Math.floor((ledger.limit-fixed-maximum*2)*.75/bytes)));
    const first=this.loopEnabled?this.loopStart:0,last=this.loopEnabled?this.loopEnd:this.info.frames.length-1;
    if(center<first||center>last)return;
-   const key=[center,capacity,first,last].join(':');if(this.fillPlan?.key!==key)this.fillPlan={...root.EVAPlayer.preparationWindow(this.info.frames,center,capacity,first,last),key};
+   const key=[center,capacity,first,last].join(':');if(this.fillPlan?.key!==key)this.fillPlan={...playback.preparationWindow(this.info.frames,center,capacity,first,last),key};
    const plan=this.fillPlan,n=plan.order.find(i=>!this.cache.has(i)&&!this.fillFailures.has(i));
    if(n===undefined){this.fillStatus=this.fillFailures.size?'waiting':'ready';return;}
    while(this.budget.limit-this.budget.used<maximum*2){let victim=null;for(const i of this.cache.keys())if(i!==this.currentIndex&&(i<plan.start||i>plan.end)){victim=i;break;}
@@ -195,7 +196,7 @@
     finally{if(!transferred)this.budget.release(reserved);this._endRead(lease);this.fillTask=null;this._drainThumbnails();this._scheduleFill();}});
   }
   setForwardPredecode(on){this.forwardPredecode=!!on;if(!on){clearTimeout(this.fillTimer);this.fillTimer=undefined;if(this.readOwner?.kind==='forward-fill'){this.reader.cancel();this.readOwner=null;this.readerBusy=false;}this.fillStatus='disabled';}else this._scheduleFill();this._change();return {status:'applied'};}
-  setPlaybackRate(rate){if(!root.EVAPlayer.validRate(rate))return Promise.reject(Error('播放速度须为0.1×至4×。'));const resume=this.state==='playing';this.pause(false);this.playbackRate=rate;if(this.audio)this.audio.playbackRate=rate;this._change();return resume?this.play():Promise.resolve({status:'applied'});}
+  setPlaybackRate(rate){if(!playback.validRate(rate))return Promise.reject(Error('播放速度须为0.1×至4×。'));const resume=this.state==='playing';this.pause(false);this.playbackRate=rate;if(this.audio)this.audio.playbackRate=rate;this._change();return resume?this.play():Promise.resolve({status:'applied'});}
   _range(){return this.loopEnabled&&this.loopStart!==null&&this.loopEnd!==null?{start:this.info.frames[this.loopStart].time,end:this.info.frames[this.loopEnd].end}:null;}
   transportSnapshot(){const f=this.info?.frames,valid=this.loopStart!==null&&this.loopEnd!==null&&this.loopStart<this.loopEnd;return {rate:this.playbackRate,loop:{enabled:this.loopEnabled,valid,startId:f?.[this.loopStart]?.id??null,endId:f?.[this.loopEnd]?.id??null,startOrdinal:this.loopStart,endOrdinal:this.loopEnd,startTime:f?.[this.loopStart]?.time??null,endTime:f?.[this.loopEnd]?.time??null,endBoundary:valid?f?.[this.loopEnd]?.end:null}};}
   setLoopPoint(p){if(this.frameHeld||this.pendingTargets)return Promise.resolve({status:'ignored',reason:'frame-not-ready'});this.pause();if(p==='start'){this.loopStart=this.currentIndex;if(this.loopEnd!==null&&this.loopEnd<=this.loopStart)this.loopEnd=null;}else if(p==='end'){this.loopEnd=this.currentIndex;if(this.loopStart!==null&&this.loopStart>=this.loopEnd)this.loopStart=null;}else throw Error('循环端点无效。');this.loopEnabled=false;this._change();return Promise.resolve({status:'applied'});}
@@ -215,8 +216,8 @@
     const located=this.seek(info.frames[n].time,{index:n,kind:'loop-enable',final:true,keepPlayIntent:true}),version=this.serial,r=await located;
     if(this.disposed||this.info!==info||intent!==this.playIntent||version!==this.serial)return {status:'superseded'};if(!['drawn','reused'].includes(r.status))return r;}
    this.loopEnabled=on;this._change();if(this.disposed||intent!==this.playIntent)return {status:'superseded'};return resume?this.play():{status:'applied'};}
-  restoreTransport(v){if(!v||!root.EVAPlayer.validRate(v.rate))throw Error('恢复播放速度无效。');if(v.loop){for(const [n,id] of [[v.loop.startOrdinal,v.loop.startId],[v.loop.endOrdinal,v.loop.endId]])if(n!==null&&(!Number.isSafeInteger(n)||n<0||n>=this.info.frames.length||this.info.frames[n].id!==id))throw Error('恢复片段源帧身份不匹配。');this.loopStart=v.loop.startOrdinal;this.loopEnd=v.loop.endOrdinal;this.loopEnabled=!!v.loop.enabled;}this.playbackRate=v.rate;this._change();return Promise.resolve({status:'applied'});}
-  cacheCoverageSnapshot(){return {epoch:this.epoch,revision:this.revision,duration:this.info?.duration||0,decodedFrames:this.cache.size,totalFrames:this.info?.frames.length||0,ranges:root.EVAPlayer.decodedRanges(this.info?.frames||[],this.cache.keys(),this.info?.duration),enabled:this.forwardPredecode,phase:this.readerBusy?'preparing':'idle'};}
+  restoreTransport(v){if(!v||!playback.validRate(v.rate))throw Error('恢复播放速度无效。');if(v.loop){for(const [n,id] of [[v.loop.startOrdinal,v.loop.startId],[v.loop.endOrdinal,v.loop.endId]])if(n!==null&&(!Number.isSafeInteger(n)||n<0||n>=this.info.frames.length||this.info.frames[n].id!==id))throw Error('恢复片段源帧身份不匹配。');this.loopStart=v.loop.startOrdinal;this.loopEnd=v.loop.endOrdinal;this.loopEnabled=!!v.loop.enabled;}this.playbackRate=v.rate;this._change();return Promise.resolve({status:'applied'});}
+  cacheCoverageSnapshot(){return {epoch:this.epoch,revision:this.revision,duration:this.info?.duration||0,decodedFrames:this.cache.size,totalFrames:this.info?.frames.length||0,ranges:playback.decodedRanges(this.info?.frames||[],this.cache.keys(),this.info?.duration),enabled:this.forwardPredecode,phase:this.readerBusy?'preparing':'idle'};}
   _lease(canvas,n){this.canvasLeases.get(canvas)?.release();const token=this.budget.reserve(canvas.width*canvas.height*4,'record-output',()=>this._evict());let released=false;const lease={frameId:this.info.frames[n].id,release:()=>{if(released)return;released=true;this.budget.release(token);this.leases.delete(lease);if(this.canvasLeases.get(canvas)===lease){this.canvasLeases.delete(canvas);canvas.width=canvas.height=1;}}};this.leases.add(lease);this.canvasLeases.set(canvas,lease);return lease;}
   async paintThumbnail(time,canvas){if(this.disposed||!this.info)return null;this.canvasLeases.get(canvas)?.release();const n=this.index.frameAt(this.info.frames,time),small=this.thumbCache.get(n),entry=this.cache.get(n);if(small){canvas.width=small.width;canvas.height=small.height;canvas.getContext('2d').putImageData(small.image,0,0);return this._lease(canvas,n);}if(!entry){this.primeRecords([n]);return null;}this._thumbnail(n,entry,canvas);return this._lease(canvas,n);}
   _thumbnail(n,e,canvas){const im=e.image||e.header,scale=Math.min(1,240/im.width,135/im.height);canvas.width=Math.max(1,Math.round(im.width*scale));canvas.height=Math.max(1,Math.round(im.height*scale));let staging;if(this.renderer)staging=this.renderer.render(e.pixels,e.header);else{staging=document.createElement('canvas');staging.width=im.width;staging.height=im.height;staging.getContext('2d').putImageData(im,0,0);}const ctx=canvas.getContext('2d');ctx.drawImage(staging,0,0,canvas.width,canvas.height);if(!this.renderer)staging.width=staging.height=1;

@@ -4,6 +4,7 @@
 
 | 阶段 | 计划 | 结果 | 专项 |
 | --- | --- | --- | --- |
+| E55 | [plan.md](E55/plan.md) | [report.md](E55/report.md) | 包减重、旧前端播放退出打包、删除性能面板；不缩兼容 |
 | E54 | [plan.md](E54/plan.md) | [report.md](E54/report.md) | 插件圈画生命周期与独立版数据归属 |
 | E53 | [plan.md](E53/plan.md) | [report.md](E53/report.md) | [验收登记](E53/acceptance.md)；第三阶段自用产品化与长期验证，暂不发行 |
 | E52 | [plan.md](E52/plan.md) | [report.md](E52/report.md) | 第二阶段优化实现与本地验证；Eagle集中验收待做 |

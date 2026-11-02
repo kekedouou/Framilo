@@ -1,6 +1,6 @@
 'use strict';
 const fs=require('fs'),path=require('path'),{execFile}=require('child_process');
-const {usage,createStorage}=require('./proxy-storage.cjs');
+const {usage,createStorage}=require('../../../../plugin/proxy-storage.cjs');
 function createResources({root,context}){
  let value={ramTotal:null,ramVideo:null,diskTotal:null,diskVideo:null},busy=false,closed=false,child=null,lastDisk=0,controller=null,paused=false;
  async function sample(){if(busy||closed||paused)return;busy=true;controller=new AbortController();const signal=controller.signal,c=context(),source=c.source?.sha256;

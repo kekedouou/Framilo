@@ -129,7 +129,7 @@ async function main() {
   await test('JPEG app keeps the original provider and guarded unavailable exports', async () => {
     const h = await entryModel('jpeg'); await h.configured.media.prepare(source, { playbackBackend: 'jpeg', previewQuality: '720p' });
     const player = h.configured.createPlayer({ mediaInfo: h.info }); assert(!player.native);
-    const decoder = player.options.createFrameDecoder({ token: 7 }); assert.equal(decoder.settings.token, 7); assert(decoder.persistentDecoder);
+    assert.equal(player.options.createFrameDecoder, undefined, 'Retired WebCodecs decoder is no longer injected by the formal app');
     await assert.rejects(() => h.configured.exports.publish({}), /当前界面未开放导出/); await h.hooks.onPluginBeforeExit();
   });
   console.log('Proxy Session: ' + count + ' real Session/app assembly models; no media, native host or library writes.');

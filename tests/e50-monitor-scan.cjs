@@ -2,7 +2,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('fs'),path=require('path'),vm=require('vm'),{createRequire}=require('module');
 const {usage}=require('../plugin/proxy-storage.cjs');
 async function fixture(t){const base=path.resolve('verification-runs/e50/unit');await fs.promises.mkdir(base,{recursive:true});const root=await fs.promises.mkdtemp(path.join(base,'monitor-'));t.after(async()=>{assert.equal(path.dirname(root),base);assert.equal(await fs.promises.realpath(root),root);await fs.promises.rm(root,{recursive:true});});return root;}
-function meter(options){const file=path.resolve('plugin/live-resources.cjs'),module={exports:{}};const local=createRequire(file);vm.runInNewContext(fs.readFileSync(file,'utf8'),{module,exports:module.exports,process,AbortController,require:name=>name==='child_process'?{execFile(_exe,_args,_opts,cb){setImmediate(()=>cb(null,JSON.stringify([{WorkingSet64:1024}])));return{kill(){}};}}:local(name)});return module.exports.createResources(options);}
+function meter(options){const file=path.resolve('docs/history/retired-monitor-e55/plugin/live-resources.cjs'),module={exports:{}};const local=createRequire(file);vm.runInNewContext(fs.readFileSync(file,'utf8'),{module,exports:module.exports,process,AbortController,require:name=>name==='child_process'?{execFile(_exe,_args,_opts,cb){setImmediate(()=>cb(null,JSON.stringify([{WorkingSet64:1024}])));return{kill(){}};}}:local(name)});return module.exports.createResources(options);}
 test('scan yields to the event loop, uses no synchronous file metadata, and keeps exact byte counts',async t=>{
  const root=await fixture(t);for(let n=0;n<150;n++)await fs.promises.writeFile(path.join(root,n+'.json'),'1234567890');
  let ticks=0;const original=fs.lstatSync,real=fs.realpathSync;fs.lstatSync=fs.realpathSync=()=>{throw Error('synchronous filesystem in monitor');};
@@ -25,6 +25,6 @@ test('closing or changing source during disk sampling cannot publish the previou
  const work=m.sample();await started;source='b';m.pause();assert(signal.aborted);unblock();await work;assert.equal(m.view().diskVideo,null);assert.equal(m.view().diskTotal,null);m.close();
 });
 test('monitor disables in-flight work, reopens fresh and refreshes elapsed waiting without rebuilding metrics',()=>{
- const {createMonitor}=require('../plugin/performance-runtime.cjs');let time=0,pauses=0,resumes=0;const m=createMonitor({root:'.',context:()=>({source:{sha256:'a'},state:'seeking'}),now:()=>time,resources:{sample:async()=>{},pause(){pauses++;},resume(){resumes++;},close(){},view:()=>({})}});
+ const {createMonitor}=require('../docs/history/retired-monitor-e55/plugin/performance-runtime.cjs');let time=0,pauses=0,resumes=0;const m=createMonitor({root:'.',context:()=>({source:{sha256:'a'},state:'seeking'}),now:()=>time,resources:{sample:async()=>{},pause(){pauses++;},resume(){resumes++;},close(){},view:()=>({})}});
  try{m.enable();m.observe({type:'request',phase:'input',at:0,requestId:1});const a=m.view();time=900;const b=m.view();assert.equal(a.data,b.data);assert.equal(a.metrics,b.metrics);assert.equal(b.explanation.delay,900);m.disable();assert.equal(pauses,1);m.enable();assert.equal(resumes,2);assert.equal(m.view().data.requests.length,0);}finally{m.destroy();}
 });

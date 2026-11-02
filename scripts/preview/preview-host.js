@@ -14,7 +14,7 @@
  ui=EVAUI.createUI({hostAction:async action=>{if(action==='fullscreen'){if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}else label.textContent='预览不支持原生窗口操作；请在Eagle中体验';}});
  document.addEventListener('fullscreenchange',()=>{document.documentElement.dataset.evaFullscreen=String(!!document.fullscreenElement);dispatchEvent(new Event('eva-fullscreen-change'));});
  // Host-specific controls have no simulated success path.
- for(const id of ['performanceMonitor','gpuAcceleration','cacheClearOther']){const node=document.getElementById(id);if(node){node.dataset.previewUnsupported='true';node.title='此项需在Eagle中验证';}}
+ for(const id of ['gpuAcceleration','cacheClearOther']){const node=document.getElementById(id);if(node){node.dataset.previewUnsupported='true';node.title='此项需在Eagle中验证';}}
  for(const label of ['最小化','关闭']){const node=document.querySelector('.shell-header button[aria-label="'+label+'"]');if(node){node.dataset.previewUnsupported='true';node.title='此项需在Eagle中验证';}}
  const disableNative=()=>{for(const node of document.querySelectorAll('[data-preview-unsupported]'))node.disabled=true;};
  const preferences={snapshot:()=>({ramMiB:data.ramMiB,ramBytes:data.ramMiB*1024**2,compressedRamBytes:data.ramMiB*1024**2/8,totalRamBytes:8*1024**3,optionsMiB:[512,1024,2048,4096],persisted:true}),quality:()=>data.quality,backend:()=> 'proxy',interaction:()=>data.interaction,forwardPredecode:()=>true,gpuAcceleration:()=>false,proxyEncoder:()=> 'cpu',decoderPreference:()=> 'prefer-software',gpuDrawing:()=>false,automaticProxy:()=>false,proxyDiskGiB:()=>5,
