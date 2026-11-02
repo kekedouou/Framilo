@@ -27,7 +27,8 @@ app装配/宿主生命周期 → UI发操作 → Session持有库/源快照和�
 | plugin/loop-selection.js | UI层短/长按与端点草稿，只通过Session预览/确认；无文件、缓存或Eagle API访问 |
 | plugin/timeline-view.js | UI纯显示映射：整段/循环片段范围、自适应刻度、时间坐标及绿条/标注裁切；非重叠点击区与密集标注分组由ui.js呈现选择列表；不解码或分配视频缓存 |
 | plugin/drawing-model.js、drawing-erase.js、drawing-ui.js | 绘图对象/擦除覆盖/淡化计算及SVG显示、文字编辑；通过Session发操作，不直接访问Eagle或媒体缓存 |
-| plugin/drawing-session.cjs、drawing-store.cjs、annotation-data/ | 同帧关联、草稿与永久图形/文字/样式存储；独立于会淘汰的预览缓存 |
+| plugin/drawing-session.cjs、drawing-store.cjs、annotation-data/ | 同帧关联、草稿与永久图形/文字/样式存储；独立于会淘汰的预览缓存；保存/清理共用独占租约 |
+| plugin/drawing-lifetime.cjs | 分批异步圈画维护、活动素材保护/关闭失效；经eagle适配只读确认永久删除后，交store定点清理，不访问媒体/库写入 |
 | plugin/screen-gestures.js、screen-gesture-ui.js | 纯手势识别、指针/时钟和反馈展示；通过原Session定位/调速，不接入媒体解码 |
 | plugin/context-wheel.js | 观看/圈画右键方向选择、单次打开预建并复用类型/颜色外圈、悬停取消及销毁；通过UI调用既有操作，无媒体或Eagle访问 |
 | plugin/preview-profile.cjs | 720p/1080p/1440p/2160p预览尺寸与身份；共用原缓存预算，不放大小源 |
@@ -61,6 +62,11 @@ app装配/宿主生命周期 → UI发操作 → Session持有库/源快照和�
 preview-profile统一720p～2160p几何/身份，原生桥像素边界支持UHD及竖屏；格式与阈值的单一参数入口见[能力表](releases/motionote-capabilities.md)。
 media-policy只算策略，load-decisions一次一个选择并绑定请求ID/代次/AbortSignal，只有当前合法答复生效。换源/切模式/关闭使旧选择失效。
 whole-proxy在同窗口完整复用核验后、写锁前确认累计预计超过1 GB的任务；实际超额停止/回收未完成文件，再确认重启。MP4族与Matroska族实际PTS分别取自原生读者，禁止用请求时间冒充回执。音轨边界从真实packet PTS/末包duration得出；MKV/WebM/PCM使用原文件HTMLAudio，其它仍优先已验证压缩音轨，复制边界不符时使用原文件；先确认音轨可读，不静默无声。
+
+## 圈画生命周期
+圈画格式及旧文件位置不变。drawing-store新增异步候选遍历（每批16目录，跨批游标轮转）与定点删除；只接收已校验scope/token，校验全部普通修订文件后从旧到新删除。写入和维护共用root内maintenance-<key>.lock；合法租约仅在所属PID已不存在时恢复，PID复用、部分写入/未知锁保留。中断保留最新完整修订供重试，空目录残留无用户内容；无法完成的维护记本机诊断，不伪装完成。
+eagle.drawingDeletion唯一核对当前库API、普通images/<id>.info目录缺失、库根/images身份与根metadata可读；回收站目录存在即保留，不写库、不扫描视频。未知布局/响应/权限/切库返回未知。两次异步证明一致且当前素材未被保护时才允许store删除。app仅装配、触发与关闭失效；关闭无需等待迟到的只读探测，迟到结果不能删除或重新安排定时器。每轮合并触发，不进入播放/逐帧热路径。运行行为见[产品](product.md#圈画数据归属与删除)。
+所有读写端：drawing-session经store.read/save/readVisibility/saveVisibility/readStyles/saveStyles；新维护经maintenanceCandidates/removeDeleted；app负责两者生命周期；eagle只读库状态；缓存/导出/原生媒体及旧包不成为圈画清理端。真实卸载由宿主目录管理，插件不伪造卸载事件。
 
 ## 缓存、持久化与退出
 - cache保留旧JPEG文件所有权、真实路径、锁和完整提交以安全迁移；proxy-storage管理本窗口代理资产/读者租约，正式temporary路径不靠跨次LRU复用。受管额度与OS/驱动进程占用不同。

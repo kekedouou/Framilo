@@ -1,0 +1,30 @@
+# E54 execution record
+
+## Scope and implementation — 2026-11-02
+
+Baseline be82bba, no inherited tracked differences. User approved implementing missing plugin-only drawing lifetime and recording the final standalone/linkage model. No real assets, existing drawings, Eagle installation or libraries were modified by development checks.
+
+- Added drawing-lifetime maintenance: open/run/show/focus and 30-second background cadence, one in-flight pass, <=16 record directories per pass with a rotating cursor and asynchronous yields. Current source is excluded; closing invalidates pending probes and stops scheduling without delaying media shutdown.
+- Eagle adapter probes only the open library. Empty getById is insufficient because trash is filtered too; the ordinary item directory must also be absent twice while library/images identities remain stable and root metadata is readable. Invalid IDs/responses, errors, offline/change, unknown layouts and existing trash directories retain drawings. No source/media enumeration or library writes.
+- Store keeps existing format/path/readers. New maintenance validates ownership, token, all revision files, no staging/unknown entries; deletes oldest first, preserving latest revision on interruption. Exclusive save/purge leases prevent concurrent commit/deletion. Known dead PID leases can recover; reused/live/unknown/partial leases are retained. Unknown leases may need manual investigation, not silent removal.
+- Added runtime module to package manifest list. Existing E53 ZIPs, native binaries and E49 frozen files remain unchanged; no new package/install/push.
+
+## Uninstall evidence and limits
+
+Read-only inspection of installed G:/Assets/Eagle/resources/app.asar, app/js/plugin/index.js on 2026-11-02:
+- Remote/installed uninstall lines 479–515 destroys the plugin and calls fse.remove(pluginPath) when under PLUGINS_PATH. Local/developer uninstall lines 581–617 removes only the registered path; it does not delete the source folder.
+- No uninstall hook or Eagle patch was introduced. Installed directory removal includes local annotation-data; developer unregister intentionally retains both source and drawings. This is inspected implementation evidence, not a performed uninstall test or a guarantee for every Eagle version.
+
+## Verification
+
+Focused lifetime/store/app checks and the full default suite passed. Initial focused run caught an assertion that expected false instead of the store's intentional unknown-file error, and a harness log-count change caused by the new maintenance mock. Corrected the expectations/mock isolation; no safety check relaxed.
+
+Fixtures are dedicated tests/annotation-scratch data, no imported media; cleanup prints per-file identities, hashes and bounded receipts. The first focused successful lifetime run retained at verification-runs/e53/e54-lifetime-first.log; the earlier failed original output is in tool history. Final lifecycle receipt: verification-runs/e53/e54-lifetime-final.log. Full initial suite failed only in window-launch because its formal-app harness lacked the new maintenance factory; updated all three remaining app harnesses (window-launch, window-script-entry, proxy-session). Focused entry checks and full rerun passed; the failed original remains e54-default-check.log, passing rerun e54-default-check-final.log. Read-only uninstall source ranges/hash retained in e54-uninstall-source.json (entry SHA256 7c4c462484214404600ff5219de843206123bfa117c88e2823ff8471ab099d73). Runtime/license closure checks passed: 84 files, 30,780,789 bytes, native binary unchanged. check-docs and handoff checks run again at commit. No frontend resource changed, so no new browser preview is required. No codec/performance benchmark: media is unchanged; bounded/yield/coalescing/stop checks address the added maintenance I/O, and do not claim measured Eagle playback impact.
+
+## Documentation reconciliation
+
+Product owns current plugin deletion/uninstall semantics; architecture inventories readers/writers and maintenance; verification defines deletion/interruption/host gates; roadmap owns standalone missing-reference/import-export and verified ownership transfer. Private guide distinguishes ZIP/install package and old snapshots. Progress/index point to E54; E53 outcomes and historical/frozen records are preserved.
+
+## Remaining acceptance
+
+Real Eagle trash restore/permanent-delete and actual installed uninstall have not been executed. No dedicated real asset deletion/uninstall was requested for verification; do not use the user's ordinary library or unregister the active project to simulate it. While the plugin is closed cleanup waits for next open; current source waits for source switch/reopen. Standalone and extension migration are documented future work only. Plugin drawings still do not travel with a library backup.

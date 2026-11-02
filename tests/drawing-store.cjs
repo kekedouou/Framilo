@@ -25,11 +25,11 @@ try {
     const failed = createAnnotationStore({ pluginRoot: plugin, io: broken }); assert.throws(() => failed.save(scope, [], saved.token), /disk full/);
     assert.equal(store.read(scope).token, saved.token); saved = store.save(scope, [note()], saved.token);
   });
-  test('A competing revision at the final atomic commit never overwrites the winner', () => {
+  test('An exclusive save lease rejects a reentrant competing writer', () => {
     const racing = Object.create(fs); let raced = false;
     racing.linkSync = (from, to) => { if (!raced) { raced = true; store.save(scope, [note('winner')], saved.token); } return fs.linkSync(from, to); };
     const contender = createAnnotationStore({ pluginRoot: plugin, io: racing }); assert.throws(() => contender.save(scope, [note('loser')], saved.token), /另一个窗口/);
-    saved = store.read(scope); assert.equal(saved.records[0].id, 'winner');
+    assert.equal(store.read(scope).token, saved.token); // Neither write may bypass the active lease.
   });
   test('Committed hard-link interruption reopens correctly and known staging is released', () => {
     const fail = Object.create(fs); let injected = false;

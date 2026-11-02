@@ -50,6 +50,7 @@ async function discoverTools(eagleApi, options = {}) {
 function createEagleAdapter(eagleApi, options = {}) {
   return Object.freeze({ captureSelected: settings => captureSelected(eagleApi, settings),
     drawingLibrary: () => libraryPath(eagleApi),
+    drawingDeletion: scope => drawingDeletion(eagleApi, scope, options),
     discoverTools: () => discoverTools(eagleApi, options),
     readComments: (source, context) => readComments(eagleApi, source, context, options),
     saveComment: (proposal, settings) => saveComment(eagleApi, proposal, settings, options),
@@ -58,6 +59,38 @@ function createEagleAdapter(eagleApi, options = {}) {
     exportDestination: proposal => exportDestination(eagleApi, proposal, options),
     importExport: (proposal, settings) => importExport(eagleApi, proposal, settings, options),
     verifyExport: attempt => verifyExport(eagleApi, attempt, options) });
+}
+
+// Read-only evidence: getById also hides trash, so an empty API response alone
+// is never deletion proof. The item directory must be absent in a healthy,
+// currently open library. Unknown layouts and filesystem failures retain data.
+async function drawingDeletion(api, scope, options = {}) {
+  const io = (options.fs || fs).promises;
+  try {
+    if (!scope || !/^[A-Za-z0-9_-]{1,256}$/.test(scope.itemId)) return null;
+    const context = guardLibrary(api, scope.libraryPath);
+    if (!api.item || typeof api.item.getById !== 'function') return null;
+    const item = await commentDeadline(api.item.getById(scope.itemId), { ...options, commentTimeoutMs: options.maintenanceTimeoutMs || 1500 });
+    guardLibrary(api, context);
+    if (item !== null && item !== undefined) return null;
+    async function directory(file) {
+      const stat = await io.lstat(file), real = await io.realpath(file);
+      if (!stat.isDirectory() || stat.isSymbolicLink() || !samePath(real, file)) throw Error('Uncertain library directory');
+      return stat;
+    }
+    const images = path.join(context, 'images'), metadata = path.join(context, 'metadata.json');
+    const library = await directory(context), container = await directory(images);
+    const stat = await io.lstat(metadata);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return null;
+    // Opening the root metadata proves readability without enumerating media.
+    const handle = await io.open(metadata, 'r'); await handle.close();
+    try { await io.lstat(path.join(images, scope.itemId + '.info')); return null; }
+    catch (error) { if (error.code !== 'ENOENT') return null; }
+    const after = await directory(images), end = await directory(context);
+    guardLibrary(api, context);
+    if (container.dev !== after.dev || container.ino !== after.ino || library.dev !== end.dev || library.ino !== end.ino) return null;
+    return [context.toLowerCase(), library.dev, library.ino, container.dev, container.ino].join(':');
+  } catch (_) { return null; }
 }
 
 async function exportFolders(api, options) {

@@ -25,6 +25,7 @@ function harness(settings = {}) {
     'cache.cjs': { createCache(options) { assert.strictEqual(options.pluginRoot, root); return settings.backendCache || { readAsset() {}, release() {} }; } },
     'eagle.cjs': { createEagleAdapter() { return Object.freeze(adapter); } },
     'drawing-store.cjs': { createAnnotationStore: () => null },
+    'drawing-lifetime.cjs': { createDrawingLifetime: () => ({ run() { settings.maintenanceRuns = (settings.maintenanceRuns || 0) + 1; }, stop() { settings.maintenanceStops = (settings.maintenanceStops || 0) + 1; } }) },
     'preferences.cjs': { createMemoryPreferences() { return settings.preferences || { forwardPredecode:()=>true, snapshot: () => ({ ramBytes: 1024 ** 3, compressedRamBytes: 128 * 1024 ** 2, percent: 2.5 }) }; } },
     'session.cjs': { createSession(options) { config = options; return settings.realSession ? require('../plugin/session.cjs').createSession(options) : session; } },
     'diagnostics.cjs': { createDiagnostics: require('../plugin/diagnostics.cjs').createDiagnostics },
@@ -92,6 +93,7 @@ async function main() {
     assert.equal(h.log.filter(x=>x.type==='selected').length,1,'Failed UI cannot start media');
     await h.hooks.onPluginRun();assert.equal(h.log.filter(x=>x.type==='selected').length,2,'Explicit run retries after failed UI construction');
     await h.hooks.onPluginBeforeExit();assert.equal(h.counts().closed,2);
+    assert.equal(h.settings.maintenanceStops,2);assert(h.settings.maintenanceRuns>=2);
     console.log('T1 app: failed UI reconstruction remains retryable without starting media or losing close ownership');
   }
   {

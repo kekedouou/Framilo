@@ -1,5 +1,5 @@
 'use strict';
-// Local user data. Immutable, exclusive revisions: no persistent writer lock.
+// Local user data. Immutable revisions and short-lived save/maintenance leases.
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
 const model = require('./drawing-model.js');
 const OWNER = 'eva-drawing-store-v1', MAX_BYTES = 1024 ** 2;
@@ -80,7 +80,39 @@ function createAnnotationStore({ pluginRoot, io = fs } = {}) {
     if (name !== 'r-' + String(value.revision).padStart(12, '0') + '.json') throw Error('圈画版本文件名不符。');
     return { ...value, token: hash(data) };
   }
-  function commit(scope, body, expected) {
+  function exclusive(scope, work) {
+    const info = target(scope); checkRoot(true);
+    const lease = path.join(root, 'maintenance-' + info.key + '.lock');
+    let fd;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try { fd = io.openSync(lease, 'wx'); break; }
+      catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        let dead = false, previous;
+        try {
+          previous = readFile(lease, 256); const owner = JSON.parse(previous.data);
+          if (owner.owner === OWNER && Number.isSafeInteger(owner.pid) && owner.pid > 0 && typeof owner.nonce === 'string') {
+            try { process.kill(owner.pid, 0); }
+            catch (probe) { dead = probe.code === 'ESRCH'; }
+          }
+          if (dead && identity(io.lstatSync(lease)) === identity(previous.stat)) io.unlinkSync(lease);
+        } catch (_) { dead = false; }
+        if (!dead || attempt) throw Error('圈画正由另一个窗口处理，请稍后重试；原件未覆盖。');
+      }
+    }
+    const own = io.fstatSync(fd);
+    try { io.writeFileSync(fd, JSON.stringify({ owner: OWNER, pid: process.pid, nonce: crypto.randomUUID() })); return work(); }
+    finally {
+      io.closeSync(fd);
+      const actual = io.lstatSync(lease);
+      if (!actual.isSymbolicLink() && actual.ino === own.ino && actual.dev === own.dev) io.unlinkSync(lease);
+    }
+  }
+  // Maintenance and saves share the same exclusive lease. An interrupted lease
+  // is recovered only when its validated owner PID no longer exists. PID reuse
+  // and unknown/partial leases retain the lock; age alone is never sufficient.
+  function commit(scope, body, expected) { return exclusive(scope, () => commitOwned(scope, body, expected)); }
+  function commitOwned(scope, body, expected) {
     const info = target(scope), current = read(scope);
     if (current.token !== expected) throw Error('圈画已在别处改变，请重新载入后编辑；未覆盖原件。');
     const revision = current.revision + 1;
@@ -116,7 +148,52 @@ function createAnnotationStore({ pluginRoot, io = fs } = {}) {
       if (own && exists(temp)) { const s = io.lstatSync(temp); if (!s.isSymbolicLink() && s.ino === own.ino && s.dev === own.dev) io.unlinkSync(temp); }
     }
   }
-  return Object.freeze({ read, save: (scope, records, token) => commit(scope, { records: validateRecords(records) }, token),
+  async function *maintenanceCandidates(library, afterKey = '') {
+    if (!checkRoot()) return;
+    const entries = (await io.promises.readdir(root, { withFileTypes: true }))
+      .filter(e => e.isDirectory() && /^[a-f0-9]{64}$/.test(e.name)).sort((a, b) => a.name.localeCompare(b.name));
+    const ordered = [...entries.filter(e => e.name > afterKey), ...entries.filter(e => e.name <= afterKey)].slice(0, 16);
+    for (const entry of ordered) {
+      yield { key: entry.name, scope: null }; // Advance over unknown/other-library entries too.
+      try {
+        const dir = path.join(root, entry.name); directory(dir);
+        const names = await io.promises.readdir(dir);
+        if (names.some(n => !/^r-\d{12}\.json$/.test(n))) continue;
+        const name = names.sort().pop(); if (!name) continue;
+        const file = path.join(dir, name), before = await io.promises.lstat(file);
+        if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > MAX_BYTES) continue;
+        const data = await io.promises.readFile(file), after = await io.promises.lstat(file);
+        if (identity(before) !== identity(after) || data.length !== before.size) continue;
+        const value = JSON.parse(data), info = target(value.scope);
+        if (info.key !== entry.name || info.scope.libraryPath !== path.resolve(library).toLowerCase()) continue;
+        validateBody(value, info);
+        yield { scope: info.scope, token: hash(data), key: entry.name };
+      } catch (_) { /* Unknown, changing or damaged records are never cleanup candidates. */ }
+    }
+  }
+  function removeDeleted(candidate, permitted) {
+    return exclusive(candidate.scope, () => {
+      if (!permitted() || read(candidate.scope).token !== candidate.token) return false;
+      const info = target(candidate.scope), dir = path.join(root, info.key), names = io.readdirSync(dir).sort();
+      if (names.some(n => !/^r-\d{12}\.json$/.test(n))) return false;
+      const files = names.map(name => {
+        const file = path.join(dir, name), value = readFile(file);
+        const body = validateBody(JSON.parse(value.data), info);
+        if (name !== 'r-' + String(body.revision).padStart(12, '0') + '.json') throw Error('圈画版本文件名不符，已保留。');
+        return { file, stat: value.stat, digest: hash(value.data) };
+      });
+      // Validate the entire small revision set before deleting anything. Oldest
+      // first preserves the latest valid revision if cleanup is interrupted.
+      for (const row of files) {
+        if (!permitted()) return false;
+        directory(dir); const current = readFile(row.file);
+        if (identity(current.stat) !== identity(row.stat) || hash(current.data) !== row.digest) return false;
+        io.unlinkSync(row.file);
+      }
+      directory(dir); io.rmdirSync(dir); return true;
+    });
+  }
+  return Object.freeze({ read, maintenanceCandidates, removeDeleted, save: (scope, records, token) => commit(scope, { records: validateRecords(records) }, token),
     readVisibility: () => read('visibility'), saveVisibility: (visible, token) => commit('visibility', { visible }, token),
     readStyles: () => read('styles'), saveStyles: (styles, token) => commit('styles', { styles: model.validateStyles(styles) }, token), root });
 }

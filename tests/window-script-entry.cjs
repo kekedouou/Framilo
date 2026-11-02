@@ -22,6 +22,7 @@ async function check(mode) {
   const modules = {
     'window-fit.cjs': require('../plugin/window-fit.cjs'),
     'drawing-store.cjs': { createAnnotationStore: () => null },
+    'drawing-lifetime.cjs': { createDrawingLifetime: () => ({ run() {}, stop() {} }) },
     'eagle.cjs': { createEagleAdapter: () => ({ async captureSelected() { captures.push(selected); return { id: selected, name: selected, filePath: path.join(root, selected + '.mp4') }; } }) },
     'preferences.cjs': { createMemoryPreferences: () => ({ snapshot: () => ({ ramBytes: 1024 ** 3 }) }) },
     'diagnostics.cjs': { createDiagnostics: () => ({ public: {}, publish() {} }) },

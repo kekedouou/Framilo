@@ -56,6 +56,7 @@ async function entryModel(mode = 'proxy') {
     'preferences.cjs': { createMemoryPreferences: () => ({ snapshot: () => ({ ramBytes: 1024 ** 3, compressedRamBytes: 128 * 1024 ** 2 }), backend: () => mode, forwardPredecode: () => true,
       decoderPreference: () => 'prefer-hardware', proxyEncoder: () => 'cpu', automaticProxy: () => true, gpuDrawing: () => true }) },
     'drawing-store.cjs': { createAnnotationStore: () => null }, 'frame-index.cjs': {},
+    'drawing-lifetime.cjs': { createDrawingLifetime: () => ({ run() {}, stop() {} }) },
     'diagnostics.cjs': require('../plugin/diagnostics.cjs'),
     'task-client.cjs': { createTaskClient(options) { clientOptions = options; return backend; } },
     'native-backend.cjs': { createNativeBackend(options) { clientOptions = options; return backend; } },

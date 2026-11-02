@@ -28,6 +28,8 @@
   let hideTask = Promise.resolve(), closeFailure = null;
   let drawingCloseIntent = null, drawingLoadSequence = 0;
   let temporaryMedia = null;
+  let drawingLifetime = null;
+  window.addEventListener('focus', () => { if (!closed) drawingLifetime?.run(); });
   let windowFit = null;
   let backend = null, adapter = null, lastPlugin = null, pendingOpen = null, initialSelection = null;
   let entryOverride = null;
@@ -193,7 +195,13 @@
           return performanceMonitor;
         }
       });
-      return loadSelected({ startedAt: entryAt, trigger: 'plugin-create' }).catch(() => {});
+      drawingLifetime = require(path.join(root, 'drawing-lifetime.cjs')).createDrawingLifetime({
+        store: annotationStore, adapter,
+        protectedItem: () => session?.snapshot().sourceIdentity,
+        report: receipt => diagnostics?.publish('drawing-maintenance', receipt)
+      });
+      const loading = loadSelected({ startedAt: entryAt, trigger: 'plugin-create' }).catch(() => {});
+      drawingLifetime.run(); return loading;
     } catch (error) { startupError(error); }
     finally { initializing = false; }
   }
@@ -201,6 +209,9 @@
     if (closeTask) return closeTask;
     if (session && session.hasDrawingDraft && session.hasDrawingDraft()) return Promise.resolve({ status: 'cancelled' });
     closed = true;
+    // Invalidates all pending deletion probes immediately; read-only probes may
+    // finish later but cannot delete, reschedule or hold up media shutdown.
+    drawingLifetime?.stop(); drawingLifetime = null;
     windowFit?.destroy();windowFit=null;
     // Hide the window, not its failure/result: owned resources still close below.
     // Keep the promise so a delayed host hide cannot hide a reopened session.
@@ -241,7 +252,7 @@
   }
   async function presentWindow(){try{const host=eagle.window;if(!host?.show)return;await host.show();if(!closed)await host.focus?.();}catch(_){/* Host may already be closing. */}}
   function run() {
-    if (session && !closed) { presentWindow(); return loadSelected({ startedAt: now(), trigger: 'plugin-run' }).catch(() => {}); }
+    if (session && !closed) { presentWindow(); drawingLifetime?.run(); return loadSelected({ startedAt: now(), trigger: 'plugin-run' }).catch(() => {}); }
     if (!closed || !lastPlugin || !adapter) return;
     const startedAt = now(); let captured;
     try { captured = Promise.resolve(adapter.captureSelected()); } catch (error) { captured = Promise.reject(error); }
@@ -298,6 +309,7 @@
     eagle.onPluginCreate(initialize);
     if (typeof eagle.onPluginRun === 'function') eagle.onPluginRun(run);
     if (typeof eagle.onPluginShow === 'function') eagle.onPluginShow(() => {
+      if (!closed) drawingLifetime?.run();
       if (session && !closed) { session.setCommentsVisible(true); session.refreshComments().catch(() => {}); }
     });
     if (typeof eagle.onPluginHide === 'function') eagle.onPluginHide(() => { if (session && !closed) session.setCommentsVisible(false); });
