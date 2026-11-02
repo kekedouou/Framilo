@@ -3,7 +3,7 @@
 ## Reading and maintenance
 - Reply briefly in Chinese; explain necessary jargon on first use. Read the [project map](docs/project-profile.md) and [handoff](docs/progress.md), then relevant topics and local AGENTS. Do not read all history by default.
 - Current user instructions and existing explicit authorization take priority; local rules add directory boundaries. Find related rules before adding requirements: merge duplicates, update additions in place, archive replaced decisions. Put feature details in product/verification docs. Only new general rules belong here; no dated patches.
-- Follow [document maintenance](docs/development-plan.md#文档维护机制) for ownership, merging, language and synchronization. Codex reconciles meaning; scripts check structure/links, not every semantic conflict.
+- Follow [document maintenance](docs/development-plan.md#文档维护机制) for ownership, merging, language and synchronization. Keep roadmap stages, details and priorities aligned with settled decisions; do not only append sections. Explain substantive document changes in the delivery message. Codex reconciles meaning; scripts check structure/links, not every semantic conflict.
 
 ## Authorization and implementation
 - Investigation/proposals are read-only by default. Within an approved stage, implement, check and repair continuously; deliver feature bundles. Subtasks/commits do not require renewed approval. Pause dependent work only for required manual acceptance, major product/architecture/experience changes or unauthorized restricted actions; continue the rest.

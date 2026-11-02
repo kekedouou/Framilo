@@ -1,12 +1,12 @@
 # 当前交接
 
 当前阶段：E-54
-候选提交：E54本轮提交（基线be82bba，原生529ed38）
+候选提交：5622d44（原生529ed38）；本轮仅补正文档
 候选状态：圈画生命周期候选完成；真实删除/卸载及E53长期体验待验。
 
 ## 当前授权与结果
 2026-11-01用户选定新A流线F，批准五包连续推进，确认Eagle载入本项目plugin目录；长期自用，不发行。既有宿主待验及[能力限制](releases/motionote-capabilities.md)不变。
-本轮按[E54计划](experiments/E54/plan.md)补齐插件圈画清理；独立版/联动仅记录方案。此前执行见[E53计划](experiments/E53/plan.md)，本轮结果见[E53报告](experiments/E53/report.md)；第二阶段证据见[E52报告](experiments/E52/report.md)。E49冻结503e0a6不改。
+本轮按[E54计划](experiments/E54/plan.md)补齐插件圈画清理；独立版/联动仅记录方案。此前执行见[E53计划](experiments/E53/plan.md)，结果见[E54报告](experiments/E54/report.md)；第二阶段证据见[E52报告](experiments/E52/report.md)。E49冻结503e0a6不改。
 
 ## 集中体验待验
 1. 在真实Eagle打开用户此前失败的MKV，以及常用MP4/MOV/WebM，检查声音、播放/拖动/松手/逐帧/片段/记录；没有用合成浏览器结果代替这些检查。
@@ -27,4 +27,4 @@ E54生命周期/装配及默认检查见本轮报告；E53原生17组合/85次�
 无其它任务继承差异。E54只用自有隔离夹具（≤8 MiB），回执沿e53既有64 MiB预算；旧包/媒体及历史证据保留。
 
 ## 历史导航
-[清理记录](progress/2026-10-31-probe-cleanup.md) · [语言整理](progress/2026-10-31-document-language.md) · [阶段索引](experiments/README.md) · [前端预览长期登记](progress/2026-11-01-frontend-preview-workflow.md) · [E51报告](experiments/E51/report.md) · [冻结记录](releases/e49-frozen-2026-10-30.md) · [文档职责整理](progress/2026-10-31-document-reorganization.md)
+[阶段索引](experiments/README.md) · [文档整理](progress/2026-10-31-document-reorganization.md) · [清理](progress/2026-10-31-probe-cleanup.md) · [预览机制](progress/2026-11-01-frontend-preview-workflow.md)
