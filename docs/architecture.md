@@ -70,6 +70,7 @@ eagle.drawingDeletion唯一核对当前库API、普通images/<id>.info目录缺�
 所有读写端：drawing-session经store.read/save/readVisibility/saveVisibility/readStyles/saveStyles；新维护经maintenanceCandidates/removeDeleted；app负责两者生命周期；eagle只读库状态；缓存/导出/原生媒体及旧包不成为圈画清理端。真实卸载由宿主目录管理，插件不伪造卸载事件。
 
 ## 缓存、持久化与退出
+- 读者只有在真实关闭回执后才移出所有权集合；失败传播到Session/app，不能由allSettled吞掉。后端替换成功关闭旧实例后才清除旧引用。Player在读者失败时仍释放独立的JS帧/纹理/音轨，原生预留与所有权保留。用户显式再次关闭可重试残余释放，只等待原已派发标注写入，不重新派发。
 - cache保留旧JPEG文件所有权、真实路径、锁和完整提交以安全迁移；proxy-storage管理本窗口代理资产/读者租约，正式temporary路径不靠跨次LRU复用。受管额度与OS/驱动进程占用不同。
 - 原生单读者GOP约128～192MiB，接管预留第二读者；帧、缩略图、YUV/RGBA、绘制表面及在途纳入账本。管道/驱动边界与采样另报，不假称程序硬上限。
 - whole-proxy失败先进入cleaning，等待受管进程停止，再核对realpath、owner token/pid、文件身份与白名单，只回收本任务未完成产物；确认后发布终态。失败保留锁及WHOLE_CLEANUP_FAILED，不把缺owner误当已清空；NVENC回退CPU前同样确认回收。
@@ -81,7 +82,7 @@ eagle.drawingDeletion唯一核对当前库API、普通images/<id>.info目录缺�
 Session仅在释放成功后将SELECTION_EMPTY映射正常empty；SDK/释放故障保持error。
 
 ## 临时媒体与开发预览
-- `temporary-media.cjs`为每个窗口建立`cache/sessions-v1/<随机id>`，登记owner/启动身份/子进程意图；全程生成路径局限其中。关闭必须先停止原生读者、探测与编码子进程，再核验目录归属并原子改名为retiring后删除；未知文件/活动进程/不完整出生身份保留。无遗留时身份查询异步，不阻塞首帧或关闭；恢复旧会话才使用完整进程快照。
+- `temporary-media.cjs`为每个窗口建立`cache/sessions-v1/<随机id>`，登记owner/启动身份/子进程意图；全程生成路径局限其中。关闭开始即禁止新进程，2.5秒正常收尾后对仍活跃的原ChildProcess句柄发终止，5秒仍未收到close则报错保留；不按进程名称或裸PID终止。确认所有流关闭后才核验目录归属并原子改名为retiring后删除。未知文件/活动进程/不完整出生身份保留；迟到close后可明确重试。持久格式及恢复读者不变。无遗留时身份查询异步，不阻塞首帧；恢复旧会话才使用完整进程快照。
 - `media-space.cjs`统一十进制1 GB累计确认、2 GiB物理余量、100 GiB内部保护与跨窗口原子预留；预留与输出字节上限都由生成层执行，UI不直接计数。`space.json`在任务终止后释放，崩溃由owner恢复处理。
 - `legacy-media-cleanup.cjs`在正常关闭新运行链后，调用旧cache所有权/读者检查清理已确认的旧JPEG与完整代理；旧PID-only读者记录缺出生证据时保护，不猜测删除。旧cache不再复用，首次升级的旧数据在首次正常关闭迁移。原片、annotation-data、偏好和验收证据不进入删除白名单。
 - `scripts/frontend-preview.cjs`仅开发使用：loopback随机令牌/Host-Origin/GET白名单；共享正式HTML/CSS/UI和Session，`scripts/preview`只替换播放器与Eagle/存储适配。示例写入sessionStorage，不进入产品包。原生窗控、GPU、缓存清理禁用；浏览器样本不能证明原生精度、音画、缓存或Eagle数据读写。

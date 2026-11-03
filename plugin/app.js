@@ -6,11 +6,11 @@
   async function syncFullscreen(){if(fullscreenTransition)return;try{const token=++fullscreenProbe,value=await eagle.window.isFullScreen();if(token!==fullscreenProbe)return;if(!value)windowedGeometry=null;document.documentElement.dataset.evaFullscreen=String(!!value);window.dispatchEvent(new Event('eva-fullscreen-change'));}catch(_){/* Host may not be ready yet. */}}
   let fullscreenTimer=null;window.addEventListener('resize',()=>{clearTimeout(fullscreenTimer);fullscreenTimer=setTimeout(syncFullscreen,100);});window.addEventListener('focus',syncFullscreen);syncFullscreen();
   let windowDrag=null,windowedGeometry=null;
-  function dragAdapter(){if(!windowDrag){if(!lastPlugin?.path)throw Error('窗口尚未准备完成');windowDrag=require(path.join(lastPlugin.path,'window-drag.cjs')).createWindowDrag({host:eagle.window,sync:syncFullscreen,schedule:fn=>window.requestAnimationFrame(fn),cancel:id=>window.cancelAnimationFrame(id),report:error=>{const n=document.getElementById('error');n.hidden=false;n.textContent='窗口拖动未完成：'+error.message;}});}return windowDrag;}
+  function dragAdapter(){if(!windowDrag){if(!lastPlugin?.path)throw Error('窗口尚未准备完成');windowDrag=require(path.join(lastPlugin.path,'window-drag.cjs')).createWindowDrag({host:eagle.window,screen:eagle.screen,sync:syncFullscreen,report:error=>{const n=document.getElementById('error');n.hidden=false;n.textContent='窗口拖动未完成：'+error.message;}});}return windowDrag;}
   window.addEventListener('unload',()=>windowDrag?.cancel());
   async function hostAction(action,details) {
     try {
-      if(action==='window-drag-start'){await dragAdapter().start({...details,restore:windowedGeometry});return;}
+      if(action==='window-drag-start'){await dragAdapter().start({...details,restore:details?.fullscreen?windowedGeometry:null});return;}
       if(action==='window-drag-move'){windowDrag?.move(details);return;}
       if(action==='window-drag-end'){windowDrag?.end(details);return;}
       if(action==='close'){windowDrag?.cancel();window.close();return;}
@@ -134,8 +134,10 @@
           const tools = discoveredTools || await waitTools(discovery, signal); discoveredTools = tools;
           if (signal && signal.aborted) throw cancelled();
           if (!preparedMedia || key !== backendKey) {
-            if (backend) { const previous = backend; preparedMedia = null; backendKey = null; backend = null;
-              await previous.close(); if (signal?.aborted) throw cancelled(); }
+            if (backend) { const previous = backend;
+              // Keep the failed owner's stop/retry handle until exit is confirmed.
+              await previous.close(); preparedMedia = null; backendKey = null; backend = null;
+              if (signal?.aborted) throw cancelled(); }
             if(native){temporaryMedia=temporaryMedia||require(path.join(root,'temporary-media.cjs')).createTemporaryMedia({pluginRoot:root});
             await temporaryMedia.ready;if(signal?.aborted)throw cancelled();}
             const onBackground = () => { if (session && !closed) ui.update(session.snapshot()); };
@@ -194,9 +196,15 @@
     finally { initializing = false; }
   }
   function close() {
-    if (closeTask) return closeTask;
+    return performClose(false);
+  }
+  function performClose(retry) {
+    if (closeTask && (!retry || !closeFailure)) return closeTask;
+    const retrying = !!closeFailure;
+    if(retrying){closeTask=null;closeFailure=null;}
     if (session && session.hasDrawingDraft && session.hasDrawingDraft()) return Promise.resolve({ status: 'cancelled' });
     closed = true;
+    windowDrag?.cancel();
     // Invalidates all pending deletion probes immediately; read-only probes may
     // finish later but cannot delete, reschedule or hold up media shutdown.
     drawingLifetime?.stop(); drawingLifetime = null;
@@ -208,12 +216,14 @@
       let result, failure;
       // Arm the independent deadline before awaiting potentially stuck media
       // cleanup. Player reads still drain before the owner releases its leases.
+      const stopping=temporaryMedia?.beginClose?.();stopping?.catch(()=>{});
       try { if (backend) backend.beginClose(); } catch (error) { failure = error; }
-      try { result = session ? await session.close() : { status: 'closed' }; } catch (error) { failure = error; }
+      try { result = session ? await (retrying&&session.retryClose?session.retryClose():session.close()) : { status: 'closed' }; } catch (error) { failure = error; }
       // destroy() below releases a pending first-paint wait. Reopening waits
       // for this old initializer as well as its media owner before reusing UI.
       try { await initializationTask; } catch (error) { failure = failure || error; }
       try { if (backend) await backend.close(); } catch (error) { failure = failure || error; }
+      try { await stopping; } catch (error) { failure = failure || error; }
       if(!failure&&temporaryMedia)try{await temporaryMedia.close();temporaryMedia=null;await backend?.retireLegacy?.();}catch(error){failure=error;}
       if (failure) throw failure;
       if (result?.status === 'error') throw new Error(result.error?.message || '资源释放未完成');
@@ -227,10 +237,10 @@
         message: String(failure && failure.message || failure).slice(0, 1024) } });
     });
     closeTask.catch(closeFailed);
-    ui.destroy({ closing: true }); ui.update({ state: 'closing', source: null, duration: 0, playback: null, error: null }); return closeTask;
+    if(!retrying)ui.destroy({ closing: true }); ui.update({ state: 'closing', source: null, duration: 0, playback: null, error: null }); return closeTask;
   }
   function requestClose() {
-    if (closeTask) return closeTask;
+    if (closeTask) return closeFailure ? performClose(true) : closeTask;
     if (!session || !session.hasDrawingDraft || !session.hasDrawingDraft()) return close();
     if (drawingCloseIntent) return drawingCloseIntent;
     const intent = Promise.resolve(ui.confirmDrawingExit ? ui.confirmDrawingExit() : false).then(ok => ok ? close() : { status: 'cancelled' })
@@ -268,7 +278,6 @@
     // Keep the error visible; a subsequent explicit close may leave once stopped.
   }
   function beforeUnload(event) {
-    if (closeFailure && backend?.stopped) { allowUnload = true; return; }
     if (allowUnload) return;
     // Eagle's exit notification does not await our Promise. Keep this renderer
     // alive so media can stop/wait for children and streams, abort its own

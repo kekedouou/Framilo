@@ -101,7 +101,21 @@ async function shellCases() {
   state.comments.items.push({ id: 'duplicate', time: 1, text: 'same frame' });
   const session = { annotationFrame: time => state.state === 'preparing' ? null : time * 60, prioritizeRecords(value) { assert(state.playback && state.state !== 'preparing', 'Session must be able to consume priorities'); priorities.push(JSON.parse(JSON.stringify(value))); prioritySources.push(state.source.id); },
     pause() { pauses++; }, async renderThumbnail(time, canvas) { rendered++; canvas.width = 160; canvas.height = 90; return { release() { released++; } }; } };
-  const shell = win.EVAGraphite.createShell({ document: doc, window: win, getState: () => state, getSession: () => session, annotate() {}, clip() {}, exitDrawing() {} });
+  const hostCalls=[];let finishDrag;
+  const shell = win.EVAGraphite.createShell({ document: doc, window: win, getState: () => state, getSession: () => session, annotate() {}, clip() {}, exitDrawing() {},
+    hostAction(action,details){hostCalls.push({action,details});if(action==='window-drag-start')return new Promise(resolve=>{finishDrag=resolve;});} });
+  const header=workspace.querySelector('.shell-header');
+  for(const full of [false,true]){
+    doc.documentElement.dataset.evaFullscreen=String(full);win.fire('eva-fullscreen-change');
+    header.fire('pointerdown',{clientX:300,clientY:20,screenX:-100,screenY:20});
+    win.fire('pointermove',{clientX:320,clientY:30,screenX:-80,screenY:30});
+    assert.equal(hostCalls.at(-1).action,'window-drag-start');assert.equal(hostCalls.at(-1).details.fullscreen,full);
+    header.fire('lostpointercapture');win.fire('blur');assert.equal(workspace.dataset.windowDragging,'true','restore transition retains gesture');
+    finishDrag();await microtasks();win.fire('pointerup',{pointerId:2});assert.equal(workspace.dataset.windowDragging,'true','other pointer cannot end drag');
+    win.fire('pointermove',{screenX:-70,screenY:40});assert.equal(hostCalls.at(-1).action,'window-drag-move');
+    win.fire('pointerup',{screenX:-60,screenY:40});assert.equal(hostCalls.at(-1).action,'window-drag-end');assert.equal(workspace.dataset.windowDragging,undefined);
+  }
+  doc.documentElement.dataset.evaFullscreen='false';header.fire('dblclick');assert.equal(hostCalls.at(-1).action,'maximize');
   shell.update(state); assert.equal(priorities.length, 0, 'Early comments must not be marked as delivered to an unready Session');
   state.source = { ...state.source, sha256: 'a'.repeat(64) }; shell.update(state);
   assert.equal(priorities.length, 0, 'Source SHA arriving before the player does not make the record service ready');

@@ -64,6 +64,7 @@ class FilmcraftClient {
   cancel(){this.finish('superseded');if(!this.dead&&!this.exit&&!this.failure)this.proc.stdin.write(`cancel ${++this.id}\n`);}
   snapshot(){return {...this.stats,open:this.openInfo,stderr:this.stderr};}
   close(){
+    // A failed deadline must not permanently poison a later explicit retry.
     if(this.closeTask)return this.closeTask;
     const at=performance.now();this.dead=true;this.finish('closed');clearTimeout(this.openTimer);
     if(!this.openInfo)this.openReject(Error('Native reader closed before ready'));
@@ -74,7 +75,7 @@ class FilmcraftClient {
         if(!this.processClosed){this.proc.kill();let killTimer;await Promise.race([done,new Promise(r=>{killTimer=setTimeout(r,1000);})]);clearTimeout(killTimer);}}
       if(!this.processClosed)throw Error('视频读者尚未退出，缓存保留。');
       this.packets.reset();return {ms:performance.now()-at,ack:this.closedInfo||null,exit:this.exit||null};
-    })();return this.closeTask;
+    })();this.closeTask.catch(()=>{this.closeTask=null;});return this.closeTask;
   }
 }
 module.exports={FilmcraftClient,targetAt};

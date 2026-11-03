@@ -88,6 +88,23 @@ async function bounded(pending) {
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 async function main() {
   {
+    let attempts=0;const h=harness({closeSession:async()=>{if(++attempts===1)throw Error('reader recovering');return{status:'closed'};}});
+    await h.hooks.onPluginCreate({path:h.root});h.requestClose();await tick();assert(!h.windowState().destroyed);
+    h.requestClose();await tick();await tick();assert(h.windowState().destroyed);assert.equal(h.counts().destroyed,1);
+    console.log('E59 app: explicit close recovers after confirmed resource release without a second UI teardown');
+  }
+  {
+    let ram=512*1024**2,closes=0,created=0;
+    const h=harness({preferences:{snapshot:()=>({ramBytes:ram}),gpuAcceleration:()=>false},modules:{
+      'native-backend.cjs':{createNativeBackend(){created++;return{media:{prepare:async()=>({})},cache:{release:async()=>{}},beginClose(){},async close(){if(++closes===1)throw Error('old backend still running');}};}}
+    }});
+    await h.hooks.onPluginCreate({path:h.root});
+    const first=h.config.media.prepare({filePath:'D:/fixture.mp4'},{playbackBackend:'proxy'});await tick();h.discoveries[0].resolve({ffmpeg:'existing-only'});await first;
+    ram*=2;await assert.rejects(h.config.media.prepare({filePath:'D:/fixture.mp4'},{playbackBackend:'proxy'}),/old backend/);assert.equal(created,1);
+    await h.hooks.onPluginBeforeExit();assert.equal(closes,2,'failed replacement must keep old backend reachable for close');
+    console.log('E59 app: backend replacement failure retains original cleanup owner');
+  }
+  {
     let resume,captures=0;const gate=new Promise(r=>{resume=r;});const h=harness({prepareEntry:()=>gate,capture:()=>{captures++;return Promise.resolve({id:'fixed',filePath:path.resolve('selected-before-paint.mp4')});}});
     const opening=h.hooks.onPluginCreate({path:h.root});assert.equal(captures,1);assert.equal(h.config,undefined,'heavy session work waits for first paint');
     const closing=h.hooks.onPluginBeforeExit();resume();await bounded(closing);await bounded(opening);assert.equal(h.config,undefined,'closed initializer cannot build media after paint');
@@ -192,8 +209,9 @@ async function main() {
     await tick(); assert.strictEqual(h.windowState().destroyed, false);
     assert.strictEqual(h.updates.at(-1).state, 'closed'); assert.match(h.updates.at(-1).error.message, /关闭清理失败/);
     h.requestClose(); await tick(); assert.strictEqual(h.windowState().destroyed, false);
-    assert.strictEqual(h.counts().closed, 1);
-    console.log('T1 app: cleanup ' + (rejected ? 'rejection' : 'error result') + ' cannot destroy the renderer or retry cleanup silently passed');
+    assert.strictEqual(h.counts().closed, 2);
+    assert.strictEqual(h.counts().destroyed, 1);
+    console.log('T1 app: cleanup ' + (rejected ? 'rejection' : 'error result') + ' stays visible; explicit close retries without destroying UI twice');
   }
   for (const setting of ['throwTimer', 'throwNativeClose']) {
     const h = harness({ [setting]: true }); await h.hooks.onPluginCreate({ path: h.root });

@@ -4,6 +4,7 @@
 
 | 阶段 | 计划 | 结果 | 专项 |
 | --- | --- | --- | --- |
+| E59 | [plan.md](E59/plan.md) | [report.md](E59/report.md) | 关闭重开累积、跨屏拖动、退出异常及兼容/数据安全回归 |
 | E58 | [plan.md](E58/plan.md) | [report.md](E58/report.md) | 冷帧续播光标、启动加载、容量提示及指定4K素材续播调查 |
 | E57 | [plan.md](E57/plan.md) | [report.md](E57/report.md) | 有界拖动调度、定向预解压及续播；新包核验后替换旧包 |
 | E56 | [plan.md](E56/plan.md) | [report.md](E56/report.md) | 整轮预览细节：定位/循环边界、默认偏好、提示/快捷键/动效；新自用包替换旧包 |

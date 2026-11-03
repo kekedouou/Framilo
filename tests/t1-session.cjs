@@ -59,6 +59,13 @@ function harness(settings = {}) {
   return h;
 }
 async function main() {
+  await test('E59 explicit close retry drains the retained owner without preparing or saving again',async()=>{
+    let fails=true;const h=harness({dispose:async()=>{if(fails)throw Error('reader not closed');}});
+    await h.session.loadSelected();assert.equal((await h.session.close()).status,'error');
+    assert.equal(h.released.length,0);fails=false;
+    assert.equal((await h.session.retryClose()).status,'closed');assert.equal(h.released.length,1);
+    assert.equal((await h.session.retryClose()).status,'closed');assert.equal(h.released.length,1);assert.equal(h.prepared.length,1);
+  });
   await test('E41 direct and released seeks retain provisional preview until the exact frame is drawn', async () => {
     const gate=deferred(), calls=[]; let pending=false, clears=0;
     const quick={snapshot:()=>({active:false,pending}),request(t,o){pending=true;calls.push({t,o});},clear(){pending=false;clears++;},cancel(){pending=false;},async close(){pending=false;}};

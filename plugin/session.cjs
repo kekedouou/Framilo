@@ -96,7 +96,7 @@ function createSession(options) {
       const failed = results.find(result => result.status === 'rejected'); if (failed) throw failed.reason;
     })(); }
     catch (failure) { owned.dispose = Promise.reject(failure); }
-    owned.dispose.catch(() => {});
+    const disposing=owned.dispose;disposing.catch(() => {if(owned.dispose===disposing)owned.dispose=null;});
   }
   async function releaseOwner(owned = owner) {
     if (!owned) return;
@@ -402,6 +402,17 @@ function createSession(options) {
         if (!closed && token !== epoch) return { status: 'superseded' };
         if (kind !== 'closed') state = 'error'; error = describe(failure, 'SESSION_RELEASE_FAILED'); notify(); return { status: 'error', error: { ...error } };
       }
+    });
+  }
+  function retryClose(){
+    if(!closed)return clear('closed');
+    return enqueue(async()=>{
+      try{
+        await releaseOwner();
+        // Re-wait existing writes; never re-dispatch an annotation write.
+        await Promise.all([...writes.values()].map(v=>v.promise).filter(Boolean).concat(activeExport?.promise||[]));
+        cleanupError=null;error=null;notify();return{status:'closed'};
+      }catch(failure){error=describe(failure,'SESSION_RELEASE_FAILED');notify();return{status:'error',error:{...error}};}
     });
   }
   function writeKey(value) { return value.libraryPath + '\0' + value.source.id + '\0' + value.source.filePath; }
@@ -871,6 +882,6 @@ function createSession(options) {
     startProxy: () => proxyControl('startProxy'), cancelProxy: () => proxyControl('cancelProxy'),
     setAutoProxy: enabled => setPlaybackSettings({ ramMiB: options.memoryPreferences?.snapshot()?.ramMiB, autoProxy: enabled }),
     beginExport, loadExportFolders, checkExport, cancelExport: () => { if (activeExport && !activeExport.issued) activeExport.controller.abort(); },
-    libraryChanged: () => clear('library-changed'), close: () => clear('closed'), snapshot, memorySnapshot, cacheCoverageSnapshot });
+    libraryChanged: () => clear('library-changed'), close: () => clear('closed'), retryClose, snapshot, memorySnapshot, cacheCoverageSnapshot });
 }
 module.exports = { createSession };

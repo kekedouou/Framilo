@@ -184,7 +184,10 @@
 .shell-record-list{margin:12px 0;padding:0 12px}
 .shell-record-card[aria-pressed="true"]:after{border-color:transparent}
 .shell-record-card:hover:not(:disabled):after{border-color:#627d91}
-.workspace[data-window-dragging="true"] .shell-header{-webkit-app-region:no-drag;opacity:1;transform:none;pointer-events:auto}
+.workspace[data-window-dragging="true"] .shell-header{-webkit-app-region:no-drag;opacity:1;transform:none;pointer-events:auto;transition:none}
+/* Keep one pointer path across displays and fullscreen restoration. Native drag
+   regions suppress DOM pointer events and can retain stale compositor geometry. */
+.workspace[data-graphite] .shell-header{-webkit-app-region:no-drag;user-select:none;touch-action:none}
 .workspace[data-graphite]>.drawing-panel{position:absolute;left:8px;z-index:23;width:48px;padding:0;background:var(--surface);border:1px solid #ffffff12;border-radius:0;animation:toolrail-in 130ms ease-out}
 .workspace[data-graphite]>.drawing-panel .drawing-tools{flex-direction:column-reverse;flex-wrap:nowrap;gap:2px;padding:4px;max-height:var(--toolrail-height,360px);overflow:auto;align-items:center}
 .workspace[data-graphite]>.drawing-panel .drawing-tool-group{flex-direction:column-reverse;gap:2px;flex:none}

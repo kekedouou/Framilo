@@ -39,3 +39,13 @@ test('concurrent windows reserve against each other before writing and release t
  const [ra,rb]=await Promise.all([a.reserve({used:0,readFree}),b.reserve({used:0,readFree})]);assert(ra.bytes+rb.bytes<=1024**3);assert(ra.bytes>0&&rb.bytes>0);
  await Promise.all([ra.release(),rb.release()]);await Promise.all([a.close(),b.close()]);assert(!fs.existsSync(path.join(dir,'cache/sessions-v1/capacity.lock')));
 });
+
+test('E59 owner deadline kills only original handles, drains close, then permits cleanup',async t=>{
+ const dir=await fixture(t);let child,kills=0;
+ const m=api.createTemporaryMedia({pluginRoot:dir,stopGraceMs:1,stopTimeoutMs:100,query:async()=>[identity(process.pid)],spawn:()=>{child=new EventEmitter();child.pid=424242;child.kill=()=>{kills++;setImmediate(()=>child.emit('close',null));};return child;}});
+ await m.ready;m.spawn('C:\\test\\ffmpeg.exe',[],{});const stop=m.beginClose();assert.throws(()=>m.spawn('C:\\test\\ffmpeg.exe',[],{}),/正在关闭/);await stop;await m.close();assert.equal(kills,1);assert.equal(m.active(),0);assert(!fs.existsSync(m.directory));
+});
+test('E59 kill request without close receipt cannot clear media; late close allows explicit retry',async t=>{
+ const dir=await fixture(t);let child;const m=api.createTemporaryMedia({pluginRoot:dir,stopGraceMs:1,stopTimeoutMs:10,query:async()=>[identity(process.pid)],spawn:()=>{child=new EventEmitter();child.pid=424243;child.kill=()=>true;return child;}});
+ await m.ready;m.spawn('C:\\test\\ffmpeg.exe',[],{});await assert.rejects(m.close(),/仍在运行/);assert(fs.existsSync(m.directory));child.emit('close',null);await m.close();assert(!fs.existsSync(m.directory));
+});

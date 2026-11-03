@@ -43,7 +43,7 @@ function build(ref='HEAD'){
  // source/executable hashes are validated by validateRuntime before packaging.
  for(const n of RUNTIME)assert(tracked.has('plugin/'+n)||/^native\/task-host\.local\.(exe|json)$/.test(n),'Unversioned runtime input: '+n);
  const m=JSON.parse(files['manifest.json']);manifestCheck(m);
- files['README.md']=Buffer.from('Framilo · 个人使用快照\n版本：'+m.version+'\n来源：'+commit+'\n\n完整解压到独立的非C盘可写目录，再通过Eagle载入本地插件。\n本包不公开发行，尚未完成长期验收。需要Eagle的FFmpeg模块；无需安装Rust或Node.js。\n升级前关闭播放器。保留原目录的memory-settings.json和annotation-data，不移动或覆盖Eagle素材库。\n回退只恢复本插件程序文件；不要删除用户偏好、标注、未知文件或活动缓存。\n相同插件ID不能同时注册两个入口；不要将回退目录当第二个插件同时运行。\n回退版本不支持的新功能和偏好可能无法使用；Git回退不能撤销Eagle标注写入。\n首次在新目录使用可能需要重新生成缓存；正常关闭清理本窗口临时媒体。\n\n第三方许可在bin目录。项目整体开源许可证未指定，本包不授予新许可。\n');
+ files['README.md']=Buffer.from('Framilo · 个人使用快照\n版本：'+m.version+'\n来源：'+commit+'\n\n完整解压到独立的非C盘可写目录，再通过Eagle载入本地插件。\n本包不公开发行，实际宿主体验以当前验收记录为准。需要Eagle的FFmpeg模块；无需安装Rust或Node.js。\n升级前关闭播放器。保留原目录的memory-settings.json和annotation-data，不移动或覆盖Eagle素材库。\n回退只恢复本插件程序文件；不要删除用户偏好、标注、未知文件或活动缓存。\n相同插件ID不能同时注册两个入口；不要将回退目录当第二个插件同时运行。\n回退版本不支持的新功能和偏好可能无法使用；Git回退不能撤销Eagle标注写入。\n首次在新目录使用可能需要重新生成缓存；正常关闭清理本窗口临时媒体。\n\n第三方许可在bin目录。项目整体开源许可证未指定，本包不授予新许可。\n');
  const info={schema:'framilo-private-package-v1',version:m.version,sourceCommit:commit,commitTime,pluginId:ID,publicRelease:false,longTermAccepted:false,files:Object.fromEntries(Object.entries(files).map(([n,b])=>[n,{bytes:b.length,sha256:sha(b)}]))};checkFiles(files,info);
  if(!fs.existsSync(DIST))fs.mkdirSync(DIST);safe(DIST,true);
  const used=inventory(DIST).reduce((n,p)=>n+safe(path.join(DIST,p)).size,0),size=Object.values(files).reduce((n,b)=>n+b.length,0);assert(used+size*2+1024**2<=BUDGET,'Private snapshot budget exceeded');

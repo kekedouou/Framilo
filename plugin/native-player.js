@@ -265,7 +265,23 @@
    finally{this.thumbRunning=false;this.idleTurn='near';this._scheduleFill();if(this.fillTimer===undefined&&!this.fillTask&&!this.readerBusy&&this.thumbQueue.length&&!this.disposed&&this.state==='paused'&&!this.pendingTargets){this.fillTimer=setTimeout(()=>{this.fillTimer=undefined;this._drainThumbnails();},0);}}
   }
   dispose(){if(this.disposeTask)return this.disposeTask;this.disposed=true;this.serial++;this._clearQueued();clearTimeout(this.fillTimer);this.fillTimer=undefined;this.pause(false);this.runtime.cancelAudio?.();this.audioLoadCancel?.();this.state='disposed';this.unsub?.();if(this.audio){this.audio.pause();this.audio.removeAttribute('src');this.audio.load();this.audio=null;}if(this.audioURL){root.URL.revokeObjectURL(this.audioURL);this.audioURL=null;}
-   this.disposeTask=(async()=>{await this.audioTask?.catch(()=>{});this.budget.release(this.audioSourceToken);await this.runtime.cancelReaders?.();if(this.candidateReader)await this.runtime.closeReader(this.candidateReader);if(this.reader)await this.runtime.closeReader(this.reader);await this.switchTask?.catch(()=>{});await this.fillTask;for(const lease of [...this.leases])lease.release();for(const e of this.cache.values())this.budget.release(e.token);this.cache.clear();for(const e of this.thumbCache.values())this.budget.release(e.token);this.thumbCache.clear();this.renderer?.dispose();this.budget.release(this.renderToken);this.budget.release(this.nativeToken);})();return this.disposeTask;
+   this.disposeTask=(async()=>{
+    try{
+     await this.audioTask?.catch(()=>{});
+     const closed=await Promise.allSettled([this.runtime.cancelReaders?.(),this.candidateReader?this.runtime.closeReader(this.candidateReader):null,this.reader?this.runtime.closeReader(this.reader):null]);
+     await this.switchTask?.catch(()=>{});await this.fillTask;
+     const failed=closed.find(r=>r.status==='rejected');if(failed)throw failed.reason;
+     this.budget.release(this.nativeToken);
+    }finally{
+     // GPU/device failures must not keep the unrelated JS frames, textures or
+     // audio backing alive. Native ownership stays charged until confirmed closed.
+     this.budget.release(this.audioSourceToken);
+     for(const lease of [...this.leases])lease.release();
+     for(const e of this.cache.values())this.budget.release(e.token);this.cache.clear();
+     for(const e of this.thumbCache.values())this.budget.release(e.token);this.thumbCache.clear();
+     this.renderer?.dispose();this.budget.release(this.renderToken);this.fillPlan=null;this.fillFailures.clear();this.thumbQueue=[];
+    }
+   })();this.disposeTask.catch(()=>{this.disposeTask=null;});return this.disposeTask;
   }
  }
  root.EVANativePlayer={Player};if(typeof module==='object')module.exports={Player};

@@ -562,3 +562,12 @@ test('E57 disabled or full nearby preparation still drains a finite record queue
   await new Promise(r=>setTimeout(r,5));assert.equal(h.p.fillTimer,undefined);assert.equal(h.p.thumbRunning,false);assert.equal(h.p.readerBusy,false);
  }finally{await h.cleanup();}}
 });
+
+test('E59 failed native exit still releases JS/render/audio resources and permits explicit retry',async()=>{
+ const h=await fixture({audio:true});let fail=true,disposed=0;
+ h.p.renderer={dispose:()=>disposed++};h.p.renderToken=h.p.budget.reserve(32,'video-render-surfaces');
+ const close=h.runtime.closeReader;h.runtime.closeReader=async r=>{if(fail)throw Error('device stalled');return close(r);};
+ await assert.rejects(h.p.dispose(),/device stalled/);assert.equal(h.p.cache.size,0);assert.equal(h.p.thumbCache.size,0);assert.equal(h.p.audio,null);assert.equal(disposed,1);
+ assert.equal(h.p.budget.snapshot().kinds['video-render-surfaces']||0,0);
+ fail=false;await h.p.dispose();assert.equal(h.p.budget.used,0);
+});

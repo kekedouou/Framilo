@@ -8,7 +8,7 @@ async function fixture(t,options={}){
  const readers=[],jobs=[],audioJobs=[],factoryOptions=[],maintenanceOptions=[],clearCalls=[];let sourceProbes=0;
  class FakeReader{
   constructor(opts){this.options=opts;this.closed=0;readers.push(this);this.ready=options.holdOpen?new Promise((resolve,reject)=>{this.rejectOpen=reject;}):Promise.resolve(this);}
-  async close(){if(this.closing)return this.closing;this.closed++;this.rejectOpen?.(Error('closed before ready'));this.closing=(async()=>{if(options.closeWait)await options.closeWait;return{exit:{code:0}};})();return this.closing;}
+  async close(){if(options.closeError)throw options.closeError;if(this.closing)return this.closing;this.closed++;this.rejectOpen?.(Error('closed before ready'));this.closing=(async()=>{if(options.closeWait)await options.closeWait;return{exit:{code:0}};})();return this.closing;}
  }
  function producer(config){factoryOptions.push(config);return{pids:()=>[],start(spec){if(options.throwProxy)throw Error('proxy unsupported');let resolve;const job={spec,state:{status:'encoding',stage:'preparing'},ready:new Promise(r=>{resolve=r;}),snapshot(){return this.state;},async cancel(){this.state={status:'cancelled',stage:'cancelled'};resolve(null);return this.ready;},complete(value){this.state={status:'ready',stage:'complete'};resolve(value);}};jobs.push(job);return job;},async close(){await Promise.all(jobs.map(j=>j.cancel()));}};}
  function spawn(exe,args){const c=new EventEmitter();c.stdout=new PassThrough();c.stderr=new PassThrough();c.kill=()=>{c.emit('close',null);};if(options.holdProbe)return c;setImmediate(()=>{
@@ -103,4 +103,13 @@ test('E52 audio without stream duration uses real packet boundary and preserves 
 });
 test('E52 missing audio packet end cannot silently become a video-derived or silent duration',async t=>{
  const f=await fixture(t,{audio:true,audioPackets:[{pts:0}]});await assert.rejects(f.backend.media.prepare({id:'audio-bounds',filePath:f.source}),/声音结束位置无法确认/);assert.equal(f.readers.length,0);assert.equal(f.jobs.length,0);
+});
+
+test('E59 failed reader remains owned, failure propagates, later release retries without losing ownership',async t=>{
+ const options={},f=await fixture(t,options),info=await f.backend.media.prepare({id:'unit',filePath:f.source}),runtime=info.nativeRuntime,r=await runtime.createReader();r.proc={pid:99123};
+ options.closeError=Error('device reader still running');
+ await assert.rejects(runtime.closeReader(r),/still running/);assert(runtime.resourcePids().includes(99123));
+ await assert.rejects(runtime.release(),/still running/);assert(runtime.resourcePids().includes(99123));
+ f.backend.beginClose();await assert.rejects(f.backend.close(),/still running/);assert.equal(f.backend.stopped,false);
+ options.closeError=null;await f.backend.close();assert.equal(f.backend.stopped,true);assert(!runtime.resourcePids().includes(99123));
 });

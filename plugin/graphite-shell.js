@@ -63,10 +63,20 @@ function createShell({document:doc,window:win,getState,getSession,getRange,annot
  on(win,'eva-fullscreen-change',fullscreenChanged);on(doc,'fullscreenchange',fullscreenChanged);on(headerEdge,'pointerenter',revealHeader);on(header,'pointerenter',revealHeader);on(header,'pointerleave',hideHeader);on(header,'focusin',revealHeader);on(header,'focusout',hideHeader);fullscreenChanged();
  let headerDrag=null;
  const dragPoint=e=>({x:e.screenX,y:e.screenY});
- on(header,'pointerdown',e=>{if(e.button!==0||!full()||e.target.closest('button'))return;headerDrag={id:e.pointerId,x:e.clientX,y:e.clientY,ratio:e.clientX/win.innerWidth,active:false};try{header.setPointerCapture?.(e.pointerId);}catch(_){}e.preventDefault();});
- on(win,'pointermove',e=>{const d=headerDrag;if(!d||d.id!==e.pointerId)return;if(!d.active&&Math.hypot(e.clientX-d.x,e.clientY-d.y)>6){d.active=true;workspace.dataset.windowDragging='true';revealHeader();hostAction('window-drag-start',{...dragPoint(e),ratio:d.ratio,offsetY:d.y});}else if(d.active)hostAction('window-drag-move',dragPoint(e));});
- const endHeaderDrag=e=>{const d=headerDrag;if(!d)return;headerDrag=null;if(d.active)hostAction('window-drag-end',e?.type==='pointerup'?dragPoint(e):null);delete workspace.dataset.windowDragging;try{if(header.hasPointerCapture?.(d.id))header.releasePointerCapture(d.id);}catch(_){} };
- on(win,'pointerup',endHeaderDrag);on(win,'pointercancel',endHeaderDrag);on(header,'lostpointercapture',endHeaderDrag);on(win,'blur',endHeaderDrag);
+ on(header,'pointerdown',e=>{if(e.button!==0||e.target.closest('button'))return;headerDrag={id:e.pointerId,x:e.clientX,y:e.clientY,ratio:e.clientX/win.innerWidth,fullscreen:full(),active:false,restoring:false};try{header.setPointerCapture?.(e.pointerId);}catch(_){}e.preventDefault();});
+ on(win,'pointermove',e=>{const d=headerDrag;if(!d||d.id!==e.pointerId)return;
+  if(e.buttons===0){endHeaderDrag();return;}
+  if(!d.active&&Math.hypot(e.clientX-d.x,e.clientY-d.y)>6){d.active=true;d.restoring=true;workspace.dataset.windowDragging='true';revealHeader();
+   Promise.resolve(hostAction('window-drag-start',{...dragPoint(e),ratio:d.ratio,offsetY:d.y,fullscreen:d.fullscreen})).finally(()=>{
+    d.restoring=false;if(headerDrag!==d)return;
+    if(doc.hasFocus?.()===false){endHeaderDrag();return;}
+    try{header.setPointerCapture?.(d.id);}catch(_){endHeaderDrag();}
+   }).catch(()=>{endHeaderDrag();});
+  }else if(d.active)hostAction('window-drag-move',dragPoint(e));});
+ const endHeaderDrag=e=>{const d=headerDrag;if(!d||e?.pointerId!==undefined&&e.pointerId!==d.id)return;headerDrag=null;if(d.active)hostAction('window-drag-end',e?.type==='pointerup'?dragPoint(e):null);delete workspace.dataset.windowDragging;try{if(header.hasPointerCapture?.(d.id))header.releasePointerCapture(d.id);}catch(_){} };
+ const interruptedDrag=e=>{if(!headerDrag?.restoring)endHeaderDrag(e);};
+ on(win,'pointerup',endHeaderDrag);on(win,'pointercancel',endHeaderDrag);on(header,'lostpointercapture',interruptedDrag);on(win,'blur',interruptedDrag);
+ on(header,'dblclick',e=>{if(!e.target.closest('button'))hostAction(full()?'windowed':'maximize');});
  const toastState=new Map();
  function fadeOthers(id){for(const [other,v]of toastState)if(other!==id&&!v.persistent){clearTimeout(v.timer);$(other).setAttribute('data-faded','true');}const p=$('proxyState');if(id!=='proxyState'&&p?.getAttribute('data-persistent')==='false')p.setAttribute('data-faded','true');}
  const data=(node,key,value)=>{const next=String(value);if(node.dataset[key]!==next)node.dataset[key]=next;};

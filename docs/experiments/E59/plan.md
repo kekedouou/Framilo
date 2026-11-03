@@ -1,0 +1,14 @@
+# E59 — Reopen, window dragging and resource safety
+
+Baseline e523c81, clean worktree. User accepted E58's concentrated experience checks on 2026-11-03 and authorized compatibility/data-safety work plus fullscreen restore stutter, intermittent cross-display dragging, failed shutdown and progressively slower close/reopen cycles. Each selection followed closing/reopening; Unreal crashed with the attached GPU error. Do not infer that plugin GPU use caused Unreal's crash.
+
+Scope: window adapter/shell/app lifecycle, native reader/backend/player and affected tests; compatibility and persistence checks; current docs as required. R-01–R-08/P-01–P-04 remain. Inventory ownership and old formats before persistence edits. No dependency, codec rebuild, quality reduction, source modification, ordinary-library writes/deletion, plugin unregister/install, upload or publication.
+
+Work order:
+1. Inspect ownership/process state, reproduce failures with isolated fixtures; fix and regress close/reopen, cancellation and window restore/drag.
+2. Reuse existing E52 synthetic samples for bounded native reader/backend cycles, first/middle/last frame and CPU/GPU checks, including cancellation. Preserve timings/counts/failures. No new source media. Temporary media <=256 MiB, evidence <=16 MiB in verification-runs/e59; actual media checks <=10 cumulative minutes. Stop on limits/unexpected growth. Historical evidence and product data protected.
+3. Affected/default checks, shared UI preview where applicable, review and commit. Native multi-display handfeel and real Eagle saves are distinct gates. Dedicated real-library deletion/uninstall is not authorized by a general fix request; use isolated fixtures and report that limit.
+4. User separately authorized up to 10 read-only real Eagle close/reopen cycles on the current selection. After a visible project-plugin observation, automation could not reliably close the window. User explicitly stopped further attempts and chose manual experience. No completed automated cycle claimed; do not resume without a new request. No reinstall/library changes or mouse automation.
+5. Prepare private.6 from a clean commit, verify its archive and packaged native smoke using existing synthetic H264. Dist <=256 MiB. Under the established latest-only preference, inventory and replace only private.5 distribution files after the new package passes; retain per-file identities/BUILD-INFO/cleanup receipt in this stage. No plugin/data/source/evidence deletion.
+
+Fixed 14-day/10-use/8-hour/65-minute observation quotas are withdrawn; stable behavior/data safety still require evidence. After this bundle, consult official plugin publication documentation and prepare reviewable submission materials. Actual submission/publication is not authorized. Standalone remains future scope. Historical results unchanged.

@@ -71,7 +71,8 @@ function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024
     readers.add(reader);
     try{await reader.ready;if(released||closing)throw aborted();return reader;}
     catch(failure){await reader.close();readers.delete(reader);throw failure;}
-   },async closeReader(r){readers.delete(r);return r.close();},async cancelReaders(){await Promise.allSettled([...readers].map(r=>r.close()));},proxyAsset:()=>asset,
+   },async closeReader(r){const receipt=await r.close();readers.delete(r);return receipt;},
+   async cancelReaders(){const results=await Promise.allSettled([...readers].map(r=>runtime.closeReader(r)));const failed=results.find(r=>r.status==='rejected');if(failed)throw failed.reason;},proxyAsset:()=>asset,
    subscribeProxy(fn){listeners.add(fn);return()=>listeners.delete(fn);},
    resourcePids:()=>[...readers].map(r=>r.proc?.pid).concat(producer.pids(),...[...audioJobs].map(t=>t.pids())).filter(Number.isSafeInteger),
    diskUsage:async options=>{const proxy=await producer.measure(info.source.sha256,options);return {...proxy,scope:'proxy'};},
@@ -81,7 +82,12 @@ function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024
     catch(failure){const state={status:'failed',stage:'error',ready:0,total:info.frames.length,readyRanges:[],message:failure.message,error:{code:failure.code||'WHOLE_START',message:failure.message}};job={ready:Promise.resolve(null),snapshot:()=>state,cancel:async()=>null};try{onBackground();}catch(_){}return job;}
     job.ready.then(value=>{if(!value||released||closing)return;asset=value;try{onBackground();}catch(_){}for(const fn of listeners)try{fn(value);}catch(_){}}).catch(()=>{});try{onBackground();}catch(_){}return job;},
    async cancelProxy(){if(job)await job.cancel();try{onBackground();}catch(_){}return runtime.status();},
-   release(){if(releasing)return releasing;released=true;runtime.cancelAudio();ownerSources.delete(runtime);listeners.clear();releasing=(async()=>{await Promise.allSettled([...audioJobs].map(t=>t.promise));await job?.cancel();await Promise.allSettled([...readers].map(r=>r.close()));readers.clear();await job?.release?.();owners.delete(runtime);})();return releasing;}
+   release(){if(releasing)return releasing;released=true;runtime.cancelAudio();listeners.clear();releasing=(async()=>{
+    // Start every stop before waiting: a slow encoder must not retain a GPU reader.
+    const results=await Promise.allSettled([Promise.allSettled([...audioJobs].map(t=>t.promise)),job?.cancel(),runtime.cancelReaders()]);
+    const failed=results.find(r=>r.status==='rejected');if(failed)throw failed.reason;
+    await job?.release?.();ownerSources.delete(runtime);owners.delete(runtime);
+   })();releasing.catch(()=>{releasing=null;});return releasing;}
   };info.nativeRuntime=runtime;owners.add(runtime);ownerSources.set(runtime,info.source.sha256);if(automaticProxy)runtime.startProxy();return info;
  }
  function clearOther(settings={}){
@@ -103,6 +109,9 @@ function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024
   return{status:result.cleared?'cleared':'unchanged',...result,message:result.cleared?'已清除'+result.cleared+'个其它视频缓存，释放'+(result.freedBytes/1024**2).toFixed(1)+' MB；当前与占用中的缓存保留。':'没有可清理的其它视频缓存。此操作保留当前视频（含其它画质）及使用中的缓存；无法确认归属的文件不会删除。'};
  }
  const cache={readAsset(){return Promise.reject(Error('原生视频不读取JPEG或旧分段资源。'));},readFrameBatch(){return Promise.reject(Error('原生视频不读取旧帧包。'));},release:info=>info.nativeRuntime.release(),backgroundStatus:info=>info.nativeRuntime.status(),target(){},prefetch(){},cancelReads(){},isFrameReady:()=>false,prioritizeRecords(){},clearOther};
- return {media:{prepare},cache,beginClose(){closing=true;for(const p of preparing)p.controller.abort();for(const r of owners)r.release().catch(()=>{});},async close(){closing=true;for(const p of preparing)p.controller.abort();await Promise.allSettled([...preparing].map(p=>p.promise));await Promise.allSettled([...owners].map(r=>r.release()));await producer.close();await cleaning?.catch(()=>{});await maintenance?.close();},retireLegacy:()=>require('./legacy-media-cleanup.cjs').cleanLegacy({pluginRoot,tools}),get stopped(){return closing&&!preparing.size&&(!temporaryMedia||temporaryMedia.active()===0);}};
+ return {media:{prepare},cache,beginClose(){closing=true;for(const p of preparing)p.controller.abort();for(const r of owners)r.release().catch(()=>{});},async close(){closing=true;for(const p of preparing)p.controller.abort();await Promise.allSettled([...preparing].map(p=>p.promise));
+  const results=await Promise.allSettled([...owners].map(r=>r.release()).concat([producer.close(),cleaning,maintenance?.close()]));
+  const failed=results.find(r=>r.status==='rejected');if(failed)throw failed.reason;
+ },retireLegacy:()=>require('./legacy-media-cleanup.cjs').cleanLegacy({pluginRoot,tools}),get stopped(){return closing&&!preparing.size&&!owners.size&&(!temporaryMedia||temporaryMedia.active()===0);}};
 }
 module.exports={createNativeBackend,inspect,runJson};
