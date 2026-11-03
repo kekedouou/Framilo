@@ -1,6 +1,6 @@
 {
   "id": "EVAVIDEOANALYSIS20261011",
-  "version": "0.2.0-private.8",
+  "version": "0.2.0-private.9",
   "platform": "win",
   "arch": "x64",
   "name": "Framilo",
@@ -10,6 +10,7 @@
     "逐帧",
     "分析"
   ],
+  "dependencies": ["ffmpeg"],
   "devTools": false,
   "main": {
     "url": "index.html",

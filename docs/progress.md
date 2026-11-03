@@ -1,23 +1,23 @@
 # 当前交接
 
 当前阶段：E-60
-维护记录：[E60根因排查](experiments/E60/report.md)
-候选提交：aec97ce（private.8修复源码）；精确来源见verification-runs/e60/reopen-package-build.json及包内BUILD-INFO
-候选状态：E60快速重开修复、本地回归及打包校验完成；真实Eagle改善及拖动/GPU问题未验，上架准备暂停。[计划](experiments/E60/plan.md)/[报告](experiments/E60/report.md)。
+维护记录：[E60根因排查与收尾](experiments/E60/report.md)
+候选提交：private.9依赖声明收尾；播放器/窗控实现仍为aec97ce的private.8。最终包从干净源码提交构建，精确来源记入verification-runs/e60/final-review-package-build.json。
+候选状态：用户反馈拖动和黑屏体验已改善；FFmpeg声明、本地完整回归与运行/许可闭包检查通过，正在完成用户要求的ZIP替换，随后统一交付体验。[计划](experiments/E60/plan.md)/[报告](experiments/E60/report.md)。
 
 ## 当前授权与结果
-用户确认E58第一项集中体验完成；新增异常不被这一确认覆盖。批准兼容/数据安全验证与全屏恢复卡顿、跨屏顶栏拖动失效、关闭失败和反复关闭重开变慢的集中修复。[E59计划](experiments/E59/plan.md)/[结果](experiments/E59/report.md)。每次关闭插件后再打开，截图时Unreal正好崩溃；因果尚未确定。
-取消固定14天/次数/小时观察门槛；本轮完成后查询官方发布文档，准备上架资料，未授权实际提交/发布/推送或独立版开发。
+用户已确认E58第一项体验完成，E59后续问题单独修复。最新明确认为目前拖动和黑屏已解决，批准最后排查、依赖声明和文档同步，不从零重做、不反复要求测试。
+取消固定14天/次数/小时门槛；本轮完成后准备上架资料，未授权实际发布/推送或独立版开发。按用户要求停止宿主自动化；无新增软件安装、素材库/原片/标注写入。
 
 ## 验证与待验
-两份真实startup-host轨迹指纹匹配private.7；首次就绪1.36/0.80秒。21:46:36重开旧窗口，21:46:56.976才重新初始化；当前会话清理到旧缓存释放锁的调用间隔22.625秒。实际应用/UI模型确认：关闭时空白黑遮罩被Eagle重开暴露，新UI等待旧缓存维护。1438组历史清理记录的只读校验耗时2.88秒，未细分全部延迟；证据见报告及reopen-correlation.json。21:47:10 NVIDIA153未建立因果。
-修复跳过仅含成对历史回执的旧维护，当前目录只读预检7.52ms；必要释放仍等待并显示持续说明，最新请求自动重开、关闭可取消。已补失败重试和关闭分阶段记录；模型/预览不冒充Eagle通过。[验收登记](experiments/E53/acceptance.md)/[能力限制](releases/motionote-capabilities.md)。
-限时startup-audit.local.json写verification-runs/e60/startup-host-*.jsonl，24小时/10份/每份64KiB/160事件；不打包、不含视频标注、不上传。按用户要求停止宿主自动化，不要求固定次数体验；保留旧证据。
+实际旧事件确认：清理期间Eagle重显旧窗口，空黑遮罩等待历史缓存维护。private.8跳过仅剩成对回执的旧维护；必要释放仍等待，显示持续说明、保留最新打开请求、明确关闭可取消，失败可重试。
+新读到5份private.8指纹匹配的已有Eagle记录：就绪0.748–0.847秒、关闭68.5–104.5ms、旧维护预检4.4–4.8ms。没有交叠重开事件，不等于物理呈现或全部设备通过；与用户体验反馈分开登记。摘要final-review-existing-host.json及原始证据见报告。
+最后回归覆盖拖动取消/坐标、重开选择、关闭失败/重试、界面重建、标注保护和FFmpeg缺失处理。真实音画/格式、外部安装升级与历史GPU因果不因本轮自动通过；沿用已有证据，不重置已验项。[验收登记](experiments/E53/acceptance.md)/[能力限制](releases/motionote-capabilities.md)。
 
 ## 前端预览恢复
-E60等待/取消重开预览已打开： http://127.0.0.1:5852/14ad3038c5a52fd11ad8b9f5a02d396cbbae/?scenario=e60-reopen 。回执verification-runs/e60/preview-server.json，进程23104。旧E59服务/草稿保留。恢复命令node scripts/frontend-preview.cjs；只停止身份匹配服务。合成UI不验证原生窗口、多屏/GPU/音画。[长期流程](development-plan.md#前端预览与反馈流程)。
+本轮无UI改动，不新建或刷新预览。既有E60等待/取消演示由node scripts/frontend-preview.cjs恢复，回执verification-runs/e60/preview-server.json；不凭旧PID/端口声称仍可用。保护旧服务/草稿，合成UI不验证原生窗口、多屏或真实音画。[长期流程](development-plan.md#前端预览与反馈流程)。
 
 ## 工作区
-本轮基线4af2197干净，无其它任务差异；[当前保留清单](workspace-exceptions.json)。旧private.7分发包因自动策略阻断删除暂留。输出限E60计划目录；保护限时诊断配置/原始证据，历史数据和E49冻结不变。E60结束后核对身份再移除本轮开启配置，保留证据；不能因Git忽略直接删除。
+本轮基线88fe35c干净，无其它任务差异；[保留清单](workspace-exceptions.json)。输出限E60既有预算，保护证据/用户数据。startup-audit.local.json的24小时/10份/64KiB/160事件预算不扩展，已达10份，后续操作不保证留新记录；默认包不含配置。用户新批准最终ZIP替换，旧包仅在新包通过后按身份核验清理；此前private.7删除被拒记录保留，不改写历史结果。
 
 [阶段索引](experiments/README.md)

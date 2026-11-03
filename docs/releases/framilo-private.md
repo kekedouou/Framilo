@@ -4,7 +4,7 @@
 
 ## 打开与使用
 
-Windows x64、Eagle 4.0 Build 22+和Eagle内已有的FFmpeg模块即可使用，无需另装Rust或Node.js。在Eagle选中视频，打开Framilo。未选素材时先回Eagle选中，再重新调用插件。
+Windows x64、Eagle 4.0 Build 22+和Eagle的FFmpeg依赖模块即可使用，无需另装Rust或Node.js。尚未安装依赖时，在Eagle插件中心搜索并安装FFmpeg；插件清单已声明该依赖，Eagle可在安装插件时提示准备它，插件自身不下载或内置FFmpeg/ffprobe。内置的FilmCraft原生组件不是FFmpeg模块。依赖读取与缺失提示沿用现有实现；契约见[官方FFmpeg文档](https://developer.eagle.cool/plugin-api/zh-cn/extra-module/ffmpeg)。在Eagle选中视频，打开Framilo。未选素材时先回Eagle选中，再重新调用插件。
 
 常用入口：MP4/M4V、MOV、MKV、WebM；不同文件的实际兼容情况见[能力表](motionote-capabilities.md)。首次画质随屏幕选择1080p/2K/4K，已有偏好保留、不放大小源；默认显示圈画工具条。原片先播放，代理后台准备。超过1 GB的临时媒体预计占用会询问是否继续；不继续仍可播放原片。
 
@@ -19,7 +19,7 @@ Windows x64、Eagle 4.0 Build 22+和Eagle内已有的FFmpeg模块即可使用，
 
 ## 回退
 
-本轮快速重开修复候选0.2.0-private.8，dist文件名为framilo-0.2.0-private.8-<源提交短号>-win-x64.zip，旁有.sha256，包内BUILD-INFO记录完整来源及逐文件摘要。包、测量/清理回执见[E60报告](../experiments/E60/report.md)及[交接](../progress.md)。已修正清理期间重开的空白遮罩与回执重复维护路径，真实Eagle改善待体验，拖动/GPU问题仍待排查；本机限时启动记录配置不打包，默认不写诊断文件；不是官方商店安装包。
+自用快照命名为framilo-<版本>-<源提交短号>-win-x64.zip，旁有.sha256，包内BUILD-INFO记录完整来源及逐文件摘要。当前源码、已核验包与测量/清理回执以[交接](../progress.md)和[E60报告](../experiments/E60/report.md)为准，不能把旧包当新源码。用户已反馈拖动与黑屏体验改善；依赖声明收尾不重写该实现，也不据此断言历史GPU崩溃的因果。本机限时启动记录配置不打包，默认不写诊断文件；自用ZIP不是官方商店安装包。
 
 按用户要求，每轮新包核验成功后替换旧ZIP/校验及解压快照，dist仅保留最新一组；历史文档中的旧路径只作追溯，不保证文件仍在。旧版本源提交/构建清单/摘要另存对应阶段verification-runs（E56/E57/E58），不删除旧测量或冻结Git历史。旧包重建须检出对应源码和匹配打包配方；被Git忽略的task-host.local.exe需按对应.cs重新构建、核对指纹，Git不能直接恢复它。不得把新清单直接用于旧包，也不承诺重建ZIP字节完全相同。
 
