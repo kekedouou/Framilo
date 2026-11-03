@@ -61,7 +61,7 @@
   function createUI(options = {}) {
     const doc = options.document || document, win = options.window || window, now = options.now || (() => performance.now());
     const previousClosingSurface = doc.querySelector?.('[data-eva-closing]');
-    let closingSurface = null;
+    let closingSurface = null, closingText = null, closingReopening = false;
     const ids = ['screen', 'picture', 'notice', 'timeline', 'progress', 'thumb', 'timeHint', 'play', 'previous', 'next', 'currentTime', 'duration', 'frameReadout', 'sourceName', 'memoryUsage', 'status', 'error', 'retry',
       'commentMarkers', 'commentList', 'commentStatus', 'commentAdd', 'commentShade', 'commentEditor', 'commentTime', 'commentChoice', 'commentText', 'commentSave', 'commentCancel', 'commentKeyboardHint', 'commentDraftPreview', 'commentEditorStatus',
       'memoryMiB', 'memoryApply', 'memoryAllowance', 'memoryStatus', 'cacheClearOther', 'cacheClearStatus', 'qualitySelect', 'previewQuality',
@@ -807,7 +807,11 @@
       if (editable && editorId !== draft.id) { editorId = draft.id; editorEpoch = state.epoch; if (!deleting) el.commentText.focus(); }
     }
     function update(snapshot) {
-      if (closingSurface) { closingSurface.textContent = snapshot.error?.message || ''; return; }
+      if (closingSurface) {
+        if(typeof snapshot.reopening==='boolean')closingReopening=snapshot.reopening;
+        closingText.textContent = snapshot.error?.message || (closingReopening ? '正在结束上一个视频，完成后自动打开…' : '正在结束视频并释放临时文件…');
+        closingText.style.color = snapshot.error ? '#d7a49e' : '#dfe4e8'; return;
+      }
       if (state.epoch !== snapshot.epoch) showCommentActions(null);
       state = snapshot;
       if (!previewActive() && previewDisabled.size) { for (const [node, disabled] of previewDisabled) node.disabled = disabled; previewDisabled.clear(); }
@@ -949,7 +953,12 @@
         if (el.proxyState) el.proxyState.hidden = true;
         if (closing && doc.createElement && doc.body) {
           closingSurface = doc.createElement('div'); closingSurface.setAttribute('data-eva-closing', '');
-          closingSurface.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#000;color:#d7a49e;display:flex;align-items:center;justify-content:center;padding:32px;font:14px Segoe UI';
+          closingSurface.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#1c1f22;color:#dfe4e8;display:flex;flex-direction:column;gap:20px;align-items:center;justify-content:center;padding:32px;font:14px Segoe UI';
+          closingText = doc.createElement('div'); closingText.setAttribute('role','status');closingText.setAttribute('aria-live','polite');
+          closingText.textContent = '正在结束视频并释放临时文件…';closingSurface.appendChild(closingText);
+          const closeButton=doc.createElement('button');closeButton.type='button';closeButton.textContent='关闭窗口';
+          closeButton.style.cssText='padding:8px 18px;border:1px solid #53595f;border-radius:6px;background:#292e33;color:#dfe4e8;cursor:pointer';
+          closeButton.addEventListener('click',()=>options.hostAction?.('close'));closingSurface.appendChild(closeButton);
           doc.body.appendChild(closingSurface);
         }
         seekIntent = null;

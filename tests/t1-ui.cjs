@@ -6,7 +6,7 @@ function test(name, fn) { fn(); checks++; console.log('ok ' + name); }
 function target(tagName = 'div', parent = null) {
   const handlers = new Map(), paints = [];
   const context = { clearRect(...args) { paints.push(['clear',...args]); }, fillRect(...args) { paints.push(['fill',...args]); } };
-  return { paints, getContext: () => context, style: {}, attributes: {}, tagName: tagName.toLowerCase(), parentElement: parent, disabled: false, hidden: false, textContent: '', offsetWidth: 80,
+  return { paints, getContext: () => context, style: {}, attributes: {}, children:[],appendChild(n){this.children.push(n);n.parentElement=this;}, tagName: tagName.toLowerCase(), parentElement: parent, disabled: false, hidden: false, textContent: '', offsetWidth: 80,
     addEventListener(type, fn) { if (!handlers.has(type)) handlers.set(type, new Set()); handlers.get(type).add(fn); },
     removeEventListener(type, fn) { if (handlers.has(type)) handlers.get(type).delete(fn); },
     fire(type, values = {}) { const e = { pointerId: 1, button: 0, buttons: 1, clientX: 100, preventDefault() { this.prevented = true; }, ...values }; for (const fn of handlers.get(type) || []) fn(e); return e; },
@@ -90,10 +90,10 @@ test('E41 a new screen drag starts from the outstanding target, never the older 
  h.el('screen').fire('pointerdown',{clientX:100,clientY:100});h.win.fire('pointermove',{clientX:120,clientY:100});
  const seeks=h.calls.filter(c=>c[0]==='seek');assert(seeks.length);assert.equal(seeks.at(-1)[1],422/60);assert.equal(seeks.at(-1)[2].index,422);h.ui.destroy();
 });
-test('E41 close keeps a black teardown curtain and reports cleanup errors on it',()=>{
+test('E60 close keeps meaningful progress and reports cleanup errors on its retained surface',()=>{
  const h=harness(),children=[];h.doc.createElement=()=>target();h.doc.body={appendChild:n=>children.push(n)};
- h.ui.destroy({closing:true});assert.equal(children.length,1);assert(children[0].style.cssText.includes('background:#000'));
- h.ui.update({...h.state,error:{message:'cleanup failed'}});assert.equal(children[0].textContent,'cleanup failed');
+ h.ui.destroy({closing:true});assert.equal(children.length,1);assert.match(children[0].children[0].textContent,/释放临时文件/);
+ h.ui.update({...h.state,error:{message:'cleanup failed'}});assert.equal(children[0].children[0].textContent,'cleanup failed');
 });
 test('settings remain enabled throughout initial or replacement media preparation',()=>{
  const h=harness();h.ui.update({...h.state,state:'preparing',playback:null,memorySettings:{ramMiB:1024,optionsMiB:[512,1024,2048]}});

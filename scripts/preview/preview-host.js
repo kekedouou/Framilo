@@ -12,6 +12,11 @@
  const label=document.createElement('span');label.textContent='交互预览 · 示例数据';label.title='正式UI与Session；浏览器样本播放。不能验证原生编解码、帧精度、性能或Eagle保存。';
  const reset=document.createElement('button');reset.textContent='重置示例';reset.onclick=async()=>{if(session.hasDrawingDraft()&&!await ui.confirmDrawingExit())return;await session.close();sessionStorage.removeItem(storageKey);location.reload();};if(dense)label.textContent='交互预览 · 密集标注示例';bar.append(label,reset);document.body.append(bar);
  ui=EVAUI.createUI({hostAction:async action=>{if(action==='fullscreen'){if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}else label.textContent='预览不支持原生窗口操作；请在Eagle中体验';}});await ui.prepareEntry();
+ if(scenario==='e60-reopen'){
+  ui.destroy({closing:true});ui.update({state:'closing',reopening:true,error:null});
+  const button=document.querySelector('[data-eva-closing] button');button.onclick=()=>{ui.update({state:'closing',reopening:false,error:null});button.disabled=true;button.title='预览仅展示取消重开后的提示；实际关闭需在Eagle验证';};
+  return;
+ }
  document.addEventListener('fullscreenchange',()=>{document.documentElement.dataset.evaFullscreen=String(!!document.fullscreenElement);dispatchEvent(new Event('eva-fullscreen-change'));});
  // Host-specific controls have no simulated success path.
  for(const id of ['gpuAcceleration','cacheClearOther']){const node=document.getElementById(id);if(node){node.dataset.previewUnsupported='true';node.title='此项需在Eagle中验证';}}

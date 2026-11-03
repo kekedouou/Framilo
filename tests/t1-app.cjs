@@ -64,7 +64,7 @@ function harness(settings = {}) {
     return setTimeout(callback, milliseconds);
   };
   let uiCreations = 0;
-  const win = { EVAUI: { createUI: () => { if (++uiCreations === settings.failUIAt) throw Error('injected UI reconstruction failure'); return ui; } }, EVAPlayer: { Player: function (options) { this.options = options; } },
+  const win = { EVAUI: { createUI: options => { if (++uiCreations === settings.failUIAt) throw Error('injected UI reconstruction failure'); ui.hostAction=options.hostAction;return ui; } }, EVAPlayer: { Player: function (options) { this.options = options; } },
     close: requestClose, addEventListener(type, fn) { hooks[type] = fn; } };
   if (settings.nativePlayer) win.EVANativePlayer = { Player: settings.nativePlayer };
   vm.runInNewContext(settings.code || code, { window: win, eagle, performance: { now: () => 100 }, require(name) {

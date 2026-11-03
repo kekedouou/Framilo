@@ -85,7 +85,8 @@ Session仅在释放成功后将SELECTION_EMPTY映射正常empty；SDK/释放故�
 ## 临时媒体与开发预览
 - `temporary-media.cjs`为每个窗口建立`cache/sessions-v1/<随机id>`，登记owner/启动身份/子进程意图；全程生成路径局限其中。关闭开始即禁止新进程，2.5秒正常收尾后对仍活跃的原ChildProcess句柄发终止，5秒仍未收到close则报错保留；不按进程名称或裸PID终止。确认所有流关闭后才核验目录归属并原子改名为retiring后删除。未知文件/活动进程/不完整出生身份保留；迟到close后可明确重试。持久格式及恢复读者不变。无遗留时身份查询异步，不阻塞首帧；恢复旧会话才使用完整进程快照。
 - `media-space.cjs`统一十进制1 GB累计确认、2 GiB物理余量、100 GiB内部保护与跨窗口原子预留；预留与输出字节上限都由生成层执行，UI不直接计数。`space.json`在任务终止后释放，崩溃由owner恢复处理。
-- `legacy-media-cleanup.cjs`在正常关闭新运行链后，调用旧cache所有权/读者检查清理已确认的旧JPEG与完整代理；旧PID-only读者记录缺出生证据时保护，不猜测删除。旧cache不再复用，首次升级的旧数据在首次正常关闭迁移。原片、annotation-data、偏好和验收证据不进入删除白名单。
+- `legacy-media-cleanup.cjs`在正常关闭新运行链后异步预检目录项；只有成对历史回执及独立命名空间时不启动旧worker、不重验回执内容，原记录保持不动。真实旧媒体、未完成事务及未知项仍交旧cache所有权/读者检查；旧PID-only读者缺出生证据时保留。首次升级的旧媒体仍在正常关闭迁移，失败保留后端引用供重试；不新增持久迁移标记。原片、annotation-data、偏好和验收证据不进入删除白名单。
+- app关闭等待当前Session/初始化/后端/子进程/临时目录及必要旧媒体清理；Eagle可能先显示尚未退出的旧窗口，UI因此保留持续说明与关闭按钮。run立即捕获并合并为最新请求，延迟hide完成后重新显示等待状态；安全关闭后再建UI。用户关闭取消排队，不让旧退出回调关掉新会话。限时诊断分别记录这些关闭阶段与旧维护子阶段，不等同宿主验收。
 - `scripts/frontend-preview.cjs`仅开发使用：loopback随机令牌/Host-Origin/GET白名单；共享正式HTML/CSS/UI和Session，`scripts/preview`只替换播放器与Eagle/存储适配。示例写入sessionStorage，不进入产品包。原生窗控、GPU、缓存清理禁用；浏览器样本不能证明原生精度、音画、缓存或Eagle数据读写。
 
 ## JPEG开发保留与退休模块

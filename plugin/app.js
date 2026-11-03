@@ -14,7 +14,7 @@
       if(action==='window-drag-start'){await dragAdapter().start({...details,restore:details?.fullscreen?windowedGeometry:null});return;}
       if(action==='window-drag-move'){windowDrag?.move(details);return;}
       if(action==='window-drag-end'){windowDrag?.end(details);return;}
-      if(action==='close'){windowDrag?.cancel();window.close();return;}
+      if(action==='close'){cancelPendingOpen();windowDrag?.cancel();window.close();return;}
       const host=eagle.window;
       if(action==='minimize')await host.minimize();
       else if(action==='maximize')await (await host.isMaximized()?host.unmaximize():host.maximize());
@@ -209,6 +209,7 @@
     if(retrying){closeTask=null;closeFailure=null;}
     if (session && session.hasDrawingDraft && session.hasDrawingDraft()) return Promise.resolve({ status: 'cancelled' });
     closed = true;
+    startup?.mark('close-start',{retrying});
     windowDrag?.cancel();
     // Invalidates all pending deletion probes immediately; read-only probes may
     // finish later but cannot delete, reschedule or hold up media shutdown.
@@ -223,15 +224,22 @@
       // cleanup. Player reads still drain before the owner releases its leases.
       const stopping=temporaryMedia?.beginClose?.();stopping?.catch(()=>{});
       try { if (backend) backend.beginClose(); } catch (error) { failure = error; }
+      startup?.mark('close-phase',{phase:'session'});
       try { result = session ? await (retrying&&session.retryClose?session.retryClose():session.close()) : { status: 'closed' }; } catch (error) { failure = error; }
       // destroy() below releases a pending first-paint wait. Reopening waits
       // for this old initializer as well as its media owner before reusing UI.
+      startup?.mark('close-phase',{phase:'initializer'});
       try { await initializationTask; } catch (error) { failure = failure || error; }
+      startup?.mark('close-phase',{phase:'backend'});
       try { if (backend) await backend.close(); } catch (error) { failure = failure || error; }
+      startup?.mark('close-phase',{phase:'children'});
       try { await stopping; } catch (error) { failure = failure || error; }
-      if(!failure&&temporaryMedia)try{await temporaryMedia.close();temporaryMedia=null;await backend?.retireLegacy?.();}catch(error){failure=error;}
+      if(!failure&&temporaryMedia)try{startup?.mark('close-phase',{phase:'temporary-files'});await temporaryMedia.close();temporaryMedia=null;}catch(error){failure=error;}
+      // Retained backend also owns a failed migration retry after temporary files are gone.
+      if(!failure&&backend?.retireLegacy)try{startup?.mark('close-phase',{phase:'legacy'});await backend.retireLegacy({onPhase:phase=>startup?.mark('legacy-phase',{phase})});}catch(error){failure=error;}
       if (failure) throw failure;
       if (result?.status === 'error') throw new Error(result.error?.message || '资源释放未完成');
+      startup?.mark('close-done');
       return result;
     })(); }
     catch (error) { closeTask = Promise.reject(error); }
@@ -244,7 +252,11 @@
     closeTask.catch(closeFailed);
     if(!retrying)ui.destroy({ closing: true }); ui.update({ state: 'closing', source: null, duration: 0, playback: null, error: null }); return closeTask;
   }
+  function cancelPendingOpen(){
+    if(pendingOpen){pendingOpen=null;startup?.mark('reopen-cancelled');ui.update({state:'closing',reopening:false,error:closeFailure?{message:closeFailure.message}:null});}
+  }
   function requestClose() {
+    cancelPendingOpen();
     if (closeTask) return closeFailure ? performClose(true) : closeTask;
     if (!session || !session.hasDrawingDraft || !session.hasDrawingDraft()) return close();
     if (drawingCloseIntent) return drawingCloseIntent;
@@ -260,6 +272,10 @@
     try { captured = Promise.resolve(adapter.captureSelected()); } catch (error) { captured = Promise.reject(error); }
     const request = { captured, startedAt };
     request.captured.catch(() => {}); pendingOpen = request;
+    startup?.mark('reopen-wait');
+    ui.update({state:'closing',reopening:true,error:closeFailure?{message:closeFailure.message}:null});
+    // A previous hide RPC may settle after Eagle has already shown the old window.
+    hideTask.then(()=>{if(pendingOpen===request&&closed)presentWindow();});
     return closeTask.then(async result => {
       await hideTask;
       if (pendingOpen !== request) return;
@@ -267,12 +283,14 @@
       // UI construction may fail. Keep the closed lifecycle retryable until it
       // succeeds, and retain the previous error surface instead of exposing DOM.
       const nextUI = window.EVAUI.createUI({hostAction});
+      startup?.mark('reopen-ui');
       pendingOpen = null; initialSelection = request.captured; entryOverride = request.startedAt;
       session = null; backend = null; closeTask = null; closed = false; allowUnload = false; exitScheduled = false; closeFailure = null;
       ui = nextUI; const work = initialize(lastPlugin); presentWindow(); return work;
     }).catch(error => { if (pendingOpen === request) pendingOpen = null; startupError(error); });
   }
   function closeFailed(error) {
+    startup?.mark('close-error',{name:error?.name||'Error',code:error?.code||'unknown'});
     closeFailure = error;
     allowUnload = false; exitScheduled = false;
     hideTask.then(() => presentWindow());
@@ -300,7 +318,8 @@
       // cancelled-beforeunload ACK, so Chromium merges that second request.
       // A new task lets the cancellation finish before making the real close.
       setTimeout(() => {
-        if (closeTask !== completedClose || pendingOpen) return;
+        if (closeTask !== completedClose) return;
+        if (pendingOpen) { exitScheduled=false; return; }
         try { allowUnload = true; window.close(); }
         catch (error) { closeFailed(error); }
       }, 0);

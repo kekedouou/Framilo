@@ -112,6 +112,6 @@ function createNativeBackend({pluginRoot,tools,onBackground=()=>{},ramBytes=1024
  return {media:{prepare},cache,beginClose(){closing=true;for(const p of preparing)p.controller.abort();for(const r of owners)r.release().catch(()=>{});},async close(){closing=true;for(const p of preparing)p.controller.abort();await Promise.allSettled([...preparing].map(p=>p.promise));
   const results=await Promise.allSettled([...owners].map(r=>r.release()).concat([producer.close(),cleaning,maintenance?.close()]));
   const failed=results.find(r=>r.status==='rejected');if(failed)throw failed.reason;
- },retireLegacy:()=>require('./legacy-media-cleanup.cjs').cleanLegacy({pluginRoot,tools}),get stopped(){return closing&&!preparing.size&&!owners.size&&(!temporaryMedia||temporaryMedia.active()===0);}};
+ },retireLegacy:options=>require('./legacy-media-cleanup.cjs').cleanLegacy({...options,pluginRoot,tools}),get stopped(){return closing&&!preparing.size&&!owners.size&&(!temporaryMedia||temporaryMedia.active()===0);}};
 }
 module.exports={createNativeBackend,inspect,runJson};
