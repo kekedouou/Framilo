@@ -233,6 +233,11 @@ async function main() {
     await assert.rejects(h.session.play(), error => error.code === 'SESSION_NOT_READY'); seek.resolve(); await pending;
     assert.strictEqual(h.session.snapshot().playback.time, 2); await h.session.step(-1); assert.strictEqual(h.session.snapshot().playback.frame, 1); await h.session.close();
   });
+  await test('E57 native pending seeks accept play and a second toggle pauses the pending play request',async()=>{
+    const h=harness();await h.session.loadSelected();const p=h.players[0];p.change({native:true,state:'seeking',pendingTargets:1,frameHeld:true});
+    assert.equal((await h.session.play()).status,'playing');p.change({state:'seeking',pendingTargets:1,playRequested:true});assert.equal((await h.session.toggle()).status,'paused');
+    await h.session.close();await assert.rejects(h.session.play(),e=>e.code==='SESSION_NOT_READY');
+  });
   await test('Library change clears without reading selection; closed session cannot load again', async () => {
     const h = harness(); await h.session.loadSelected(); const old = h.players[0];
     const cleared = h.session.libraryChanged(); assert.strictEqual(old.disposed, true); assert.strictEqual(h.session.snapshot().source, null);

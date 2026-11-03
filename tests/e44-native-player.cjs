@@ -59,7 +59,7 @@ async function fixture(options={}){
 test('late seek result cannot replace the newest target or picture',{timeout:2000},async()=>{
  const h=await fixture();try{
   const a=h.p.seek(.017),b=h.p.seek(.05);assert.equal(h.p.snapshot().targetTime,.05);assert.equal(h.view.style.visibility,'visible');assert.equal(h.p.snapshot().frameHeld,true);
-  h.primary.complete(1);assert.equal((await a).status,'superseded');assert.equal(h.p.snapshot().targetTime,.05);assert.equal(h.p.snapshot().frameId,100);
+  h.primary.complete(1);assert.equal((await a).status,'superseded');assert.equal(h.p.snapshot().targetTime,.05);assert.equal(h.p.snapshot().frameId,117);assert.equal(h.p.snapshot().frameHeld,true);
   h.primary.complete(2);assert.equal((await b).status,'drawn');assert.equal(h.p.snapshot().frameId,150);assert.equal(h.view.draws.at(-1),2);
  }finally{await h.cleanup();}
 });
@@ -179,7 +179,7 @@ test('consecutive uncached seeks keep confirmed pixels visible and preserve actu
   h.view.visibilityWrites.length=0;const a=h.p.seek(.017),b=h.p.seek(.05),c=h.p.seek(.1);
   const pending=h.p.snapshot();assert.equal(pending.frameHeld,true);assert.equal(pending.frameId,100);assert.equal(pending.time,0);assert.equal(pending.targetTime,.1);
   assert.equal(h.view.style.visibility,'visible');assert(!h.view.visibilityWrites.includes('hidden'));
-  h.primary.complete(3);await c;h.primary.complete(1);h.primary.complete(2);await Promise.all([a,b]);
+  h.primary.complete(1);await a;assert.equal(h.primary.requests.length,3);h.primary.complete(2);await c;await b;
   assert.equal(h.p.snapshot().frameId,200);assert.equal(h.p.snapshot().frameHeld,false);assert(!h.view.visibilityWrites.includes('hidden'));
  }finally{await h.cleanup();}
 });
@@ -202,7 +202,7 @@ for(const synchronous of [false,true])test((synchronous?'synchronous request thr
 });
 test('an older response after the latest request failed cannot clear held-frame protection',{timeout:2000},async()=>{
  const h=await fixture();try{
-  const old=h.p.seek(.017),newer=h.p.seek(.05);h.primary.requests[2].done=true;h.primary.requests[2].reject(Error('latest target failed'));await newer;
+  const old=h.p.seek(.017),newer=h.p.seek(.05,{final:true});h.primary.requests[2].done=true;h.primary.requests[2].reject(Error('latest target failed'));await newer;
   h.primary.complete(1);assert.equal((await old).status,'superseded');const s=h.p.snapshot();assert.equal(s.frameHeld,true);assert.equal(s.frameId,100);assert.equal(s.targetTime,.05);assert.equal(s.lastIssue,'latest target failed');
  }finally{await h.cleanup();}
 });
@@ -475,4 +475,90 @@ test('E49 unverified nonzero media origins retain original audio without remuxin
  let copies=0;const h=await fixture({audio:true,ramBytes:512*1024,audioTrack:async()=>{copies++;throw Error('must not copy');}});try{
   assert.equal(copies,0);assert.equal(h.p.snapshot().audioSource,'original');assert.match(h.p.snapshot().audioSourceIssue,/非零/);assert.match(h.audio.src,/source\.mp4/);
  }finally{await h.cleanup();}
+});
+
+test('E57 nearby drag keeps one active read and only the latest queued target, showing protected progress',async()=>{
+ const h=await fixture({frameCount:80});try{
+  const cancels=h.primary.cancels,first=h.p.seek(.001,{index:1,kind:'rapid'}),waiting=[];
+  for(let n=2;n<=12;n++)waiting.push(h.p.seek(h.info.frames[n].time,{index:n,kind:'rapid'}));
+  assert.equal(h.primary.requests.length,2);assert.equal(h.p.queuedRead.n,12);assert.equal(h.primary.cancels,cancels);
+  h.primary.complete();await first;assert.equal(h.primary.requests.length,3);assert.equal(h.primary.requests.at(-1).ordinal,12);
+  assert(h.p.cache.has(1));assert.equal(h.p.currentIndex,1);assert.equal(h.p.targetTime,.012);assert.equal(h.p.frameHeld,true);assert.equal(h.p.pendingTargets,1);
+  assert.equal((await h.p.setLoopPoint('start')).status,'ignored');h.primary.complete();const results=await Promise.all(waiting);
+  assert(results.slice(0,-1).every(r=>r.status==='superseded'));assert.equal(results.at(-1).status,'drawn');assert.equal(h.p.currentIndex,12);assert.equal(h.p.frameHeld,false);
+  assert.equal(h.p.queuedRead,null);assert.equal(h.p.foregroundRead,null);assert(h.p.budget.peak<=h.p.budget.limit);
+ }finally{await h.cleanup();}
+});
+
+test('E57 repeated in-flight target and immediate play reuse one decode and one audio positioning',async()=>{
+ const h=await fixture({audio:true,eventAudio:true});try{
+  h.audio.completeSeek();const seeking=h.p.seek(.05,{final:true});const requests=h.primary.requests.length,cancels=h.primary.cancels;
+  const playing=h.p.play();await turn();assert.equal(h.primary.requests.length,requests);assert.equal(h.primary.cancels,cancels);assert(Math.abs(h.audio.currentTime-.15)<1e-9);
+  h.primary.complete();await seeking;await turn();assert.equal(h.p.currentIndex,2);assert.equal(h.audio.playCount,0,'audio must still settle before video can run');
+  h.audio.completeSeek();assert.equal((await playing).status,'playing');assert.equal(h.audio.playCount,1);assert.equal(h.primary.requests.length,requests);assert.equal(h.p.rafId!==undefined,true);
+ }finally{await h.cleanup();}
+});
+
+test('E57 release preempts a different active target and discards the queued intermediate',async()=>{
+ const h=await fixture();try{
+  const first=h.p.seek(.017),middle=h.p.seek(.05),cancels=h.primary.cancels,final=h.p.seek(.1,{final:true});
+  assert.equal((await middle).status,'superseded');assert.equal(h.primary.cancels,cancels+1);assert.equal(h.primary.requests.length,3);assert.equal(h.primary.requests.at(-1).ordinal,3);
+  h.primary.complete(2);await final;h.primary.complete(1);await first;assert.equal(h.p.currentIndex,3);assert(!h.p.cache.has(1));assert.equal(h.p.queuedRead,null);
+ }finally{await h.cleanup();}
+});
+
+test('E57 a far jump preempts nearby work without waiting for its completion',async()=>{
+ const h=await fixture({frameCount:600});try{
+  const old=h.p.seek(.001,{index:1}),cancels=h.primary.cancels,far=h.p.seek(.5,{index:500});assert.equal(h.primary.cancels,cancels+1);assert.equal(h.primary.requests.at(-1).ordinal,500);
+  h.primary.complete();await far;h.primary.complete(1);await old;assert.equal(h.p.currentIndex,500);assert(!h.p.cache.has(1));
+ }finally{await h.cleanup();}
+});
+
+test('E57 reversal caches completed work without displaying a frame beyond the new target',async()=>{
+ const h=await fixture({frameCount:80});try{
+  const first=h.p.seek(.01,{index:10}),reversed=h.p.seek(.004,{index:4});h.primary.complete();await first;
+  assert.equal(h.p.currentIndex,0);assert.equal(h.p.targetTime,.004);assert(h.p.cache.has(10));h.primary.complete();await reversed;assert.equal(h.p.currentIndex,4);assert.equal(h.p.seekDirection,-1);
+  h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();assert.equal(h.primary.requests.at(-1).ordinal,3);await completeFill(h);
+ }finally{await h.cleanup();}
+});
+
+test('E57 close settles the latest queued target and releases all completed and in-flight resources',async()=>{
+ const h=await fixture();const first=h.p.seek(.017),latest=h.p.seek(.05);await h.cleanup();assert.equal((await first).status,'superseded');assert.equal((await latest).status,'superseded');assert.equal(h.p.queuedRead,null);assert.equal(h.p.foregroundRead,null);assert.equal(h.p.budget.used,0);
+});
+
+test('E57 a second play toggle can cancel pending resume without restarting sound after decode',async()=>{
+ const h=await fixture({audio:true,eventAudio:true});try{
+  h.audio.completeSeek();const seek=h.p.seek(.05,{final:true}),playing=h.p.play();await turn();assert.equal(h.p.snapshot().playRequested,true);
+  await h.p.pause();assert.equal(h.p.snapshot().playRequested,false);h.primary.complete();await seek;assert.equal((await playing).status,'superseded');assert.equal(h.audio.playCount,0);assert.equal(h.p.state,'paused');
+ }finally{await h.cleanup();}
+});
+
+test('E57 slow completed transfers retain immediate-preemption policy rather than queuing extra payloads',async()=>{
+ const h=await fixture();try{
+  h.p.seekReadMs=60;const old=h.p.seek(.017),cancels=h.primary.cancels,latest=h.p.seek(.05);assert.equal(h.primary.cancels,cancels+1);assert.equal(h.p.queuedRead,null);assert.equal(h.primary.requests.length,3);
+  h.primary.complete(2);await latest;h.primary.complete(1);await old;assert.equal(h.p.currentIndex,2);assert(!h.p.cache.has(1));
+ }finally{await h.cleanup();}
+});
+
+test('E57 failed active drag read does not lose the latest target or publish an obsolete error',async()=>{
+ const h=await fixture();try{
+  const old=h.p.seek(.017),latest=h.p.seek(.05);h.primary.requests[1].reject(Error('old failed'));h.primary.requests[1].done=true;await old;
+  assert.equal(h.p.lastIssue,null);assert.equal(h.primary.requests.at(-1).ordinal,2);h.primary.complete();assert.equal((await latest).status,'drawn');assert.equal(h.p.currentIndex,2);
+ }finally{await h.cleanup();}
+});
+
+test('E57 idle slots alternate nearby preparation and records instead of draining every record first',async()=>{
+ const h=await fixture({frameCount:80});try{
+  h.p.setForwardPredecode(true);h.p.primeRecords([50,60]);stopFillTimer(h.p);beginFill(h);await Promise.resolve();assert.equal(h.primary.requests.at(-1).ordinal,1);
+  await completeFill(h);assert.equal(h.primary.requests.at(-1).ordinal,50);h.primary.complete();await turn();stopFillTimer(h.p);assert(h.p.thumbCache.has(50));assert(!h.p.thumbCache.has(60));
+  beginFill(h);await Promise.resolve();assert.equal(h.primary.requests.at(-1).ordinal,2);await completeFill(h);assert.equal(h.primary.requests.at(-1).ordinal,60);h.primary.complete();await turn();stopFillTimer(h.p);assert(h.p.thumbCache.has(60));
+ }finally{await h.cleanup();}
+});
+
+test('E57 disabled or full nearby preparation still drains a finite record queue and stops',async()=>{
+ for(const enabled of [false,true]){const h=await fixture();try{
+  for(let n=1;n<4;n++)h.p._entry(n,{pixels:Buffer.from([n,0,0,255]),metrics:{width:1,height:1}});if(enabled)h.p.setForwardPredecode(true);
+  h.p.primeRecords([1,2,3]);for(let i=0;i<20&&!h.p.thumbCache.has(3);i++)await new Promise(r=>setTimeout(r,2));assert.equal(h.p.thumbCache.size,3);
+  await new Promise(r=>setTimeout(r,5));assert.equal(h.p.fillTimer,undefined);assert.equal(h.p.thumbRunning,false);assert.equal(h.p.readerBusy,false);
+ }finally{await h.cleanup();}}
 });

@@ -14,7 +14,7 @@ class FilmcraftClient {
   static async create(options) { const client=new FilmcraftClient(options);try{await client.ready;return client;}catch(e){await client.close();throw e;} }
   constructor({exe,source,frames,software=false,height=720,width,outputHeight,gpuDrawing=true,cacheBytes=384*1024**2,draw=()=>{},blank=()=>{},spawnProcess=spawn}) {
     Object.assign(this,{frames,draw,blank,id:0,current:null,dead:false,stats:{frames:0,stale:0,wrong:0,errors:0,hwFrames:0,hwFallbacks:0}});
-    this.packets=new PacketReader((header,pixels)=>this.receive(header,pixels));
+      this.packets=new PacketReader((header,pixels)=>this.receive(header,pixels),header=>header.event!=='frame'||!this.dead&&this.current?.id===header.id);
     this.ready=new Promise((resolve,reject)=>{this.openResolve=resolve;this.openReject=reject;});
     this.proc=spawnProcess(exe,[source,software?'software':'hardware',String(height),String(cacheBytes),...(width&&outputHeight?[String(width),String(outputHeight),gpuDrawing?'yuv420p':'rgba']:[])],{windowsHide:true,stdio:['pipe','pipe','pipe']});
     this.stderr=''; this.proc.stderr.on('data',d=>{this.stderr=(this.stderr+d.toString()).slice(-8192);});

@@ -226,6 +226,13 @@ test('Space during a held drag or nonplayable states cannot queue playback', () 
   }
   h.ui.update(h.state); assert.strictEqual(h.calls.filter(call => call[0] === 'toggle').length, 0); h.ui.destroy();
 });
+
+test('E57 Space after a native drag release accepts pending playback, but held drags and failed targets remain protected',()=>{
+ const h=harness(),pending={...h.state,state:'seeking',playback:{...h.state.playback,native:true,pendingTargets:1,frameHeld:true,targetTime:4}};
+ h.ui.update(pending);assert.equal(h.el('play').disabled,false);h.win.fire('keydown',{code:'Space',key:' ',target:h.el('timeline')});assert.equal(h.calls.filter(c=>c[0]==='toggle').length,1);
+ h.el('timeline').fire('pointerdown',{clientX:180});const count=h.calls.length;h.win.fire('keydown',{code:'Space',key:' ',target:h.el('timeline')});assert.equal(h.calls.length,count);h.win.fire('pointerup',{clientX:180,buttons:0});
+ h.ui.update({...pending,playback:{...pending.playback,pendingTargets:0,lastErrorCode:'NATIVE_FRAME_FAILED'}});const after=h.calls.length;h.win.fire('keydown',{code:'Space',key:' ',target:h.el('timeline')});assert.equal(h.calls.length,after);assert.equal(h.el('play').disabled,true);h.ui.destroy();
+});
 test('Release hint follows actual final frame, stays readable, and clears on a new operation or epoch', () => {
   const h = harness(); h.el('timeline').fire('pointerdown', { clientX: 300 }); h.win.fire('pointerup', { clientX: 300, buttons: 0 });
   assert.strictEqual(h.el('timeHint').textContent, '0:02.000');

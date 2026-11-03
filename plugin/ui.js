@@ -397,6 +397,7 @@
       return interactive() && !previewActive() && !seekIntent && ['paused', 'playing'].includes(state.state) && !gesture && !memoryBusy && !cleaning &&
         !selection.snapshot().editing && !selection.snapshot().busy;
     }
+    function pendingNativePlay(){return state.state==='seeking'&&state.playback?.native&&state.playback?.pendingTargets>0;}
     async function requestRate(value, direction, feedback = false) {
       if ((!shortcutReady() && !rateRequest) || transportBusy && !rateRequest) return;
       const base = rateRequest ? rateRequest.target : state.playback?.transport?.rate || 1;
@@ -424,7 +425,7 @@
       set(el.loopEnabled, 'disabled', disabled || editing.editing || !loop || !loop.valid);
       set(el.loopCancel, 'hidden', !editing.editing);
       set(el.loopSelect, 'textContent', editing.editing ? '确认片段（R）' : loop && (loop.startOrdinal != null || loop.endOrdinal != null) ? '清除片段（R）' : '选择片段（R）');
-      set(el.play, 'disabled', !interactive() || editing.editing || editing.busy || !(['paused', 'playing'].includes(state.state) || state.playback?.buffering));
+      set(el.play, 'disabled', !interactive() || editing.editing || editing.busy || !(['paused', 'playing'].includes(state.state) || state.playback?.buffering || pendingNativePlay()));
       set(el.commentAdd, 'disabled', !interactive() || previewActive() || !!seekIntent || editing.editing || editing.busy || !!gesture || state.comments?.status !== 'ready' || state.playback?.frameHeld === true);
       if (!transportBusy) {
         set(el.loopEnabled, 'checked', !!(loop && loop.enabled));
@@ -572,7 +573,7 @@
         return;
       }
       if (!spaceAllowed(event, el.timeline)) return;
-      event.preventDefault(); if (interactive() && !gesture && !selection.snapshot().editing && !selection.snapshot().busy && (['paused', 'playing'].includes(state.state) || state.playback?.buffering)) { clearHint(); invoke(() => session.toggle()); }
+      event.preventDefault(); if (interactive() && !gesture && !screenUI?.active() && !selection.snapshot().editing && !selection.snapshot().busy && (['paused', 'playing'].includes(state.state) || state.playback?.buffering || pendingNativePlay())) { clearHint(); invoke(() => session.toggle()); }
     });
     on(win, 'keyup', event => {
       if (event.code === 'KeyR' || String(event.key || '').toLowerCase() === 'r') { if (selection.snapshot().editing && gesture) end(null); if (selection.snapshot().editing && screenUI?.active()) screenUI.finish(); selection.keyUp(); }
@@ -875,7 +876,7 @@
       release: () => { screenSelectionPoint = null; updateTransport(); },
       seek: (time, final, ordinal) => { clearHint(); if (screenSelectionPoint && selection.snapshot().editing) selection.move(screenSelectionPoint, time, final, now(),ordinal); else requestSeek(time, { index:ordinal,final, kind: final ? 'release' : 'rapid', inputAt: now() }); },
       rate: value => requestRate(value),
-      toggle: () => { if ((shortcutReady() || interactive() && state.playback?.buffering) && !transportBusy) invoke(() => state.state === 'playing' || state.playback?.buffering ? session.pause() : session.play()); } });
+      toggle: () => { if ((shortcutReady() || interactive() && (state.playback?.buffering || pendingNativePlay())) && !transportBusy) invoke(() => state.state === 'playing' || state.playback?.buffering || state.playback?.playRequested ? session.pause() : session.play()); } });
     contextUI = contextAPI.createContextWheel({ document: doc, window: win, screen: el.screen, now,
       getContext: () => {
         const deletion = state.drawings?.draft?.kind === 'delete' ? state.drawings.draft : state.comments?.draft?.kind === 'delete' ? state.comments.draft : null;
