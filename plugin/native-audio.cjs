@@ -11,8 +11,8 @@ function regular(file){const s=fs.lstatSync(file);if(!s.isFile()||s.isSymbolicLi
 function stamp(s){return[s.dev,s.ino,s.size,s.mtimeMs,s.ctimeMs].join(':');}
 function copyArgs(file){return['-hide_banner','-nostdin','-loglevel','warning','-copyts','-i',file,'-map','0:a:0','-vn','-sn','-dn','-c:a','copy','-avoid_negative_ts','disabled','-use_editlist','1','-movflags','empty_moov+delay_moov+default_base_moof','-frag_duration','1000000','-f','mp4','pipe:1'];}
 function probeArgs(file,source){return['-v','error',...(source?['-select_streams','a:0']:[]),'-show_streams','-show_packets','-show_data_hash','sha256','-show_entries','stream='+STREAM_FIELDS.join(',')+':stream_disposition=:stream_tags=:packet=pts,dts,duration,size,data_hash:packet_side_data=side_data_type,skip_samples,discard_padding,skip_reason,discard_reason','-of','flat','-i',file];}
-function fingerprint(maxPayloadBytes=null){
- let packet=null,previous=null,count=0,first=null,last=null,payloadBytes=0n;const digest=crypto.createHash('sha256'),streams=new Map();
+function fingerprint(maxPayloadBytes=null,allowCopyTail=false){
+ let packet=null,previous=null,count=0,first=null,last=null,payloadBytes=0n,tailTrimSamples=0,durationAdjustments=0;const digest=crypto.createHash('sha256'),streams=new Map();
  function checked(p){for(const name of ['pts','dts'])p[name]=integer(p[name],name).toString();const size=integer(p.size,'音频包大小');if(size<1n)throw issue('AUDIO_VALIDATE','音频包为空。');p.size=size.toString();
   payloadBytes+=size;if(maxPayloadBytes!==null&&payloadBytes>BigInt(maxPayloadBytes))throw issue('AUDIO_BUDGET','原音轨压缩数据已超过安全上限。');
   if(!/^SHA256:[a-fA-F0-9]{64}$/.test(p.data_hash||''))throw issue('AUDIO_VALIDATE','音频包缺少内容指纹。');
@@ -21,7 +21,12 @@ function fingerprint(maxPayloadBytes=null){
   return p;
  }
  function add(p,nextPts){const interval=nextPts===null?null:integer(nextPts,'下一音频包')-integer(p.pts,'音频包');if(interval!==null&&interval<=0n)throw issue('AUDIO_TIMING','音频包时间不是严格递增。');
-  const duration=p.duration===undefined?interval:integer(p.duration,'音频包时长');if(duration===null||duration<=0n)throw issue('AUDIO_TIMING','音频包边界无法确认。');
+  const coded=p.duration===undefined?null:integer(p.duration,'音频包时长');
+  if(allowCopyTail&&interval!==null&&coded!==null&&coded!==interval){if(coded>1024n||interval>1024n)throw issue('AUDIO_TIMING','音频包边界无法确认。');durationAdjustments++;}
+  // On copied AAC, neighbouring exact PTS define the presentation interval;
+  // demuxers may instead label it with the full coded block duration. The
+  // original packet interval is still the reference, including all PTS/DTS.
+  const duration=allowCopyTail&&interval!==null?interval:coded===null?interval:coded;if(duration===null||duration<=0n)throw issue('AUDIO_TIMING','音频包边界无法确认。');
   digest.update(JSON.stringify([p.pts,p.dts,duration.toString(),p.size,p.data_hash.toLowerCase(),Object.keys(p.side||{}).sort().map(k=>[k,p.side[k]])])+'\n');
   if(first===null)first=p.pts;last={pts:p.pts,duration:duration.toString()};count++;
  }
@@ -39,10 +44,18 @@ function fingerprint(maxPayloadBytes=null){
   const tb=/^(\d{1,10})\/(\d{1,10})$/.exec(stream.time_base||'');if(!tb||BigInt(tb[1])<=0n||BigInt(tb[2])<=0n||integer(stream.sample_rate,'音频采样率')<=0n||integer(stream.channels,'音频声道')<=0n)throw issue('AUDIO_TIMING','音轨时基或采样格式无效。');
   if(!stream.codec_name||stream.codec_name.length>64)throw issue('AUDIO_VALIDATE','音轨编码无法确认。');if(stream.extradata_hash!==undefined&&!/^SHA256:[a-fA-F0-9]{64}$/.test(stream.extradata_hash))throw issue('AUDIO_VALIDATE','音轨初始化数据指纹无效。');
   const start=integer(stream.start_pts,'音轨起点'),duration=integer(stream.duration_ts,'音轨时长');if(duration<=0n)throw issue('AUDIO_TIMING','音轨时长无效。');const end=start+duration,lastPts=integer(previous.pts,'末尾音频包');
-  if(previous.duration!==undefined&&lastPts+integer(previous.duration,'末尾音频包时长')!==end)throw issue('AUDIO_TIMING','音轨末尾与音频包边界不一致。');
-  add(previous,end.toString());return{stream:Object.fromEntries(STREAM_FIELDS.map(k=>[k,stream[k]===undefined?null:stream[k]])),packets:count,firstPts:first,lastPts:last.pts,endPts:end.toString(),sha256:digest.digest('hex')};
+  if(previous.duration!==undefined&&lastPts+integer(previous.duration,'末尾音频包时长')!==end){
+   const coded=integer(previous.duration,'末尾音频包时长'),audible=end-lastPts;
+   // Fragmented AAC can report a complete final coded block beyond the MP4
+   // track end. Only the copied track may canonicalize this padding; the source
+   // must already have an exact declared boundary. Full packet/stream hashes and
+   // effective end are still compared, so an altered audible endpoint fails.
+   if(!allowCopyTail||stream.codec_name!=='aac'||coded>1024n||audible<=0n||audible>=coded)throw issue('AUDIO_TIMING','音轨末尾与音频包边界不一致。');
+   tailTrimSamples=Number(coded-audible);previous.duration=audible.toString();
+  }
+  add(previous,end.toString());if(durationAdjustments&&stream.codec_name!=='aac')throw issue('AUDIO_TIMING','音频包边界无法确认。');return{stream:Object.fromEntries(STREAM_FIELDS.map(k=>[k,stream[k]===undefined?null:stream[k]])),packets:count,firstPts:first,lastPts:last.pts,endPts:end.toString(),sha256:digest.digest('hex')};
  }
- return{line,end};
+ return{line,end,tailTrimSamples:()=>tailTrimSamples,durationAdjustments:()=>durationAdjustments};
 }
 function createAudioTrack(options={}){
  const {source,tools,maxBytes,signal,expectedStamp}=options,spawn=options.spawn||systemSpawn,children=new Set();let failure=null,timer=null,sourceStamp=null;
@@ -62,12 +75,12 @@ function createAudioTrack(options={}){
   child.once('close',code=>{children.delete(child);try{check();if(failed)throw failed;if(code!==0)throw issue('AUDIO_TOOL','音轨准备失败：'+tail);if(collect){if(!total)throw issue('AUDIO_VALIDATE','独立音轨为空。');resolve(Buffer.concat(chunks,total));}else{pending+=decoder.end();if(Buffer.byteLength(pending)>MAX_LINE_BYTES)throw issue('AUDIO_METADATA','音轨校验行超过安全上限。');if(pending)consume(pending.replace(/\r$/,''));resolve();}}catch(e){reject(e);}});
   try{child.stdin.end(input||undefined);}catch(e){fail(e);}
  });}
- async function probe(file,input){const parsed=fingerprint(input===null?maxBytes:null);await run(tools.ffprobe,probeArgs(file,input===null),{input,consume:parsed.line});return parsed.end();}
+ async function probe(file,input){const parsed=fingerprint(input===null?maxBytes:null,input!==null);await run(tools.ffprobe,probeArgs(file,input===null),{input,consume:parsed.line});const value=parsed.end();return{value,tailTrimSamples:parsed.tailTrimSamples(),durationAdjustments:parsed.durationAdjustments()};}
  const promise=(async()=>{if(!source||!path.isAbsolute(source.filePath||'')||!tools||![tools.ffmpeg,tools.ffprobe].every(p=>typeof p==='string'&&path.isAbsolute(p))||!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>MAX_AUDIO_BYTES)throw issue('AUDIO_OPTIONS','独立音轨准备参数无效。');check();
   if(typeof expectedStamp!=='string'||!expectedStamp||expectedStamp.length>512)throw issue('AUDIO_SOURCE_CHANGED','音轨缺少已确认的视频源身份。');sourceStamp=expectedStamp;checkSource();signal?.addEventListener('abort',cancel,{once:true});timer=setTimeout(()=>stop(issue('AUDIO_TIMEOUT','独立音轨准备超时。')),TIMEOUT_MS);
   const original=await probe(source.filePath,null);check();const bytes=await run(tools.ffmpeg,copyArgs(source.filePath),{collect:true});check();const copied=await probe('pipe:0',bytes);check();
-  checkSource();if(JSON.stringify(original)!==JSON.stringify(copied))throw issue('AUDIO_CHANGED','独立音轨的内容或时序与原声不一致。');
-  return{bytes,mime:'audio/mp4',method:'audio-only-copy',verification:{codec:copied.stream.codec_name,packetCount:copied.packets,packetSha256:copied.sha256,stream:copied.stream,firstPts:copied.firstPts,endPts:copied.endPts}};
+  checkSource();if(JSON.stringify(original.value)!==JSON.stringify(copied.value))throw issue('AUDIO_CHANGED','独立音轨的内容或时序与原声不一致。');
+  const verified=copied.value;return{bytes,mime:'audio/mp4',method:'audio-only-copy',verification:{codec:verified.stream.codec_name,packetCount:verified.packets,packetSha256:verified.sha256,stream:verified.stream,firstPts:verified.firstPts,endPts:verified.endPts,tailTrimSamples:copied.tailTrimSamples,durationAdjustments:copied.durationAdjustments}};
  })().catch(e=>{if(sourceStamp!==null)checkSource();throw e;}).finally(()=>{clearTimeout(timer);signal?.removeEventListener('abort',cancel);});
  return{promise,cancel(){cancel();return promise.catch(()=>null);},pids:()=>[...children].map(c=>c.pid).filter(Number.isSafeInteger)};
 }

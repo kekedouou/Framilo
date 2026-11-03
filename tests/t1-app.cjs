@@ -7,6 +7,7 @@ function harness(settings = {}) {
   let nativeCloseBusy = false, mergedCloseAttempts = 0;
   const nativeTasks = [];
   const ui = { canvas: {}, bindSession() {}, update(value) { updates.push(value); }, destroy() { destroyed++; } };
+  if(settings.prepareEntry)ui.prepareEntry=settings.prepareEntry;
   const session = {
     hasDrawingDraft: () => !!settings.drawingDraft,
     loadSelected(options, captured) { log.push({ type: 'selected', options, captured }); return Promise.resolve(); },
@@ -17,7 +18,7 @@ function harness(settings = {}) {
     snapshot() { return { epoch: 3, libraryEpoch: 1, sourceIdentity: { itemId: 'fixed', sha256: 'a'.repeat(64) } }; }
   };
   const adapter = {
-    captureSelected() { return Promise.resolve({ id: 'fixed', filePath: path.join(root, 'video.mp4') }); },
+    captureSelected() { return settings.capture?settings.capture():Promise.resolve({ id: 'fixed', filePath: path.join(root, 'video.mp4') }); },
     discoverTools() { discovered++; return new Promise((resolve, reject) => { discoveries.push({ resolve, reject }); }); }
   };
   const modules = {
@@ -86,6 +87,13 @@ async function bounded(pending) {
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 async function main() {
+  {
+    let resume,captures=0;const gate=new Promise(r=>{resume=r;});const h=harness({prepareEntry:()=>gate,capture:()=>{captures++;return Promise.resolve({id:'fixed',filePath:path.resolve('selected-before-paint.mp4')});}});
+    const opening=h.hooks.onPluginCreate({path:h.root});assert.equal(captures,1);assert.equal(h.config,undefined,'heavy session work waits for first paint');
+    const closing=h.hooks.onPluginBeforeExit();resume();await bounded(closing);await bounded(opening);assert.equal(h.config,undefined,'closed initializer cannot build media after paint');
+    await bounded(h.hooks.onPluginRun());assert(h.config);assert.equal(captures,2,'reopening captures once and consumes that exact promise');await h.hooks.onPluginBeforeExit();
+    console.log('E58 app: selection captured before first paint; close drains initializer and reopen remains usable');
+  }
   {
     const h = harness({ failUIAt: 2 });
     await h.hooks.onPluginCreate({path:h.root});await h.hooks.onPluginBeforeExit();

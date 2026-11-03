@@ -77,7 +77,7 @@
     for (const id of ['autoProxy', 'gpuDrawing', 'gpuAcceleration', 'proxyGenerate', 'proxyCancel', 'proxyState']) el[id] = doc.getElementById(id);
     const backendControl = !!el.playbackBackend && String(el.playbackBackend.tagName).toUpperCase() === 'SELECT';
     let session = null, state = { state: 'empty', duration: 0 }, gesture = null, hintEpoch = null, hintGeometry = null, lastRequestedTime = 0;
-    let seekIntent = null, screenSelectionPoint = null;
+    let seekIntent = null, screenSelectionPoint = null, entryPaint = null;
     let viewRange = { start: 0, end: 0, focused: false }, timelineWidth = null, rulerKey = null;
     let rateRequest = null, noteRequest = null, exportRequest = null;
     let drawingUI = null, screenUI = null, contextUI = null, shellUI = null;
@@ -131,7 +131,7 @@
       const node = el.proxyState; if (!node) return;
       if(state.playbackBackend==='jpeg'&&state.state==='preparing'){
         if(proxyToastTimer!==null)win.clearTimeout(proxyToastTimer);proxyToastTimer=null;
-        node.setAttribute('data-persistent','true');proxyToastKey=state.epoch+':jpeg';node.removeAttribute?.('data-faded');node.hidden=false;
+        node.setAttribute('data-persistent','true');proxyToastKey=state.epoch+':jpeg';node.removeAttribute?.('data-faded');node.hidden=!!state.decision;
         const p=state.progress||{},labels={hash:'校验视频',analyze:'读取视频信息',cache:'检查已有缓存',decode:'生成JPEG序列',verify:'核验JPEG序列','player-initialize':'准备画面与声音'};
         const label=p.message||labels[p.stage]||'准备JPEG序列';
         set(node,'textContent',label+(Number.isSafeInteger(p.frames)?' · 已准备'+p.frames+'帧':''));return;
@@ -150,7 +150,7 @@
         shellUI?.transient?.('proxyState');
         if (transient) { proxyToastTimer = win.setTimeout(() => { node.setAttribute('data-faded', 'true'); proxyToastTimer = null; }, 2200); }
       }
-      node.hidden = false;
+      node.hidden = !!state.decision;
       set(node, 'textContent', proxyLabel(value));
     }
     function clearCoverage() {
@@ -320,12 +320,16 @@
     const cursorTime = () => seekIntent && seekIntent.epoch === state.epoch ? seekIntent.time
       : state.playback?.pendingTargets && Number.isFinite(state.playback.targetTime) ? state.playback.targetTime : state.playback?.time || 0;
     function settleIntent() {
-      if (seekIntent?.completed && !gesture && !screenUI?.active() && !previewActive() &&
-          state.state !== 'seeking' && !(state.playback?.pendingTargets > 0)) seekIntent = null;
+      if (!seekIntent || gesture || screenUI?.active() || previewActive() || state.state === 'seeking' || state.playback?.pendingTargets > 0) return;
+      // Playback may join/supersede the original seek Promise. Once it owns the
+      // clock, a never-completed UI promise must not pin the cursor forever.
+      const exact = state.playback?.frameHeld !== true && (Number.isSafeInteger(seekIntent.ordinal)
+        ? state.playback?.frameOrdinal === seekIntent.ordinal : Math.abs((state.playback?.time ?? NaN) - seekIntent.time) < 1e-9);
+      if (seekIntent.completed || state.state === 'playing' || exact) seekIntent = null;
     }
     function requestSeek(time, settings) {
       if (!session || !Number.isFinite(time)) return;
-      const job = seekIntent = { time, epoch: state.epoch, session, completed: false };
+      const job = seekIntent = { time, ordinal:settings?.index, epoch: state.epoch, session, completed: false };
       // The cursor is a UI intent, never a replacement for the submitted frame.
       // Do not await image preparation in a pointer handler or serialize moves.
       thumb(time);
@@ -860,6 +864,12 @@
       const hideStrip = state.interactionSettings?.showCacheStrip === false;
       if (el.decodedCache.hidden !== hideStrip) { set(el.decodedCache, 'hidden', hideStrip); coverageKey = null; }
     }
+    function cancelEntryPaint(){if(!entryPaint)return;const task=entryPaint;entryPaint=null;win.cancelAnimationFrame?.(task.id);task.resolve();}
+    function prepareEntry(){cancelEntryPaint();update({state:'preparing',duration:0,source:null,playback:null,error:null,progress:{stage:'opening'}});
+      if(typeof win.requestAnimationFrame!=='function')return Promise.resolve();
+      // One paint opportunity before synchronous host-module initialization.
+      return new Promise(resolve=>{const task=entryPaint={resolve,id:null};task.id=win.requestAnimationFrame(()=>{if(entryPaint!==task)return;task.id=win.requestAnimationFrame(()=>{if(entryPaint!==task)return;entryPaint=null;resolve();});});});
+    }
     drawingUI = drawingAPI.createDrawingUI({ document: doc, window: win, getSession: () => session, getState: () => state, menuActive: () => !!contextUI?.active(),
       canBegin: () => shortcutReady() && !transportBusy && state.exportState?.status !== 'unknown' && state.playback?.frameHeld !== true, isKey: letterKey });
     screenUI = screenGestureAPI.createScreenGestureUI({ document: doc, window: win, now,
@@ -914,7 +924,7 @@
     commentResize?.observe(el.screen);
     // Keep the old close/error surface until the replacement UI exists.
     previousClosingSurface?.remove();
-    return { canvas: el.picture, confirmDrawingExit: () => drawingUI.confirmExit(), bindSession(value) {
+    return { canvas: el.picture, prepareEntry, confirmDrawingExit: () => drawingUI.confirmExit(), bindSession(value) {
       if (session !== value) {
         seekIntent = null;
         showCommentActions(null);
@@ -929,6 +939,7 @@
       if (coverageTimer === null && typeof win.setInterval === 'function') coverageTimer = win.setInterval(refreshCoverage, 50);
     }, update,
       destroy({ closing = false } = {}) {
+        cancelEntryPaint();
         closeMarkerChooser();
         if (proxyToastTimer !== null) win.clearTimeout(proxyToastTimer); proxyToastTimer = null;
         if (el.proxyState) el.proxyState.hidden = true;

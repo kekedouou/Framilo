@@ -75,3 +75,18 @@ test('a tool failure never proceeds to copying and preserves its bounded diagnos
 test('identical but invalid skip metadata cannot pass as a verified original audio timeline',async()=>{
  const invalid=metadata({skip:-1}),h=fixture([{data:invalid}]);try{await assert.rejects(createAudioTrack(h.options).promise,{code:'AUDIO_TIMING'});assert.equal(h.calls.length,1);}finally{h.clean();}
 });
+
+function aacMetadata(copy=false,change={}){
+ const rows=[],points=[0,1024,2041],durations=copy?[null,1024,1024]:[1024,1017,1014];
+ for(let n=0;n<3;n++)for(const[k,v]of Object.entries({pts:String(points[n]+(change.pts&&n===1?1:0)),dts:String(points[n]),...(durations[n]===null?{}:{duration:String(change.coded&&n===1?change.coded:durations[n])}),size:'100',data_hash:'SHA256:'+(change.payload&&n===1?'c':'a').repeat(64)}))rows.push('packets.packet.'+n+'.'+k+'='+JSON.stringify(v));
+ rows.push(...metadata({codec:change.codec||'aac',end:change.end||3055}).toString().trim().split('\n').filter(s=>s.startsWith('streams.')));return Buffer.from(rows.join('\n')+'\n');
+}
+test('E58 fragmented AAC coded durations normalize to identical packet PTS and audible track end without re-encoding',async()=>{
+ const h=fixture([{data:aacMetadata()},{data:Buffer.from('same original AAC')},{data:aacMetadata(true)}]);try{const r=await createAudioTrack(h.options).promise;assert.equal(r.verification.packetCount,3);assert.equal(r.verification.endPts,'3055');assert.equal(r.verification.tailTrimSamples,10);assert.equal(r.verification.durationAdjustments,1);assert.equal(h.calls[1].args[h.calls[1].args.indexOf('-c:a')+1],'copy');}finally{h.clean();}
+});
+for(const change of [{pts:true},{payload:true},{end:3054},{coded:2048},{codec:'opus'}])test('E58 AAC normalization still rejects changed content/timing or unsupported block metadata '+JSON.stringify(change),async()=>{
+ const h=fixture([{data:aacMetadata()},{data:Buffer.from('audio')},{data:aacMetadata(true,change)}]);try{await assert.rejects(createAudioTrack(h.options).promise,/音轨|音频/);}finally{h.clean();}
+});
+test('E58 source tail remains strict and copied normalization cannot repair an unconfirmed original',async()=>{
+ const h=fixture([{data:aacMetadata(false,{end:3054})}]);try{await assert.rejects(createAudioTrack(h.options).promise,{code:'AUDIO_TIMING'});assert.equal(h.calls.length,1);}finally{h.clean();}
+});

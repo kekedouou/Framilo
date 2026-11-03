@@ -19,9 +19,9 @@ Windows x64、Eagle 4.0 Build 22+和Eagle内已有的FFmpeg模块即可使用，
 
 ## 回退
 
-本轮交付0.2.0-private.4，dist文件名为framilo-0.2.0-private.4-<源提交短号>-win-x64.zip，旁有.sha256，包内BUILD-INFO记录完整来源及逐文件摘要。唯一当前包、测量/清理回执见[E57报告](../experiments/E57/report.md)及[交接](../progress.md)。程序沿用E55减重成果，视频兼容不缩减；不是官方商店安装包。
+本轮交付0.2.0-private.5，dist文件名为framilo-0.2.0-private.5-<源提交短号>-win-x64.zip，旁有.sha256，包内BUILD-INFO记录完整来源及逐文件摘要。唯一当前包、测量/清理回执见[E58报告](../experiments/E58/report.md)及[交接](../progress.md)。程序沿用E55减重成果，视频兼容不缩减；不是官方商店安装包。
 
-按用户要求，每轮新包核验成功后替换旧ZIP/校验及解压快照，dist仅保留最新一组；历史文档中的旧路径只作追溯，不保证文件仍在。旧版本源提交/构建清单/摘要另存对应阶段verification-runs（E56/E57），不删除旧测量或冻结Git历史。旧包重建须检出对应源码和匹配打包配方；被Git忽略的task-host.local.exe需按对应.cs重新构建、核对指纹，Git不能直接恢复它。不得把新清单直接用于旧包，也不承诺重建ZIP字节完全相同。
+按用户要求，每轮新包核验成功后替换旧ZIP/校验及解压快照，dist仅保留最新一组；历史文档中的旧路径只作追溯，不保证文件仍在。旧版本源提交/构建清单/摘要另存对应阶段verification-runs（E56/E57/E58），不删除旧测量或冻结Git历史。旧包重建须检出对应源码和匹配打包配方；被Git忽略的task-host.local.exe需按对应.cs重新构建、核对指纹，Git不能直接恢复它。不得把新清单直接用于旧包，也不承诺重建ZIP字节完全相同。
 
 更新前保留对应版本的程序快照。关闭播放器后，只恢复快照清单内的程序文件到原plugin目录；保留memory-settings.json、annotation-data和所有未知文件，不把旧缓存搬回。由Codex核对文件清单、版本、占用和摘要后执行，不建议自行整目录覆盖。
 

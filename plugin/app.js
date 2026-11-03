@@ -22,7 +22,7 @@
     } catch(error) { const node=document.getElementById('error');node.hidden=false;node.textContent='窗口操作未完成：'+error.message; }
   }
   let ui = window.EVAUI.createUI({hostAction});
-  let session = null, diagnostics = null, initializing = false, closed = false;
+  let session = null, diagnostics = null, initializing = false, initializationTask = null, closed = false;
   let activePlayer = null;
   let closeTask = null, allowUnload = false, exitScheduled = false;
   let hideTask = Promise.resolve(), closeFailure = null;
@@ -65,13 +65,23 @@
     const entryAt = entryOverride === null ? now() : entryOverride; entryOverride = null;
     if (closed || initializing || session) return;
     initializing = true;
+    const task=initializeReady(plugin,entryAt);initializationTask=task;
+    task.finally(()=>{if(initializationTask===task)initializationTask=null;}).catch(()=>{});return task;
+  }
+  async function initializeReady(plugin,entryAt){
     presentWindow();
     try {
       if (!plugin || typeof plugin.path !== 'string' || !path.isAbsolute(plugin.path)) throw new Error('Eagle 未提供有效插件目录，请从插件入口打开。');
       const root = fs.realpathSync(plugin.path);
       lastPlugin = plugin;
-      const { createTaskClient } = require(path.join(root, 'task-client.cjs'));
       const { createEagleAdapter } = require(path.join(root, 'eagle.cjs'));
+      adapter = createEagleAdapter(eagle);
+      // Capture the chosen source before yielding for paint; a later selection
+      // must not silently replace what the user opened.
+      if(!initialSelection){try{initialSelection=Promise.resolve(adapter.captureSelected());}catch(error){initialSelection=Promise.reject(error);}initialSelection.catch(()=>{});}
+      if(ui.prepareEntry)await ui.prepareEntry();
+      if(closed)return;
+      const { createTaskClient } = require(path.join(root, 'task-client.cjs'));
       const { createSession } = require(path.join(root, 'session.cjs'));
       const { createDiagnostics } = require(path.join(root, 'diagnostics.cjs'));
       const { createMemoryPreferences } = require(path.join(root, 'preferences.cjs'));
@@ -85,7 +95,6 @@
           annotationReceipts: session.annotationHistory ? session.annotationHistory() : [], pluginRoot: root } : null });
         Object.defineProperty(window, 'EVADiagnostics', { value: diagnostics.public, writable: false, configurable: false });
       }
-      adapter = createEagleAdapter(eagle);
       windowFit = require(path.join(root, 'window-fit.cjs')).createWindowFit({host:eagle.window,screen:eagle.screen,
         report:error=>diagnostics?.publish('window-fit-failed',{message:String(error.message)})});
       const sessionAdapter = { ...adapter };
@@ -201,6 +210,9 @@
       // cleanup. Player reads still drain before the owner releases its leases.
       try { if (backend) backend.beginClose(); } catch (error) { failure = error; }
       try { result = session ? await session.close() : { status: 'closed' }; } catch (error) { failure = error; }
+      // destroy() below releases a pending first-paint wait. Reopening waits
+      // for this old initializer as well as its media owner before reusing UI.
+      try { await initializationTask; } catch (error) { failure = failure || error; }
       try { if (backend) await backend.close(); } catch (error) { failure = failure || error; }
       if(!failure&&temporaryMedia)try{await temporaryMedia.close();temporaryMedia=null;await backend?.retireLegacy?.();}catch(error){failure=error;}
       if (failure) throw failure;
