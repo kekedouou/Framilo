@@ -1,7 +1,7 @@
 # 当前交接
 
 当前阶段：E-59
-候选提交：本轮private.6源码提交；精确来源见verification-runs/e59/package-build.json和包内BUILD-INFO
+候选提交：99c8547（private.6源码）；精确来源见verification-runs/e59/package-build.json和包内BUILD-INFO
 候选状态：关闭资源与窗口拖动修复、本地回归及兼容检查完成；宿主连续重开及双屏手感交用户体验，尚未认定恶化问题根治。
 
 ## 当前授权与结果
@@ -11,7 +11,7 @@
 ## 验证与待验
 默认回归通过；基线/候选各12轮独立原生关闭重建均无残留，未复现宿主恶化。16种既有样本CPU/GPU帧检查通过，未标色彩ProRes仍限制；音频实听和真实标注写入未验。[验收登记](experiments/E53/acceptance.md)/[能力限制](releases/motionote-capabilities.md)。
 真实Eagle只读核验已获授权，用户打开项目插件后确认画面和代理可用；自动化无法可靠关闭窗口，未完成循环。用户明确停止自动化，改为手动体验；不要继续尝试或再次请求同项授权。集中体验关闭重开黑屏、全屏拖回窗口、双屏拖动和关闭错误。
-private.6打包/原生冒烟/旧包替换以verification-runs/e59回执为准；E58历史证据保留，程序候选不代表宿主验收。
+private.6打包校验与CPU/GPU包内冒烟通过；旧private.5快照/ZIP/校验按已核对清单替换，回执在verification-runs/e59。E58历史证据保留，程序候选不代表宿主验收。
 
 ## 前端预览恢复
 E59已打开并检查画面/设置： http://127.0.0.1:8431/c22fd0f9cf9be8fd0c563d8e4891711a171a/ 。回执verification-runs/e59/preview-server.json，进程21768。恢复命令node scripts/frontend-preview.cjs；只停止身份匹配服务，保留草稿与旧E57证据。合成UI不验证原生窗口、多屏/GPU/音画。[长期流程](development-plan.md#前端预览与反馈流程)。
