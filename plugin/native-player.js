@@ -59,15 +59,15 @@
    const image=this.renderer?null:new ImageData(new Uint8ClampedArray(r.pixels.buffer,r.pixels.byteOffset,bytes),r.metrics.width,r.metrics.height),entry={image,token,pixels:r.pixels,header:r.metrics};
    this.cache.set(n,entry);this.revision++;return entry;
   }
-  _draw(n,e){if(this.disposed)return;const im=e.image||e.header;
+  _draw(n,e){if(this.disposed)return;const first=this.drawCount===0,im=e.image||e.header;
    if(this.canvas.width!==im.width||this.canvas.height!==im.height){this.canvas.width=im.width;this.canvas.height=im.height;}
    if(this.renderer)this.ctx.drawImage(this.renderer.render(e.pixels,e.header),0,0);else this.ctx.putImageData(im,0,0);this.canvas.style.visibility='visible';this.currentIndex=n;this.time=this.info.frames[n].time;this.drawCount++;this.frameHeld=false;this.lastIssue=null;this.lastErrorCode=null;
-   this.cache.delete(n);this.cache.set(n,e);
+   this.cache.delete(n);this.cache.set(n,e);if(first)this._emit('startup',{phase:'first-frame-submitted'});
   }
-  async load(info){this.canvas.style.visibility='hidden';this.frameHeld=true;this.info=info;this.index.validateIndex(info);this.state='loading';this._change();
+  async load(info){this._emit('startup',{phase:'player-load'});this.canvas.style.visibility='hidden';this.frameHeld=true;this.info=info;this.index.validateIndex(info);this.state='loading';this._change();
    if(root.EVANativeRenderer){this.renderToken=this.budget.reserve(info.width*info.height*20,'video-render-surfaces');this.renderer=root.EVANativeRenderer.create({document:root.document,width:info.width,height:info.height,enabled:this.o.gpuDrawing!==false});}
-   this.reader=await this.runtime.createReader();if(this.disposed){await this.runtime.closeReader(this.reader);return;}
-   if(info.audio){this.audioTask=this._prepareAudioURL();const src=await this.audioTask;if(this.disposed)return;const a=this.o.createAudio?.()||document.createElement('audio');a.preload='auto';a.src=src;a.playbackRate=this.playbackRate;this.audio=a;await this._audioReady(a);if(this.disposed)return;}
+   this.reader=await this.runtime.createReader();this._emit('startup',{phase:'reader-ready'});if(this.disposed){await this.runtime.closeReader(this.reader);return;}
+   if(info.audio){this._emit('startup',{phase:'audio-copy'});this.audioTask=this._prepareAudioURL();const src=await this.audioTask;if(this.disposed)return;this._emit('startup',{phase:'audio-element'});const a=this.o.createAudio?.()||document.createElement('audio');a.preload='auto';a.src=src;a.playbackRate=this.playbackRate;this.audio=a;await this._audioReady(a);this._emit('startup',{phase:'audio-ready'});if(this.disposed)return;}
    this.unsub=this.runtime.subscribeProxy(()=>{this._takeProxy().catch(e=>{this.lastIssue='代理接管失败，继续原片：'+e.message;this._change();});});
    this.state='paused';await this.seek(0,{final:true,kind:'initial'});if(this.runtime.proxyAsset())await this._takeProxy();return this.snapshot();
   }

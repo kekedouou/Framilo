@@ -14,6 +14,7 @@
 /plugin/cache/
 /plugin/memory-settings.json
 /plugin/memory-settings.next.json
+/plugin/startup-audit.local.json
 /dist/
 /demos/standalone-preview/work/
 /demos/standalone-preview/evidence/

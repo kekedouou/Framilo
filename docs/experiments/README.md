@@ -4,6 +4,7 @@
 
 | 阶段 | 计划 | 结果 | 专项 |
 | --- | --- | --- | --- |
+| E60 | [plan.md](E60/plan.md) | [report.md](E60/report.md) | 整窗黑屏、首帧阻塞和窗口拖动错误根因排查 |
 | E59 | [plan.md](E59/plan.md) | [report.md](E59/report.md) | 关闭重开累积、跨屏拖动、退出异常及兼容/数据安全回归 |
 | E58 | [plan.md](E58/plan.md) | [report.md](E58/report.md) | 冷帧续播光标、启动加载、容量提示及指定4K素材续播调查 |
 | E57 | [plan.md](E57/plan.md) | [report.md](E57/report.md) | 有界拖动调度、定向预解压及续播；新包核验后替换旧包 |

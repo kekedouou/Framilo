@@ -864,11 +864,15 @@
       const hideStrip = state.interactionSettings?.showCacheStrip === false;
       if (el.decodedCache.hidden !== hideStrip) { set(el.decodedCache, 'hidden', hideStrip); coverageKey = null; }
     }
-    function cancelEntryPaint(){if(!entryPaint)return;const task=entryPaint;entryPaint=null;win.cancelAnimationFrame?.(task.id);task.resolve();}
+    function cancelEntryPaint(){if(!entryPaint)return;const task=entryPaint;entryPaint=null;win.cancelAnimationFrame?.(task.id);clearTimeout(task.timer);task.resolve();}
     function prepareEntry(){cancelEntryPaint();update({state:'preparing',duration:0,source:null,playback:null,error:null,progress:{stage:'opening'}});
       if(typeof win.requestAnimationFrame!=='function')return Promise.resolve();
-      // One paint opportunity before synchronous host-module initialization.
-      return new Promise(resolve=>{const task=entryPaint={resolve,id:null};task.id=win.requestAnimationFrame(()=>{if(entryPaint!==task)return;task.id=win.requestAnimationFrame(()=>{if(entryPaint!==task)return;entryPaint=null;resolve();});});});
+      // A paint opportunity is a courtesy, not an unbounded initialization gate.
+      // Hidden/occluded windows or a stalled compositor may not deliver rAF.
+      return new Promise(resolve=>{const task=entryPaint={resolve,id:null,timer:null};
+        const finish=reason=>{if(entryPaint!==task)return;win.EVAStartup?.mark('paint-gate',{reason});cancelEntryPaint();};
+        task.timer=setTimeout(()=>finish('deadline'),250);
+        task.id=win.requestAnimationFrame(()=>{if(entryPaint!==task)return;task.id=win.requestAnimationFrame(()=>finish('paint'));});});
     }
     drawingUI = drawingAPI.createDrawingUI({ document: doc, window: win, getSession: () => session, getState: () => state, menuActive: () => !!contextUI?.active(),
       canBegin: () => shortcutReady() && !transportBusy && state.exportState?.status !== 'unknown' && state.playback?.frameHeld !== true, isKey: letterKey });

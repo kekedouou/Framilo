@@ -78,6 +78,7 @@ eagle.drawingDeletion唯一核对当前库API、普通images/<id>.info目录缺�
 - Session等待实际取消、子进程/流/读者/租约/缓存收尾，宿主关闭请求不等同完成；未知结果/草稿保留。偏好、圈画和永久标注独立于可淘汰缓存；偏好原子保存、旧格式兼容和全部读写端见验证协议。
 
 ## 内部诊断与开发检查
+startup-audit在页面早期记录有界启动时序；无本机E60限时配置时仅有限内存记录、不落盘。有配置时只写项目verification-runs/e60，最多10个文件、每份64KiB/160条，记录方法/数字/阶段，不采集视频或标注，不上传。配置不打包，期满停止；具体证据和停用条件见[E60报告](experiments/E60/report.md)。ui.prepareEntry绘制机会等待有250ms计时退出，仍不承诺线程阻塞时的实际墙钟时限。
 用户监测窗口和设置入口已删除，app不再创建采样器或传递监测开关；按需订阅的diagnostics仍供开发定位问题。播放器资源账本、计时与安全护栏保留。退役源/迁移摘要见[监测归档](history/retired-monitor-e55/README.md)，历史测试只读该归档，不回接产品。
 Session仅在释放成功后将SELECTION_EMPTY映射正常empty；SDK/释放故障保持error。
 

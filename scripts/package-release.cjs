@@ -16,7 +16,7 @@ const NATIVE_VERSION = require('../plugin/manifest.json').version;
 const NATIVE_EXCLUDED = new Set(['player.js','proxy-decoder.js','scrub-preview.js','quick-preview.js','record-previews.js',
   'performance-core.cjs','performance-stages.cjs','performance-runtime.cjs','performance-view.js','performance-window.html','performance-window.js','performance.css','live-resources.cjs']);
 const NATIVE_RUNTIME = Object.freeze([...RUNTIME.filter(name => !NATIVE_EXCLUDED.has(name)), 'playback-common.js', 'temporary-media.cjs', 'media-space.cjs', 'legacy-media-cleanup.cjs', 'native-backend.cjs', 'native-audio.cjs', 'native-reader.cjs', 'native-wire.cjs',
-  'native-player.js', 'native-renderer.js', 'whole-proxy.cjs', 'bin/filmcraft-media.exe',
+  'native-player.js', 'native-renderer.js', 'startup-audit.js', 'whole-proxy.cjs', 'bin/filmcraft-media.exe',
   'bin/filmcraft-media.build.json', 'bin/FilmCraft-LICENSE-MIT', 'bin/FilmCraft-LICENSE-APACHE',
   'bin/FilmCraft-NOTICE', 'bin/filmcraft-third-party.json', 'bin/filmcraft-third-party.txt']);
 const FILMCRAFT_COMMIT = '176e6a9c585fd29e4b18d691663fe88a936c5b37';

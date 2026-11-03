@@ -1,12 +1,13 @@
 /* Eagle lifecycle and dependency wiring only. */
 (function () {
   'use strict';
+  const startup=window.EVAStartup;startup?.mark('app-script');
   const path = require('path'), fs = require('fs');
   let fullscreenProbe=0,fullscreenTransition=false;
   async function syncFullscreen(){if(fullscreenTransition)return;try{const token=++fullscreenProbe,value=await eagle.window.isFullScreen();if(token!==fullscreenProbe)return;if(!value)windowedGeometry=null;document.documentElement.dataset.evaFullscreen=String(!!value);window.dispatchEvent(new Event('eva-fullscreen-change'));}catch(_){/* Host may not be ready yet. */}}
   let fullscreenTimer=null;window.addEventListener('resize',()=>{clearTimeout(fullscreenTimer);fullscreenTimer=setTimeout(syncFullscreen,100);});window.addEventListener('focus',syncFullscreen);syncFullscreen();
   let windowDrag=null,windowedGeometry=null;
-  function dragAdapter(){if(!windowDrag){if(!lastPlugin?.path)throw Error('窗口尚未准备完成');windowDrag=require(path.join(lastPlugin.path,'window-drag.cjs')).createWindowDrag({host:eagle.window,screen:eagle.screen,sync:syncFullscreen,report:error=>{const n=document.getElementById('error');n.hidden=false;n.textContent='窗口拖动未完成：'+error.message;}});}return windowDrag;}
+  function dragAdapter(){if(!windowDrag){if(!lastPlugin?.path)throw Error('窗口尚未准备完成');windowDrag=require(path.join(lastPlugin.path,'window-drag.cjs')).createWindowDrag({host:eagle.window,screen:eagle.screen,sync:syncFullscreen,trace:(stage,value)=>startup?.mark(stage,value),report:error=>{const n=document.getElementById('error');n.hidden=false;n.textContent='窗口拖动未完成：'+error.message;}});}return windowDrag;}
   window.addEventListener('unload',()=>windowDrag?.cancel());
   async function hostAction(action,details) {
     try {
@@ -21,7 +22,7 @@
       else if(action==='fullscreen'){fullscreenTransition=true;++fullscreenProbe;try{const full=await host.isFullScreen();if(!full){try{const [size,maximized]=await Promise.all([host.getSize(),host.isMaximized()]);windowedGeometry={size,maximized};}catch(_){windowedGeometry=null;}}await host.setFullScreen(!full);}finally{fullscreenTransition=false;await syncFullscreen();}}
     } catch(error) { const node=document.getElementById('error');node.hidden=false;node.textContent='窗口操作未完成：'+error.message; }
   }
-  let ui = window.EVAUI.createUI({hostAction});
+  let ui = window.EVAUI.createUI({hostAction});startup?.mark('ui-built');
   let session = null, diagnostics = null, initializing = false, initializationTask = null, closed = false;
   let activePlayer = null;
   let closeTask = null, allowUnload = false, exitScheduled = false;
@@ -58,6 +59,7 @@
       if (session !== active || closed || request !== drawingLoadSequence || library && adapter.drawingLibrary() !== library) return { status: 'superseded' };
     }
     const result = await session.loadSelected(settings, captured);
+    startup?.mark('load-result',{status:result?.status});
     if (diagnostics) diagnostics.publish('load-result', result);
     return result;
   }
@@ -69,17 +71,19 @@
     task.finally(()=>{if(initializationTask===task)initializationTask=null;}).catch(()=>{});return task;
   }
   async function initializeReady(plugin,entryAt){
+    startup?.mark('plugin-create');
     presentWindow();
     try {
       if (!plugin || typeof plugin.path !== 'string' || !path.isAbsolute(plugin.path)) throw new Error('Eagle 未提供有效插件目录，请从插件入口打开。');
       const root = fs.realpathSync(plugin.path);
+      startup?.connect(root);
       lastPlugin = plugin;
       const { createEagleAdapter } = require(path.join(root, 'eagle.cjs'));
       adapter = createEagleAdapter(eagle);
       // Capture the chosen source before yielding for paint; a later selection
       // must not silently replace what the user opened.
       if(!initialSelection){try{initialSelection=Promise.resolve(adapter.captureSelected());}catch(error){initialSelection=Promise.reject(error);}initialSelection.catch(()=>{});}
-      if(ui.prepareEntry)await ui.prepareEntry();
+      if(ui.prepareEntry){startup?.mark('paint-wait');await ui.prepareEntry();startup?.mark('paint-wait-done');}
       if(closed)return;
       const { createTaskClient } = require(path.join(root, 'task-client.cjs'));
       const { createSession } = require(path.join(root, 'session.cjs'));
@@ -131,7 +135,7 @@
         if (!preparedMedia || key !== backendKey) {
           if (!discoveredTools && !discovery) discovery = Promise.resolve().then(() => adapter.discoverTools())
             .finally(() => { discovery = null; });
-          const tools = discoveredTools || await waitTools(discovery, signal); discoveredTools = tools;
+          startup?.mark('tools-wait');const tools = discoveredTools || await waitTools(discovery, signal); discoveredTools = tools;startup?.mark('tools-ready');
           if (signal && signal.aborted) throw cancelled();
           if (!preparedMedia || key !== backendKey) {
             if (backend) { const previous = backend;
@@ -139,7 +143,7 @@
               await previous.close(); preparedMedia = null; backendKey = null; backend = null;
               if (signal?.aborted) throw cancelled(); }
             if(native){temporaryMedia=temporaryMedia||require(path.join(root,'temporary-media.cjs')).createTemporaryMedia({pluginRoot:root});
-            await temporaryMedia.ready;if(signal?.aborted)throw cancelled();}
+            startup?.mark('temporary-wait');await temporaryMedia.ready;startup?.mark('temporary-ready');if(signal?.aborted)throw cancelled();}
             const onBackground = () => { if (session && !closed) ui.update(session.snapshot()); };
             backend = native ? require(path.join(root, 'native-backend.cjs')).createNativeBackend({ pluginRoot: root, tools,
               temporaryMedia,cacheRoot:temporaryMedia.directory,limitBytes:100*1024**3, ramBytes: memory.ramBytes, decoderPreference: decoder, proxyEncoder: encoder, automaticProxy: true, gpuDrawing: gpu, onBackground })
@@ -164,6 +168,7 @@
       };
       const exports = { create: (...args) => exportOperation('create', args), publish: (...args) => exportOperation('publish', args),
         discard: (...args) => exportOperation('discard', args) };
+      let startupPhase=null;
       session = createSession({ eagleAdapter: sessionAdapter, media, cache, now, memoryPreferences: preferences, annotationStore, exports,
         // Exact previews/thumbnails belong to the native player; no legacy overlay service.
         createPreviewServices: () => ({}),
@@ -179,11 +184,11 @@
             ...(nativeInfo ? { nativeRuntime: nativeInfo.nativeRuntime, gpuDrawing: preferences.gpuDrawing() } : {}),
             ramBytes: memory.ramBytes, compressedRamBytes: memory.compressedRamBytes,
             forwardPredecode: preferences.forwardPredecode(), canvas: ui.canvas, frameIndex,
-            emit: event => { diagnostics.publish('player', () => ({ binding, event })); } });
+            emit: event => { if(event.type==='startup')startup?.mark('player-startup',{phase:event.phase});diagnostics.publish('player', () => ({ binding, event })); } });
           activePlayer.observeCanvas = false;
           activePlayer.observePerformance = false;
           return activePlayer;
-        }, onChange: snapshot => { ui.update(snapshot); windowFit?.update(snapshot); diagnostics.publish('state', snapshot); } });
+        }, onChange: snapshot => { const phase=snapshot.progress?.stage||snapshot.state;if(snapshot.state==='preparing'&&phase!==startupPhase){startupPhase=phase;startup?.mark('phase',{phase});}ui.update(snapshot); windowFit?.update(snapshot); diagnostics.publish('state', snapshot); } });
       ui.bindSession(session);
       drawingLifetime = require(path.join(root, 'drawing-lifetime.cjs')).createDrawingLifetime({
         store: annotationStore, adapter,
