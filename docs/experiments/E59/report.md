@@ -38,6 +38,8 @@ private.6 is built after clean source commit. package-build.json/BUILD-INFO defi
 
 Completed delivery: source99c8547, ZIP4,510,683 bytes, SHA256 a5206986429b7e40e868efb2d1baec60081b668bda6384f62a67306c819bed7d; archive/license/native checks and packaged smoke pass. distribution-cleanup-1793711382502.json confirms76 old files/15,620,198 bytes removed after identity/occupancy checks. Only private.6 distribution remains. Post-source changes are this receipt/handoff documentation, not runtime changes.
 
+Receipt-only handoff initially failed because a documentation-only commit requires the explicit maintenance-record link in progress. The shell did not stop before committing that receipt. Added the missing link and rechecked the receipt scope; runtime/package identities unchanged. This is a workflow correction, not a host acceptance.
+
 Current navigation/product/lifecycle/verification docs and E53 acceptance reconciled in place. Fixed day/count/hour quotas removed; E53 plan has supersession notice, historical result bodies and E49 frozen. No AGENTS, native codec, annotation schema or preference changes.
 
 Manual focus: repeated normal close/reopen black-screen trend; fullscreen-to-window and dual-monitor header dragging; cleanup errors on close. Existing marks/preferences should remain visible. No fixed count/days required. Listing-document preparation follows this repair checkpoint; actual submission/publishing unauthorized.

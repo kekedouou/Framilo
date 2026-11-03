@@ -1,6 +1,7 @@
 # 当前交接
 
 当前阶段：E-59
+维护记录：[E59交付与文档回执](experiments/E59/report.md)
 候选提交：99c8547（private.6源码）；精确来源见verification-runs/e59/package-build.json和包内BUILD-INFO
 候选状态：关闭资源与窗口拖动修复、本地回归及兼容检查完成；宿主连续重开及双屏手感交用户体验，尚未认定恶化问题根治。
 
