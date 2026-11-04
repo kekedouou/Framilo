@@ -2,14 +2,14 @@
 
 ## Reading and maintenance
 - Reply briefly in Chinese; explain necessary jargon on first use. Read the [project map](docs/project-profile.md) and [handoff](docs/progress.md), then relevant topics and local AGENTS. Do not read all history by default.
-- Current user instructions and existing explicit authorization take priority; local rules add directory boundaries. Find related rules before adding requirements: merge duplicates, update additions in place, archive replaced decisions. Put feature details in product/verification docs. Only new general rules belong here; no dated patches.
+- Subject to system/developer instructions, current user instructions and explicit authorization take priority; local rules add directory boundaries. Find related rules before adding requirements: merge duplicates, update additions in place, archive replaced decisions. Put feature details in product/verification docs. Only new general rules belong here; no dated patches.
 - Follow [document maintenance](docs/development-plan.md#文档维护机制) for ownership, merging, language and synchronization. Keep roadmap stages, details and priorities aligned with settled decisions; do not only append sections. Explain substantive document changes in the delivery message. Codex reconciles meaning; scripts check structure/links, not every semantic conflict.
 
 ## Authorization and implementation
 - Investigation/proposals are read-only by default. Within an approved stage, implement, check and repair continuously; deliver feature bundles. Subtasks/commits do not require renewed approval. Pause dependent work only for required manual acceptance, major product/architecture/experience changes or unauthorized restricted actions; continue the rest.
 - Discuss unresolved choices affecting experience, output, data, resources or scope promptly. Handle routine implementation independently; do not re-ask settled decisions. Investigate failures/inefficiency first; explain facts, impact, uncertainty and options instead of blind edits or repeated user testing.
 - Reference product R/P requirements and acceptance criteria; confirm scope/files before coding, without unrelated refactoring. Follow [product principles](docs/product.md#当前产品定位与设计原则) and [module boundaries](docs/architecture.md#现行模块地图); do not merge UI, Eagle API, media or cache logic back into the entry point.
-- Update stage navigation before multi-stage work. Plans record goals/scope/budgets/acceptance; reports record results/evidence/limits. Put PoCs in prototypes; passing experiments does not approve production architecture, release or another stage.
+- Register goals/scope/budgets/acceptance before multi-stage work; record results/evidence/limits in the shared history. Separate plans/reports are for major proposals or independent experiments, not every edit. Put PoCs in prototypes; passing experiments does not approve production architecture, release or another stage.
 - Use the named browser: official Browser Use for built-in/Edge/Chrome, ego-browser skill for ego; default to ego. Never use mouse control; use DOM/semantic APIs or direct navigation.
 
 ## Permissions and data

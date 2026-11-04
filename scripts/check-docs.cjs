@@ -8,7 +8,8 @@ const roles = {
   'docs/project-profile.md': '任务地图', 'docs/progress.md': '当前交接',
   'docs/product.md': '产品行为', 'docs/architecture.md': '模块边界',
   'docs/development-plan.md': '维护流程', 'docs/verification.md': '验证协议',
-  'docs/roadmap.md': '未来路线'
+  'docs/roadmap.md': '未来路线', 'docs/acceptance.md': '当前问题与验收',
+  'docs/progress/development-history.md': '开发历程'
 };
 const fail = message => { throw Error('documents: ' + message); };
 const sha = data => crypto.createHash('sha256').update(data).digest('hex');
@@ -35,12 +36,36 @@ function markdownFiles(root) {
   });
   return ['AGENTS.md', 'README.md', 'CHANGELOG.md', ...walk(path.join(root, 'docs'))];
 }
+function handoffFields(progress, exists) {
+  const field = label => {
+    const matches = [...progress.matchAll(new RegExp('^' + label + '：(.+)$', 'gm'))];
+    if (matches.length !== 1) fail('handoff needs exactly one ' + label);
+    return matches[0][1].trim();
+  };
+  const task = field('当前任务');
+  if (!/^[A-Z][A-Z0-9-]{1,63}$/.test(task)) fail('invalid task ID');
+  const reference = label => {
+    const match = field(label).match(/^\[[^\]]+\]\(([^)]+)\)$/);
+    if (!match || /^(?:[a-z]+:|\/)/i.test(match[1])) fail('invalid handoff link: ' + label);
+    const resolved = linkTarget('docs/progress.md', match[1]);
+    inside(ROOT, resolved.target);
+    if (!resolved.target.startsWith('docs/') || !exists(resolved.target)) fail('missing handoff target: ' + label);
+    return resolved;
+  };
+  const completion = reference('维护记录'), registry = reference('工作区登记');
+  if (!completion.target.endsWith('.md') || completion.target === 'docs/progress.md' ||
+      /^(?:docs\/history\/|docs\/releases\/)/.test(completion.target)) fail('invalid active completion record');
+  if (!registry.target.endsWith('.json') || registry.anchor) fail('invalid workspace registry');
+  const candidate = field('候选提交');
+  if (!/^[a-f0-9]{7,40}$/.test(candidate)) fail('invalid candidate commit');
+  return { task, completion, registry: registry.target, candidate };
+}
 function governance(read, exists) {
   const rawRead = read; read = f => rawRead(f).replace(/\r\n/g, '\n');
   for (const file of Object.keys(roles)) {
     if (!exists(file)) fail('missing role entry: ' + file);
     const body = read(file);
-    if (file !== 'docs/progress.md' && /^(?:当前(?:阶段[：:]|[：:]E-?\d+)|候选(?:提交|状态)[：:]|current (?:stage|phase)\s*[:：]|candidate (?:commit|status)\s*[:：])/im.test(body)) fail('duplicate current state in ' + file);
+    if (file !== 'docs/progress.md' && /^(?:当前(?:任务[：:]|阶段[：:]|[：:]E-?\d+)|候选(?:提交|状态)[：:]|current (?:task|stage|phase)\s*[:：]|candidate (?:commit|status)\s*[:：])/im.test(body)) fail('duplicate current state in ' + file);
     if (/^#{1,6}\s+(?:当前[：:]|E-?\d+\b)/m.test(body)) fail('stage patch heading in role entry: ' + file);
     if (/第二阶段(?:尚未开始|及未来范围仍未启动)/.test(body)) fail('stale stage status in ' + file);
   }
@@ -63,13 +88,8 @@ function governance(read, exists) {
   if (!Number.isSafeInteger(measured.tokens) || measured.tokens <= 0 || measured.tokens > 1160)
     fail('AGENTS token budget exceeded (1160); merge/archive before adding');
   const progress = read('docs/progress.md');
-  const stages = [...progress.matchAll(/^当前阶段：E-(\d+)$/gm)];
-  if (stages.length !== 1) fail('progress needs exactly one current stage');
-  const stage = 'E' + stages[0][1];
-  for (const name of ['plan.md', 'report.md']) {
-    const f = 'docs/experiments/' + stage + '/' + name;
-    if (!exists(f) || !links(progress).includes('experiments/' + stage + '/' + name)) fail('missing current stage navigation: ' + f);
-  }
+  if (/^当前阶段：/m.test(progress)) fail('obsolete current stage field; use task and product phase');
+  const handoff = handoffFields(progress, exists);
   const map = new Set(links(read('docs/project-profile.md')).map(u => linkTarget('docs/project-profile.md', u)?.target));
   for (const f of [...Object.keys(roles).filter(f => f.startsWith('docs/') && f !== 'docs/project-profile.md'), 'docs/experiments/README.md', 'docs/performance/WORKFLOW.md']) {
     if (!map.has(f)) fail('task map lacks ' + f);
@@ -77,7 +97,7 @@ function governance(read, exists) {
   const modules = read('docs/architecture.md').split('## 现行模块地图\n')[1]?.split(/^## /m)[0];
   if (!modules) fail('architecture lacks current module map');
   if (/performance-(?:dashboard|explainer|inbox|protocol|report|runner)|run-standard-performance|E39增加代理淡蓝条/.test(modules)) fail('retired module in current map');
-  return { stage, defaultChars: total };
+  return { ...handoff, defaultChars: total };
 }
 function checkLinks(root, read = f => fs.readFileSync(inside(root, f), 'utf8')) {
   const files = markdownFiles(root), set = new Set(files), edges = new Map();
@@ -149,4 +169,4 @@ if (require.main === module) {
   try { console.log('documents: ' + JSON.stringify(check())); }
   catch (e) { console.error(e.message); process.exitCode = 1; }
 }
-module.exports = { check, governance, checkLinks, preservation, retiredPreservation, inside, roles };
+module.exports = { check, governance, handoffFields, checkLinks, preservation, retiredPreservation, inside, roles };

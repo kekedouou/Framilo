@@ -5,13 +5,13 @@ const { governance, inside, roles } = require('../scripts/check-docs.cjs');
 const root = path.resolve(__dirname, '..');
 const originals = new Map(Object.keys(roles).map(f => [f, fs.readFileSync(path.join(root, f), 'utf8').replace(/\r\n/g, '\n')]));
 originals.set('docs/document-token-budget.json', fs.readFileSync(path.join(root, 'docs/document-token-budget.json'), 'utf8'));
-const currentStage = originals.get('docs/progress.md').match(/^当前阶段：E-(\d+)$/m)[1];
-const { validateInherited, selectScope } = require('../scripts/check-handoff.cjs');
+const currentTask = originals.get('docs/progress.md').match(/^当前任务：(.+)$/m)[1];
+const { validateInherited, selectScope, validateCandidate, validateCompletion } = require('../scripts/check-handoff.cjs');
 let cases = 0;
 function exercise(change, pattern) {
   const docs = new Map(originals); change(docs);
   const run = () => governance(f => docs.get(f), f => originals.has(f) ? docs.has(f) : fs.existsSync(path.join(root, f)));
-  if (pattern) assert.throws(run, pattern); else assert.equal(run().stage, 'E' + currentStage);
+  if (pattern) assert.throws(run, pattern); else assert.equal(run().task, currentTask);
   cases++;
 }
 exercise(() => {});
@@ -20,8 +20,8 @@ exercise(d => d.set('docs/roadmap.md', d.get('docs/roadmap.md') + '\n当前：E-
 exercise(d => d.set('docs/verification.md', d.get('docs/verification.md') + '\nCurrent stage: E-50\n'), /duplicate current state/);
 exercise(d => d.set('docs/verification.md', d.get('docs/verification.md') + '\nCandidate status: passed\n'), /duplicate current state/);
 exercise(d => d.set('docs/product.md', d.get('docs/product.md') + '\n## E52 本轮交接\n'), /stage patch heading/);
-exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace('当前阶段：E-' + currentStage, '当前阶段：E-999')), /missing current stage navigation/);
-exercise(d => d.set('docs/progress.md', d.get('docs/progress.md') + '\n当前阶段：E-' + currentStage + '\n'), /exactly one/);
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace(/^当前任务：.+$/m, '当前阶段：E-999')), /obsolete current stage/);
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md') + '\n当前任务：' + currentTask + '\n'), /exactly one/);
 exercise(d => d.set('docs/architecture.md', d.get('docs/architecture.md').replace('## 现行模块地图\n', '## 现行模块地图\n| plugin/performance-dashboard.cjs | old |\n')), /retired module/);
 exercise(d => d.set('docs/project-profile.md', d.get('docs/project-profile.md').replace('(verification.md)', '(product.md)')), /task map lacks docs\/verification/);
 exercise(d => d.set('AGENTS.md', d.get('AGENTS.md') + '重复补丁'.repeat(1000)), /budget exceeded/);
@@ -52,4 +52,26 @@ assert.throws(() => retiredPreservation(root, f => f === archiveManifest.files[0
 assert.throws(() => retiredPreservation(root, f => f === archiveManifestPath ? Buffer.from(JSON.stringify({...archiveManifest, files:archiveManifest.files.slice(1)})) : archiveRead(f)), /inventory mismatch/);
 assert.throws(() => retiredPreservation(root, f => f === archiveManifestPath ? Buffer.from(JSON.stringify({...archiveManifest, originalsRemoved:true})) : archiveRead(f), () => true), /restored in active tree/);
 cases += 4;
+// Normal maintenance no longer requires an E plan/report, but cannot omit its record/registry.
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace(/^工作区登记：.+$/m, '普通段落：[保留清单](workspace-exceptions.json)')), /exactly one 工作区登记/);
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace('workspace-exceptions.json', 'missing-registry.json')), /missing handoff target/);
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace(/^维护记录：.+$/m, '维护记录：[旧证据](history/2026-10-31/product.md)')), /invalid active completion/);
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace(/^维护记录：.+$/m, '维护记录：[外部](https://example.com)')), /invalid handoff link/);
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace(/^维护记录：.+$/m, '维护记录：[丢失](missing.md)')), /missing handoff target/);
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace(/^候选提交：.+$/m, '候选提交：NOT_A_REAL_COMMIT')), /invalid candidate/);
+exercise(d => d.set('docs/product.md', d.get('docs/product.md') + '\n当前任务：ANOTHER-TASK\n'), /duplicate current state/);
+const { execFileSync } = require('child_process');
+const resolve = revision => execFileSync('git', ['rev-parse', '--verify', revision], {cwd:root, encoding:'utf8', windowsHide:true, stdio:['ignore','pipe','pipe']}).trim();
+const candidate = originals.get('docs/progress.md').match(/^候选提交：(.+)$/m)[1];
+assert.match(validateCandidate(candidate, resolve), /^[a-f0-9]{40}$/);
+assert.throws(() => validateCandidate('0000000000000000000000000000000000000000', resolve), /does not resolve/);
+assert.throws(() => validateCandidate('HEAD', resolve), /invalid candidate/);
+assert.throws(() => validateInherited({}, () => null), /inheritedDetails/);
+const record = 'docs/progress/development-history.md';
+const runtimeScope = ['plugin/app.js', 'docs/progress.md', record];
+validateCompletion(new Set(runtimeScope), runtimeScope, record);
+assert.throws(() => validateCompletion(new Set(runtimeScope), runtimeScope.filter(f=>f!==record), record), /scoped completion/);
+assert.throws(() => validateCompletion(new Set(runtimeScope.filter(f=>f!==record)), runtimeScope, record), /scoped completion/);
+assert.throws(() => validateCompletion(new Set(runtimeScope), ['plugin/app.js',record], record), /scoped updated current/);
+cases += 8;
 console.log('document governance: ' + cases + ' cases passed');

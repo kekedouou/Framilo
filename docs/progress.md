@@ -1,23 +1,22 @@
 # 当前交接
 
-当前阶段：E-60
-维护记录：[E60根因排查与收尾](experiments/E60/report.md)
-候选提交：f6d257c（private.9）；播放器/窗控实现仍为aec97ce的private.8。ZIP为dist/framilo-0.2.0-private.9-f6d257c-win-x64.zip，精确来源及摘要见verification-runs/e60/final-review-package-build.json。
-候选状态：FFmpeg声明、完整本地回归、运行/许可闭包及ZIP核验完成，交付集中体验。用户已反馈拖动和黑屏改善；旧包删除被自动策略拦截，新包可用但旧包替换清理未完成。[计划](experiments/E60/plan.md)/[报告](experiments/E60/report.md)。
+当前任务：DOC-MAINTENANCE
+任务状态：已完成；检查结果见维护记录，本地提交节点见Git历史。
+产品阶段：插件稳定性与上架准备
+维护记录：[文档维护](progress/development-history.md#2026-11-04-文档维护)
+候选提交：f6d257c
+工作区登记：[保留清单](workspace-exceptions.json)
 
-## 当前授权与结果
-用户已确认E58第一项体验完成，E59后续问题单独修复。最新明确认为目前拖动和黑屏已解决，批准最后排查、依赖声明和文档同步，不从零重做、不反复要求测试。
-取消固定14天/次数/小时门槛；本轮完成后准备上架资料，未授权实际发布/推送或独立版开发。按用户要求停止宿主自动化；无新增软件安装、素材库/原片/标注写入。
+## 目标与授权
+用户批准文档三步优化：规则/检查修复、领域导航与验收归位、旧工作包历史化；README参考frun。基线b2a27c4干净，仅文档/治理脚本及回归，不改播放器。规则、导航、验收归位及历史边界已同步，具体结果见维护记录。
+日常开发直接更新plugin，完成后提示关闭并重新打开；不默认ZIP或迁出仓库。具体流程见[开发规范](development-plan.md)。
 
-## 验证与待验
-实际旧事件确认：清理期间Eagle重显旧窗口，空黑遮罩等待历史缓存维护。private.8跳过仅剩成对回执的旧维护；必要释放仍等待，显示持续说明、保留最新打开请求、明确关闭可取消，失败可重试。
-新读到5份private.8指纹匹配的已有Eagle记录：就绪0.748–0.847秒、关闭68.5–104.5ms、旧维护预检4.4–4.8ms。没有交叠重开事件，不等于物理呈现或全部设备通过；与用户体验反馈分开登记。摘要final-review-existing-host.json及原始证据见报告。
-最后回归覆盖拖动取消/坐标、重开选择、关闭失败/重试、界面重建、标注保护和FFmpeg缺失处理。真实音画/格式、外部安装升级与历史GPU因果不因本轮自动通过；沿用已有证据，不重置已验项。[验收登记](experiments/E53/acceptance.md)/[能力限制](releases/motionote-capabilities.md)。
+## 产品接续
+E60运行修复保持：private.9源f6d257c，播放器/窗控沿用aec97ce。用户反馈拖动/黑屏已解决；已有宿主数据、代码检查和体验分别见[验收登记](acceptance.md)，详细证据留[E60报告](experiments/E60/report.md)。本次整理不重置已验项，不授予发布/推送、独立版开发或素材写入权限；宿主自动化仍停止。后续产品工作为准备上架资料，未因文档完成自动实施。
+历史private.9 ZIP已核验，但旧private.7/.8包清理遭策略阻断，仍留存；本次不重试删除。准确构建/清理身份在E60报告，Git干净不代表忽略文件已清。
 
 ## 前端预览恢复
-本轮无UI改动，不新建或刷新预览。既有E60等待/取消演示由node scripts/frontend-preview.cjs恢复，回执verification-runs/e60/preview-server.json；不凭旧PID/端口声称仍可用。保护旧服务/草稿，合成UI不验证原生窗口、多屏或真实音画。[长期流程](development-plan.md#前端预览与反馈流程)。
+纯文档/治理变更无需新预览或性能复测。已有E60等待/取消演示可由node scripts/frontend-preview.cjs恢复；回执verification-runs/e60/preview-server.json，不凭旧端口认定服务仍运行，保护草稿。
+本机startup-audit.local.json限24小时/10份/单份64KiB/160事件，已有10份，不扩额或清证据腾位。保留配置、用户数据与历史证据。
 
-## 工作区
-本轮基线88fe35c干净，无其它任务差异；[保留清单](workspace-exceptions.json)。输出限E60既有预算，保护证据/用户数据。startup-audit.local.json的24小时/10份/64KiB/160事件预算不扩展，已达10份，后续操作不保证留新记录；默认包不含配置。新授权下旧包清理仍在执行前被自动审批拒绝（blocked by policy），未绕过；private.7/.8与新包暂存，身份/例外见final-review-old-package-identities.json和final-review-distribution-cleanup.json。
-
-[阶段索引](experiments/README.md)
+[项目地图](project-profile.md) · [开发历程](progress/development-history.md) · [历史工作包](experiments/README.md)
