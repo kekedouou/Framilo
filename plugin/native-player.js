@@ -1,7 +1,8 @@
 /* E44 native video, one original-audio clock, bounded displayed-frame RAM. */
 (function(root){
  'use strict';
- const playback=root.EVAPlaybackCommon||root.EVAPlayer;
+  const playback=root.EVAPlaybackCommon||root.EVAPlayer;
+  const SEEK_COMPLETION_MS=120;
  class Player{
   constructor(o){
    this.o=o;this.info=null;this.runtime=o.nativeRuntime;this.index=o.frameIndex;this.canvas=o.canvas;this.ctx=this.canvas.getContext('2d',{alpha:false});
@@ -16,23 +17,44 @@
   _change(){if(!this.disposed)try{this.o.onChange?.(this.snapshot());}catch(_){} }
   _beginRead(reader,kind='foreground'){const lease={reader,kind,at:this.now()};this.readOwner=lease;this.readerBusy=true;return lease;}
   _endRead(lease){if(this.readOwner===lease){this.readOwner=null;this.readerBusy=false;}}
-  _clearQueued(){if(this.queuedRead){this.queuedRead.resolve({status:'superseded'});this.queuedRead=null;}}
+  _takeQueued(){const next=this.queuedRead;this.queuedRead=null;if(next)clearTimeout(next.timer);return next;}
+  _clearQueued(){this._takeQueued()?.resolve({status:'superseded'});}
+  _runQueued(task,preempt=false){const next=this._takeQueued();if(!next)return;
+   if(!this.disposed&&this.reader===task.reader&&next.version===this.serial&&this.state==='seeking'){
+    if(preempt&&this.readOwner===task.lease){this.reader.cancel();this.readOwner=null;this.readerBusy=false;}
+    next.resolve(this._startTargetRead(next.n,next.version));
+   }else next.resolve({status:'superseded'});
+  }
+  _startIdleRead(n,kind,reserved){const reader=this.reader,job={n,reader,info:this.info,lease:this._beginRead(reader,kind),reserved,promoted:false};this.idleRead=job;
+   const read=()=>{
+    if(this.disposed||this.reader!==reader||this.readOwner!==job.lease||!job.promoted&&(this.state!=='paused'||this.pendingTargets))return {status:'superseded'};
+    return reader.request(n);
+   };if(kind==='record'){try{job.promise=Promise.resolve(read());}catch(e){job.promise=Promise.reject(e);}}else job.promise=Promise.resolve().then(read);return job;
+  }
+  _finishIdleRead(job,transferred=false){if(this.idleRead===job)this.idleRead=null;if(!job.promoted){if(!transferred)this.budget.release(job.reserved);this._endRead(job.lease);}}
   _targetRead(n,version,final){const active=this.foregroundRead;this._clearQueued();
    if(active&&active.reader===this.reader&&this.readOwner===active.lease){
     if(active.n===n)return active.promise;
-    // Finish useful nearby work rather than cancelling it on every pointer tick.
-    // Final release and distant jumps still preempt immediately; no idle debounce.
-    if(!final&&this.seekReadMs<=32&&Math.abs(this.info.frames[n].time-this.info.frames[active.n].time)<=.2)
-     return new Promise(resolve=>{this.queuedRead={n,version,resolve};});
+    // A slow completed read is not a reason to starve the next one. Preserve only
+    // useful progress, with one absolute deadline measured from the original start.
+    const current=this.currentIndex,remaining=SEEK_COMPLETION_MS-(this.now()-active.lease.at);
+    if(!final&&remaining>0&&current!==null&&(active.n-current)*(n-current)>0&&Math.abs(active.n-current)<=Math.abs(n-current)&&Math.abs(this.info.frames[n].time-this.info.frames[active.n].time)<=.2)
+     return new Promise(resolve=>{const next={n,version,resolve};this.queuedRead=next;
+      next.timer=setTimeout(()=>{if(this.queuedRead===next&&this.foregroundRead===active)this._runQueued(active,true);},remaining);
+     });
    }
+   const idle=this.idleRead;if(idle&&idle.n===n&&idle.reader===this.reader&&idle.info===this.info&&this.readOwner===idle.lease)return this._startTargetRead(n,version,idle);
    if(this.readerBusy){this.reader.cancel();this.readOwner=null;this.readerBusy=false;}
    return this._startTargetRead(n,version);
   }
-  _startTargetRead(n,version){const reader=this.reader,info=this.info,lease=this._beginRead(reader),task={n,version,reader,lease};this.foregroundRead=task;
-   task.promise=(async()=>{let r;try{r=await reader.request(n);}catch(e){r={status:'error',error:e?.message||String(e)};}
-    // Expensive full-resolution transfers must not accumulate a release delay.
-    // Learn only completed work, not the artificially short time of cancellation.
+  _startTargetRead(n,version,idle){const reader=this.reader,info=this.info,lease=idle?idle.lease:this._beginRead(reader),task={n,version,reader,lease};let reserved=idle?.reserved;
+   if(idle){idle.promoted=true;idle.reserved=null;lease.kind='foreground';}this.foregroundRead=task;
+   task.promise=(async()=>{let r;try{r=await (idle?idle.promise:reader.request(n));}catch(e){r={status:'error',error:e?.message||String(e)};}
+    // Retained as a diagnostic, never a cancellation-derived estimate.
     if(r.status==='exact'&&!this.disposed&&this.reader===reader&&this.readOwner===lease)this.seekReadMs=this.now()-lease.at;
+    // A promoted idle reservation has exactly one new owner. Commit it before
+    // resolving consumers, including a result that is now only useful as RAM.
+    if(reserved&&r.status==='exact'&&!this.disposed&&this.info===info&&this.reader===reader&&this.readOwner===lease){try{this._entry(n,r,reserved);reserved=null;}catch(e){r={status:'error',error:e?.message||String(e)};}}
     // A completed older target can be useful RAM, but never becomes the picture
     // for a newer intent. Cancelled/handover/closed readers cannot populate it.
     if(r.status==='exact'&&version!==this.serial&&!this.disposed&&this.info===info&&this.reader===reader&&this.readOwner===lease){try{const e=this._entry(n,r),current=this.currentIndex,target=this.seekTarget;
@@ -44,8 +66,8 @@
       }
      }catch(_){} }
     return r;
-   })().finally(()=>{this._endRead(lease);if(this.foregroundRead!==task)return;this.foregroundRead=null;
-    const next=this.queuedRead;this.queuedRead=null;if(next){if(!this.disposed&&this.reader===reader&&next.version===this.serial&&this.state==='seeking')next.resolve(this._startTargetRead(next.n,next.version));else next.resolve({status:'superseded'});}
+   })().finally(()=>{if(reserved)this.budget.release(reserved);this._endRead(lease);if(this.foregroundRead!==task)return;this.foregroundRead=null;
+    this._runQueued(task);
    });return task.promise;
   }
   snapshot(){return {state:this.state,time:this.time,frameId:this.info?.frames[this.currentIndex]?.id??null,frameOrdinal:this.currentIndex,frameCount:this.info?.frames.length||0,targetTime:this.targetTime,pendingTargets:this.pendingTargets,frameHeld:this.frameHeld||this.pendingTargets>0,
@@ -219,15 +241,14 @@
    while(this.budget.limit-this.budget.used<maximum*2){let victim=null;for(const i of this.cache.keys())if(i!==this.currentIndex&&(i<plan.start||i>plan.end)){victim=i;break;}
     if(victim===null){this.fillStatus='budget';this._drainThumbnails();return;}const old=this.cache.get(victim);this.cache.delete(victim);this.budget.release(old.token);this.revision++;
    }
-   const reserved=this.budget.reserve(maximum,'native-fill-pending'),reader=this.reader,lease=this._beginRead(reader,'forward-fill');this.fillStatus='preparing';
+   const reserved=this.budget.reserve(maximum,'native-fill-pending'),job=this._startIdleRead(n,'forward-fill',reserved),{reader,lease}=job;this.fillStatus='preparing';
    this.fillTask=Promise.resolve().then(async()=>{let transferred=false;try{
-     if(this.disposed||this.reader!==reader||this.readOwner!==lease||!this.forwardPredecode||this.state!=='paused'||this.pendingTargets)return;
-     const r=await reader.request(n);
+     const r=await job.promise;if(job.promoted)return;
      if(this.disposed||this.reader!==reader||this.readOwner!==lease||!this.forwardPredecode||this.state!=='paused'||this.pendingTargets)return;
      if(r.status==='exact'){this._entry(n,r,reserved);transferred=true;}
      else if(!['superseded','closed'].includes(r.status)){this.fillFailures.add(n);this.forwardIssue=r.error||'周围画面暂未准备完成。';}
-    }catch(e){if(!this.disposed&&this.reader===reader&&this.readOwner===lease){this.fillFailures.add(n);this.forwardIssue=e.message;}}
-    finally{if(!transferred)this.budget.release(reserved);this._endRead(lease);this.fillTask=null;this.idleTurn='record';this._idleWork();}});
+    }catch(e){if(!job.promoted&&!this.disposed&&this.reader===reader&&this.readOwner===lease){this.fillFailures.add(n);this.forwardIssue=e.message;}}
+    finally{this._finishIdleRead(job,transferred);this.fillTask=null;this.idleTurn='record';this._idleWork();}});
   }
   _idleWork(){if(this.idleTurn==='record'&&this.thumbQueue.length){this._drainThumbnails();return;}this._scheduleFill();if(this.fillTimer===undefined&&!this.fillTask)this._drainThumbnails();}
   setForwardPredecode(on){this.forwardPredecode=!!on;if(!on){clearTimeout(this.fillTimer);this.fillTimer=undefined;if(this.readOwner?.kind==='forward-fill'){this.reader.cancel();this.readOwner=null;this.readerBusy=false;}this.fillStatus='disabled';}else this._scheduleFill();this._change();return {status:'applied'};}
@@ -260,7 +281,7 @@
    return {frameId:this.info.frames[n].id};}
   primeRecords(order){const ordinals=Array.isArray(order)?order:[...(order?.visible||[]),...(order?.all||[])];for(const n of ordinals)if(this.info?.frames[n]&&!this.thumbCache.has(n)&&!this.thumbQueue.includes(n))this.thumbQueue.push(n);this.thumbQueue=this.thumbQueue.slice(0,96);this._idleWork();}
   async _drainThumbnails(){if(!this.thumbQueue.length||this.thumbRunning||this.disposed||this.state!=='paused'||this.pendingTargets||this.readerBusy)return;this.thumbRunning=true;
-   try{if(this.thumbQueue.length&&!this.disposed&&this.state==='paused'&&!this.pendingTargets){const n=this.thumbQueue.shift();let e=this.cache.get(n);if(!e){const version=this.serial,reader=this.reader,lease=this._beginRead(reader);let r;try{r=await reader.request(n);}finally{this._endRead(lease);}if(this.disposed||version!==this.serial||this.state!=='paused'){if(!this.disposed&&!this.thumbCache.has(n))this.thumbQueue.unshift(n);return;}if(r.status!=='exact')return;e=this._entry(n,r);}this._thumbnail(n,e,document.createElement('canvas'));this._change();}}
+   try{if(this.thumbQueue.length&&!this.disposed&&this.state==='paused'&&!this.pendingTargets){const n=this.thumbQueue.shift();let e=this.cache.get(n);if(!e){const version=this.serial,job=this._startIdleRead(n,'record');let r;try{r=await job.promise;}catch(error){if(!job.promoted)throw error;return;}finally{this._finishIdleRead(job);}if(job.promoted||this.disposed||version!==this.serial||this.state!=='paused'){if(!this.disposed&&!this.thumbCache.has(n))this.thumbQueue.unshift(n);return;}if(r.status!=='exact')return;e=this._entry(n,r);}this._thumbnail(n,e,document.createElement('canvas'));this._change();}}
    catch(e){if(!this.disposed)this.forwardIssue=e.message;}
    finally{this.thumbRunning=false;this.idleTurn='near';this._scheduleFill();if(this.fillTimer===undefined&&!this.fillTask&&!this.readerBusy&&this.thumbQueue.length&&!this.disposed&&this.state==='paused'&&!this.pendingTargets){this.fillTimer=setTimeout(()=>{this.fillTimer=undefined;this._drainThumbnails();},0);}}
   }

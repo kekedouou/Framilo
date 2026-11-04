@@ -441,7 +441,7 @@ test('E48 verified proxy takeover invalidates old fill and only fills the new re
 test('E48 record requests take the next idle slot ahead of surrounding fill',async()=>{
  const h=await fixture();try{h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();assert.equal(h.primary.requests.at(-1).ordinal,1);
   const requests=h.primary.requests.length;h.p.primeRecords([3]);assert.equal(h.primary.requests.length,requests);await completeFill(h);
-  assert.equal(h.primary.requests.at(-1).ordinal,3);assert.equal(h.p.readOwner.kind,'foreground');h.primary.complete();await turn();stopFillTimer(h.p);assert(h.p.thumbCache.has(3));
+  assert.equal(h.primary.requests.at(-1).ordinal,3);assert.equal(h.p.readOwner.kind,'record');h.primary.complete();await turn();stopFillTimer(h.p);assert(h.p.thumbCache.has(3));
  }finally{await h.cleanup();}
 });
 test('E48 a synchronous record-reader failure releases ownership so idle fill can continue',async()=>{
@@ -514,10 +514,10 @@ test('E57 a far jump preempts nearby work without waiting for its completion',as
  }finally{await h.cleanup();}
 });
 
-test('E57 reversal caches completed work without displaying a frame beyond the new target',async()=>{
+test('reversal past the active target preempts without displaying or retaining its late frame',async()=>{
  const h=await fixture({frameCount:80});try{
-  const first=h.p.seek(.01,{index:10}),reversed=h.p.seek(.004,{index:4});h.primary.complete();await first;
-  assert.equal(h.p.currentIndex,0);assert.equal(h.p.targetTime,.004);assert(h.p.cache.has(10));h.primary.complete();await reversed;assert.equal(h.p.currentIndex,4);assert.equal(h.p.seekDirection,-1);
+  const first=h.p.seek(.01,{index:10}),before=h.primary.cancels,reversed=h.p.seek(.004,{index:4});assert.equal(h.primary.cancels,before+1);h.primary.complete(1);await first;
+  assert.equal(h.p.currentIndex,0);assert.equal(h.p.targetTime,.004);assert(!h.p.cache.has(10));h.primary.complete();await reversed;assert.equal(h.p.currentIndex,4);assert.equal(h.p.seekDirection,-1);
   h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();assert.equal(h.primary.requests.at(-1).ordinal,3);await completeFill(h);
  }finally{await h.cleanup();}
 });
@@ -533,10 +533,10 @@ test('E57 a second play toggle can cancel pending resume without restarting soun
  }finally{await h.cleanup();}
 });
 
-test('E57 slow completed transfers retain immediate-preemption policy rather than queuing extra payloads',async()=>{
+test('slow preceding transfers no longer starve useful nearby work',async()=>{
  const h=await fixture();try{
-  h.p.seekReadMs=60;const old=h.p.seek(.017),cancels=h.primary.cancels,latest=h.p.seek(.05);assert.equal(h.primary.cancels,cancels+1);assert.equal(h.p.queuedRead,null);assert.equal(h.primary.requests.length,3);
-  h.primary.complete(2);await latest;h.primary.complete(1);await old;assert.equal(h.p.currentIndex,2);assert(!h.p.cache.has(1));
+  h.p.seekReadMs=60;const old=h.p.seek(.017),cancels=h.primary.cancels,latest=h.p.seek(.05);assert.equal(h.primary.cancels,cancels);assert.equal(h.p.queuedRead.n,2);assert.equal(h.primary.requests.length,2);
+  h.advanceSilent(.06);h.primary.complete(1);await old;assert(h.p.cache.has(1));assert.equal(h.p.frameHeld,true);h.primary.complete(2);await latest;assert.equal(h.p.currentIndex,2);assert.equal(h.p.frameHeld,false);
  }finally{await h.cleanup();}
 });
 
@@ -570,4 +570,90 @@ test('E59 failed native exit still releases JS/render/audio resources and permit
  await assert.rejects(h.p.dispose(),/device stalled/);assert.equal(h.p.cache.size,0);assert.equal(h.p.thumbCache.size,0);assert.equal(h.p.audio,null);assert.equal(disposed,1);
  assert.equal(h.p.budget.snapshot().kinds['video-render-surfaces']||0,0);
  fail=false;await h.p.dispose();assert.equal(h.p.budget.used,0);
+});
+
+for(const beforeDispatch of [false,true])test('same-frame idle fill is promoted once '+(beforeDispatch?'before dispatch':'during decoding'),{timeout:2000},async()=>{
+ const h=await fixture();try{
+  h.p.setForwardPredecode(true);beginFill(h);if(!beforeDispatch)await Promise.resolve();
+  const fill=h.p.fillTask,before=h.primary.cancels,peak=h.p.budget.peak,first=h.p.seek(.017,{index:1}),final=h.p.seek(.017,{index:1,final:true});
+  await Promise.resolve();assert.equal(h.primary.requests.length,2);assert.equal(h.primary.cancels,before);assert.equal(h.p.readOwner.kind,'foreground');
+  h.primary.complete();await Promise.all([fill,first,final]);stopFillTimer(h.p);
+  assert.equal(h.p.currentIndex,1);assert.equal(h.p.frameHeld,false);assert.equal(h.p.cache.size,2);assert.equal(h.p.budget.used,peak);assert.equal(h.p.budget.snapshot().kinds['native-fill-pending'],undefined);
+  assert.equal(h.p.idleRead,null);assert.equal(h.p.foregroundRead,null);
+ }finally{await h.cleanup();}
+});
+
+test('a record read becomes the exact foreground target without another request',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  h.p.primeRecords([3]);const before=h.primary.cancels,seek=h.p.seek(.1,{index:3,final:true});assert.equal(h.primary.requests.length,2);assert.equal(h.primary.cancels,before);
+  h.primary.complete();await seek;await turn();assert.equal(h.p.currentIndex,3);assert.equal(h.p.frameHeld,false);assert.equal(h.primary.requests.length,2);assert(h.p.thumbCache.has(3));
+ }finally{await h.cleanup();}
+});
+
+test('a promoted fill can complete as protected progress and dispatch only the latest target',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();const fill=h.p.fillTask,first=h.p.seek(.017),middle=h.p.seek(.05),last=h.p.seek(.1);
+  assert.equal(h.primary.requests.length,2);assert.equal((await middle).status,'superseded');h.primary.complete(1);await first;await fill;
+  assert.equal(h.p.currentIndex,1);assert.equal(h.p.frameHeld,true);assert.equal(h.p.pendingTargets,1);assert.equal(h.primary.requests.at(-1).ordinal,3);
+  assert.equal(h.p.budget.snapshot().kinds['native-fill-pending'],undefined);h.primary.complete();await last;assert.equal(h.p.currentIndex,3);assert.equal(h.p.frameHeld,false);
+ }finally{await h.cleanup();}
+});
+
+for(const outcome of ['error','close','supersede'])test('promoted fill '+outcome+' preserves ownership and refunds its reservation',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();const fill=h.p.fillTask,seek=h.p.seek(.017,{final:true});
+  if(outcome==='error'){const q=h.primary.requests[1];q.done=true;q.reject(Error('promoted read failed'));assert.equal((await seek).status,'error');await fill;assert.equal(h.p.forwardIssue,null);assert.equal(h.p.lastIssue,'promoted read failed');assert.equal(h.p.frameHeld,true);}
+  else if(outcome==='close'){await h.cleanup();assert.equal((await seek).status,'superseded');assert.equal(h.p.budget.used,0);}
+  else{const final=h.p.seek(.1,{final:true});h.primary.complete(1);await seek;await fill;assert.equal(h.p.readerBusy,true);assert(!h.p.cache.has(1));h.primary.complete();await final;assert.equal(h.p.currentIndex,3);}
+  assert.equal(h.p.budget.snapshot().kinds['native-fill-pending'],undefined);
+ }finally{await h.cleanup();}
+});
+
+test('nearby updates cannot extend the absolute completion deadline',{timeout:2000},async t=>{
+ const h=await fixture();t.mock.timers.enable({apis:['setTimeout']});try{
+  const first=h.p.seek(.017),before=h.primary.cancels;h.advanceSilent(.01);t.mock.timers.tick(10);const middle=h.p.seek(.05);
+  h.advanceSilent(.08);t.mock.timers.tick(80);const latest=h.p.seek(.1);assert.equal((await middle).status,'superseded');assert.equal(h.primary.requests.length,2);
+  h.advanceSilent(.029);t.mock.timers.tick(29);assert.equal(h.primary.requests.length,2);
+  h.advanceSilent(.001);t.mock.timers.tick(1);assert.equal(h.primary.requests.length,3);assert.equal(h.primary.requests.at(-1).ordinal,3);assert.equal(h.primary.cancels,before+1);
+  h.primary.complete(2);await latest;h.primary.complete(1);await first;assert.equal(h.p.currentIndex,3);assert(!h.p.cache.has(1));assert.equal(h.p.queuedRead,null);
+ }finally{await h.cleanup();}
+});
+
+test('release on the active frame clears the queued deadline without restarting it',{timeout:2000},async t=>{
+ const h=await fixture();t.mock.timers.enable({apis:['setTimeout']});try{
+  const first=h.p.seek(.017),queued=h.p.seek(.05),before=h.primary.cancels,release=h.p.seek(.017,{final:true});assert.equal((await queued).status,'superseded');
+  h.advanceSilent(.2);t.mock.timers.tick(200);assert.equal(h.primary.requests.length,2);assert.equal(h.primary.cancels,before);
+  h.primary.complete();await Promise.all([first,release]);assert.equal(h.p.currentIndex,1);assert.equal(h.p.frameHeld,false);
+ }finally{await h.cleanup();}
+});
+
+test('closing cancels the completion deadline and cannot dispatch its stale target',{timeout:2000},async t=>{
+ const h=await fixture();t.mock.timers.enable({apis:['setTimeout']});
+ const first=h.p.seek(.017),queued=h.p.seek(.05);await h.cleanup();h.advanceSilent(.2);t.mock.timers.tick(200);
+ assert.equal((await first).status,'superseded');assert.equal((await queued).status,'superseded');assert.equal(h.primary.requests.length,2);assert.equal(h.p.budget.used,0);
+});
+
+test('a promoted record rejection is reported by its foreground owner only',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  h.p.primeRecords([3]);const seek=h.p.seek(.1,{final:true}),q=h.primary.requests[1];q.done=true;q.reject(Error('record promoted failure'));
+  assert.equal((await seek).status,'error');await turn();assert.equal(h.p.readerBusy,false);assert.equal(h.p.forwardIssue,null);assert.equal(h.p.lastIssue,'record promoted failure');
+ }finally{await h.cleanup();}
+});
+
+test('promotion retains the idle read start time for its absolute deadline',{timeout:2000},async t=>{
+ const h=await fixture();t.mock.timers.enable({apis:['setTimeout']});try{
+  h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();const fill=h.p.fillTask;h.advanceSilent(.09);t.mock.timers.tick(90);
+  const first=h.p.seek(.017),last=h.p.seek(.05),before=h.primary.cancels;h.advanceSilent(.029);t.mock.timers.tick(29);assert.equal(h.primary.requests.length,2);
+  h.advanceSilent(.001);t.mock.timers.tick(1);assert.equal(h.primary.requests.length,3);assert.equal(h.primary.cancels,before+1);
+  h.primary.complete(1);await first;await fill;assert.equal(h.p.readerBusy,true);assert.equal(h.p.budget.snapshot().kinds['native-fill-pending'],undefined);
+  h.primary.complete(2);await last;assert.equal(h.p.currentIndex,2);assert.equal(h.p.frameHeld,false);
+ }finally{await h.cleanup();}
+});
+
+test('a resident target cancels promoted fill without admitting late pixels',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  h.p.setForwardPredecode(true);beginFill(h);await Promise.resolve();const fill=h.p.fillTask,first=h.p.seek(.017),before=h.primary.cancels;
+  assert.equal((await h.p.seek(0,{final:true})).status,'reused');assert.equal(h.primary.cancels,before+1);h.primary.complete(1);await first;await fill;stopFillTimer(h.p);
+  assert.equal(h.p.currentIndex,0);assert(!h.p.cache.has(1));assert.equal(h.p.budget.snapshot().kinds['native-fill-pending'],undefined);
+ }finally{await h.cleanup();}
 });
