@@ -74,4 +74,24 @@ assert.throws(() => validateCompletion(new Set(runtimeScope), runtimeScope.filte
 assert.throws(() => validateCompletion(new Set(runtimeScope.filter(f=>f!==record)), runtimeScope, record), /scoped completion/);
 assert.throws(() => validateCompletion(new Set(runtimeScope), ['plugin/app.js',record], record), /scoped updated current/);
 cases += 8;
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace(/^任务状态：.+$/m, '任务状态：probably done')), /invalid task status/);
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace(/^任务状态：.+\n/m, '')), /exactly one 任务状态/);
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md') + '\n任务状态：已完成\n'), /exactly one 任务状态/);
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace(/^预览回执：.+$/m, '预览回执：verification-runs/e60/preview-server.json')), /differs from producer/);
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace(/^预览回执：.+\n/m, '')), /exactly one 预览回执/);
+exercise(d => d.set('docs/progress.md', d.get('docs/progress.md').replace(/^预览回执：.+$/m, '预览回执：../outside.json')), /invalid project path/);
+const { markdownFiles, checkLinks } = require('../scripts/check-docs.cjs');
+const localAgents = execFileSync('git', ['ls-files','--cached','--others','--exclude-standard','-z','--','**/AGENTS.md'], {cwd:root,encoding:'utf8',windowsHide:true}).split('\0').filter(Boolean);
+assert(localAgents.length >= 4);
+for (const file of localAgents) assert(markdownFiles(root).includes(file), 'local rules omitted: '+file);
+cases++;
+const fullRead = f => fs.readFileSync(path.join(root, f), 'utf8');
+assert.throws(() => checkLinks(root, f => fullRead(f) + (f === 'prototypes/playback-clock/AGENTS.md' ? '\n[broken](missing-rule.md)\n' : '')), /broken link: prototypes\/playback-clock/);
+assert.throws(() => checkLinks(root, f => fullRead(f) + (f === 'demos/standalone-preview/AGENTS.md' ? '\n[broken](AGENTS.md#missing-heading)\n' : '')), /missing heading: demos\/standalone-preview/);
+cases += 2;
+// A fresh checkout need not have an ignored runtime receipt; compare paths without starting a server.
+const minimalHandoff = originals.get('docs/progress.md');
+const { handoffFields } = require('../scripts/check-docs.cjs');
+assert.equal(handoffFields(minimalHandoff, f => f.startsWith('docs/')).previewReceipt, path.relative(root, require('../scripts/frontend-preview.cjs').receiptPath).split(path.sep).join('/'));
+cases++;
 console.log('document governance: ' + cases + ' cases passed');

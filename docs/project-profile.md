@@ -5,7 +5,7 @@
 ## 项目身份与目录
 - Windows x64 / Eagle 4.0 Build 22+的独立窗口视频播放器；唯一正式实现[plugin](../plugin/manifest.json)。HTML/CSS/JavaScript、Eagle API、FilmCraft原生桥、现有FFmpeg/ffprobe；Rust只用于开发构建。
 - [native/filmcraft](../native/filmcraft/README.md)保存源码、来源与许可；运行依赖plugin/bin，不依赖原型或开发工具。实际已测Eagle Node16.17.1/Chrome108，开发默认Node24。
-- tests是检查，scripts是开发工具；prototypes和demos是封存探索/演示，不是第二套主线。修改这些目录先读局部AGENTS。
+- tests是检查，scripts是开发工具；prototypes和demos是封存探索/演示，不是第二套主线。修改前读局部规则：[A/B](../prototypes/window-player/AGENTS.md)、[S1](../prototypes/playback-clock/AGENTS.md)、[画质](../prototypes/preview-quality/AGENTS.md)、[演示](../demos/standalone-preview/AGENTS.md)。
 - verification-runs及原型evidence是本机原始证据；plugin/cache是生成缓存，annotation-data是永久圈画，memory-settings.json是本机偏好。不能因Git忽略而删除。
 - 日常直接更新已注册的仓库plugin并重新打开；dist只用于明确打包任务，不默认ZIP或迁出仓库。整理见[文件规则](development-plan.md#文件整理f-01f-07)。
 

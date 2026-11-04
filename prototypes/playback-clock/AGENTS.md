@@ -1,11 +1,8 @@
-# S1 播放时钟专项原型
+# Archived S1 clock prototype
 
-- 继承根 AGENTS.md。用户于 2026-10-10 明确回复“授权S1”；范围见 docs/experiments/S1/plan.md。
-- 仅验证候选 C，不实现正式 UI、标注、完整缓存库或原生同步。不修改 prototypes/window-player 及其证据。
-- 使用现有 Node/FFmpeg；兼容实际 Eagle Node 16、Chrome 108。不得安装依赖或修改 Eagle 安装目录。
-- 原 B 固定样本仅只读 MUXL6QI4AJIAG 中 SHA256 匹配文件。2026-10-10 用户追加要求向其他视频开放：允许用户显式读取 Eagle 当前单选 MP4（不超过 30 秒），不枚举素材库、不自动批处理；读取前固定素材 ID/路径快照，所有原视频只读。
-- 新合成素材最多三段，每段不超过 5 秒；runtime/ 与 evidence/ 内实验产物总量限制为 512 MiB，RAM 缓存数据不超过 512 MiB。限额是 S1 安全边界，不改产品 5 GiB 规格。
-- 写入仅限本原型的 runtime/、evidence/、tools-s1.json 和本实验源码/文档；禁止标注 API 和素材元数据写入。
-- 清理仅针对经所有者标记、真实路径和文件清单验证的实验文件。不跟随链接，不删除未知内容，不递归删除任意路径。
-- 原始证据使用新的时间文件名，不覆盖旧证据。模拟测试、Node/FFmpeg 本地结果、真实 Eagle 运行、用户人工观察分别记录。
-- Eagle 加载和听觉/画面观察由用户手动执行；本地通过不表示 S1 在 Eagle 中通过。
+- This prototype is frozen, not a second production implementation. Follow root AGENTS; historical approvals do not authorize new loading, measurements, writes, cleanup or product changes. New work must state applicable scope, inputs, directories and budgets.
+- Preserve source, ignored local configuration and original evidence. Never change source media, scan/import a library or overwrite old results; models and isolated checks do not prove real Eagle or user acceptance.
+- Candidate C only; no production UI, annotations, full cache library or native playback sync. Do not modify the A/B prototype or its evidence. No new dependencies or Eagle installation changes.
+- Reopening work must explicitly identify approved read-only inputs, snapshot asset ID/path and verify source hashes; historical single-selection MP4 permission is not renewed. Writes remain limited to this prototype runtime/, evidence/, tools-s1.json and scoped source/docs; no annotation API or metadata writes.
+- Existing safety ceilings: MP4 at most 30 seconds, at most three synthetic samples of five seconds each, runtime plus evidence at most 512 MiB, RAM cache at most 512 MiB. They are experiment limits, not current product quotas; no silent increase. Cleanup requires owned file lists and real paths, no links/unknown files or arbitrary recursion.
+- [Original S1 instructions](../../docs/history/prototype-rules-2026-11-04.md#s1时钟原型) retain dated approvals and test identity; no automatic restart.

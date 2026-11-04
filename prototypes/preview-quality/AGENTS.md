@@ -1,24 +1,9 @@
-# E-01 / E-02 实验边界
+# Archived color and quality prototype
 
-2026-10-18状态：本次四路捕获和颜色专项已按用户人工验收收尾，116留证；不再追查细微锐度，不采用③正式输出/提高JPEG默认。下面为已完成授权及历史边界，不能从中自动重开测量或实施E-03；新任务先读progress。
-
-2026-10-18用户明确授权Codex自行取得现工具三模式及固定右Canvas四图；可操作同一已批准窗口、用目标窗口截图或官方capturePage/本插件F12控制台获取，不能注入宿主主窗口或用私有IPC。仅当前源同一帧，临时图/辅助输出合计≤32MiB并计入原2GiB；小证据原配额不变。不改系统颜色/正式实现/素材库，捕获干扰及像素/人工结果分开；细节见Evolution计划当前段。
-
-2026-10-17当前补充：用户批准继续解决无编码video/Canvas差异，并已确认关闭窗口。允许在同一入口读取/立即释放VideoFrame元数据、同一源video白底multiply受控显示，以及固定Canvas经captureStream单帧视频输出候选；仅实验、不改正式架构/系统颜色、不增加磁盘媒体或额度。候选RGB→YUV等转换及最终route未知必须记录，不能称无损或据模型判色彩通过。切换先停止旧回调/tracks并清src/srcObject，避免多个视频资源竞争；详细范围见Evolution计划当前段。
-
-2026-10-17用户回复“可以，开始”，授权development-plan中的E-01＋E-02；额外指定“焚身击”为1080p只读候选。遵守根AGENTS。最新顺序为最后颜色优化→用户集中验收并记录→接续E-03；本轮未实施E-03，发行未授权，待定产品行为不自行决定。
-
-- 本目录仅实验代码；正式播放器不依赖本目录。既有plugin/和仓库外Beta包不修改，除非定位到确切缺陷并在获批局部修复范围内另记原因。
-- scratch/合计≤2GiB，受限逐批写入；evidence由根verification-runs/evolution-01独立管理，总≤16MiB、单文件≤256KiB、最多128文件，不用旧T4槽位。不得无限生成、扩大预算或覆盖旧原件。
-- 只读已登记专用素材及用户明确指定素材；不扫描素材库、不写标注、不导入、不修改源或Eagle安装。工具位置来自已有本机配置，不进Git。
-- 2026-10-17用户要求样本随Eagle选中视频更换：点击对照仅捕获当次单选MP4（≤30秒），允许生成该素材不超过1秒/60帧的1080p JPEG/PNG；不据此扩大整段生成范围或扫描素材库。换片、取消、关闭先释放当前对照及其生成物。用户确认窗口已关闭后，可校验并更新同一已载入入口的源码副本，保留其缓存/设置及历史证据。
-- 不安装依赖；FFmpeg使用已有模块。一次只处理一套候选；资源观察器和操作副作用必须明确登记。
-- 清理仅本次自有生成物：有清单、摘要/精确文件身份、规范路径、无链接/无活跃任务复核后逐项删除；不递归删除未知内容，不删除旧库、缓存、证据或外部安装。
-- 新Eagle入口需先准备可核对内容，再按根授权规则申请实际载入；测试工具/本地后端/模型不能冒充真实宿主和用户体验通过。
-- 自然使用观察须用户主动开启，不保存素材路径/名称/标注/画面，不在窗口中同步积累和压缩大批轨迹，不因工具停止而关闭播放器。
-
-2026-10-17 EV-09补充：用户要求接入画质选择前解决偏色，已定位颜色转换缺陷，因此允许上述限定正式media/cache/player局部修复并保留证据；已发布包和外部安装不改。用户确认实验窗口关闭后刷新同一入口。旧颜色缓存仅按原运行事务规则核验/重建当前未占用项，不批量清空；不开发整段无损。
-
-2026-10-17最后颜色专项：用户合并授权剩余归因与JPEG精度优化，允许原q3/420、q1/420、q1/444及PNG作同源≤1秒/60帧筛选，原预算/资源边界不变，不默认提高正式JPEG精度。原视频参考只在真实回调确认帧时间后显示；首/中/末自动核对仅存小数值/源摘要，明确Canvas读数与原生最终显示的区别。取消/关闭先等待引用/位图/文件读取结束再清理；旧证据不删。用户集中确认通过并记录后才接续画质/设置；整段无损、浏览器缓存及非主线“拖动轻量、停下补高保真”均不开发。
-
-2026-10-17显示路径专项：用户要求先验证同一原视频直接画入Canvas是否也偏淡，已确认窗口关闭，允许刷新同一入口。仅显示首个真实视频回调帧，Canvas≤1920×1080、不升采样，原生1080p优先；不经过FFmpeg/图片编码或增加帧缓存，不改视频/系统/显卡颜色。仅沿现有证据预算保存源摘要、环境、尺寸、实际帧时间与人工待验状态，不保存画面或据模型判颜色通过；解码/超时/取消与保存失败分开，返回/换片/关闭释放回调、video和Canvas。具体根因待实测，不能把本次授权扩成浏览器缓存方案或正式设置接入。
+- This prototype is frozen, not a second production implementation. Follow root AGENTS; historical approvals do not authorize new loading, measurements, writes, cleanup or product changes. New work must state applicable scope, inputs, directories and budgets.
+- Preserve source, ignored local configuration and original evidence. Never change source media, scan/import a library or overwrite old results; models and isolated checks do not prove real Eagle or user acceptance.
+- The color experiment is closed; do not restart fine-sharpness investigation, change JPEG defaults, implement E03, whole-video lossless caching or the rejected lightweight-drag/high-quality-stop route from old approvals. Production/Beta/external installations are outside this prototype scope.
+- No host-main-window injection/private IPC or system/video/GPU color changes. Use existing dependencies only. Any new capture/measurement needs applicable authorization; source metadata, Canvas samples and user appearance conclusions remain distinct.
+- Existing ceilings: scratch at most 2 GiB; verification-runs/evolution-01 evidence at most 16 MiB, 256 KiB per file, 128 files. The former capture allowance of 32 MiB counts within scratch; source sampling was at most one second/60 frames at 1080p with no upscaling. These ceilings do not grant new sampling or capture permission.
+- Stop callbacks/tracks and release video/Canvas/bitmaps/readers before replacing inputs or cleaning generated files. Keep temporary captures, configuration and evidence local; observation needs user initiation, no source paths/names/annotations/images in usage traces and no synchronous bulk capture in the window. Stopping a tool must not close the user player.
+- [Original experiment rules](../../docs/history/prototype-rules-2026-11-04.md#颜色与画质原型) preserve remaining test-specific detail; do not execute old stage instructions.

@@ -34,7 +34,14 @@ function markdownFiles(root) {
     const f = path.join(dir, e.name);
     return e.isDirectory() ? walk(f) : f.endsWith('.md') ? [path.relative(root, f).split(path.sep).join('/')] : [];
   });
-  return ['AGENTS.md', 'README.md', 'CHANGELOG.md', ...walk(path.join(root, 'docs'))];
+  // Git's inventory avoids scanning caches, ignored evidence or dependency trees.
+  const localAgents = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', '**/AGENTS.md'],
+    { cwd: root, encoding: 'utf8', windowsHide: true }).split('\0').filter(Boolean);
+  for (const file of localAgents) {
+    const absolute = inside(root, file);
+    if (!fs.existsSync(absolute) || fs.lstatSync(absolute).isSymbolicLink()) fail('missing/linked local AGENTS: ' + file);
+  }
+  return [...new Set(['AGENTS.md', 'README.md', 'CHANGELOG.md', ...walk(path.join(root, 'docs')), ...localAgents])];
 }
 function handoffFields(progress, exists) {
   const field = label => {
@@ -44,6 +51,13 @@ function handoffFields(progress, exists) {
   };
   const task = field('当前任务');
   if (!/^[A-Z][A-Z0-9-]{1,63}$/.test(task)) fail('invalid task ID');
+  const status = field('任务状态');
+  if (!['待开始', '进行中', '待验收', '已完成', '暂停', '取消', '受阻'].includes(status)) fail('invalid task status');
+  const previewReceipt = field('预览回执');
+  inside(ROOT, previewReceipt);
+  // Requiring this module only reads its exported path; start() is never invoked.
+  const expectedReceipt = path.relative(ROOT, require('./frontend-preview.cjs').receiptPath).split(path.sep).join('/');
+  if (previewReceipt !== expectedReceipt) fail('preview receipt differs from producer: ' + expectedReceipt);
   const reference = label => {
     const match = field(label).match(/^\[[^\]]+\]\(([^)]+)\)$/);
     if (!match || /^(?:[a-z]+:|\/)/i.test(match[1])) fail('invalid handoff link: ' + label);
@@ -58,7 +72,7 @@ function handoffFields(progress, exists) {
   if (!registry.target.endsWith('.json') || registry.anchor) fail('invalid workspace registry');
   const candidate = field('候选提交');
   if (!/^[a-f0-9]{7,40}$/.test(candidate)) fail('invalid candidate commit');
-  return { task, completion, registry: registry.target, candidate };
+  return { task, status, previewReceipt, completion, registry: registry.target, candidate };
 }
 function governance(read, exists) {
   const rawRead = read; read = f => rawRead(f).replace(/\r\n/g, '\n');
@@ -169,4 +183,4 @@ if (require.main === module) {
   try { console.log('documents: ' + JSON.stringify(check())); }
   catch (e) { console.error(e.message); process.exitCode = 1; }
 }
-module.exports = { check, governance, handoffFields, checkLinks, preservation, retiredPreservation, inside, roles };
+module.exports = { check, governance, handoffFields, checkLinks, markdownFiles, preservation, retiredPreservation, inside, roles };

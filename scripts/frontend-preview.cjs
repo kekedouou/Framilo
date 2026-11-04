@@ -4,6 +4,7 @@ const fs = require('fs'), path = require('path'), http = require('http'), crypto
 const { spawnSync } = require('child_process');
 const root = path.resolve(__dirname, '..'), plugin = path.join(root, 'plugin');
 const output = path.join(root, 'verification-runs/e52/frontend');
+const receiptPath = path.join(output, 'server.json');
 const modules = ['session.cjs','drawing-session.cjs','drawing-model.js','drawing-erase.js','preview-profile.cjs','proxy-encoding.cjs','preferences.cjs','load-decisions.cjs','frame-index.cjs'];
 function bundle() {
   return `window.PreviewModules=(()=>{const factories={${modules.map(name => `${JSON.stringify(name)}:(require,module,exports)=>{\n${fs.readFileSync(path.join(plugin,name),'utf8')}\n}`).join(',')}};const cache={};
@@ -44,8 +45,8 @@ async function start({sampleBytes=null,writeReceipt=true}={}) {
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const receipt={pid:process.pid,url:`http://127.0.0.1:${server.address().port}${base}`,startedAt:new Date().toISOString(),source:'production plugin/index.html + JS/CSS, browser-only media adapter',sampleSha256:crypto.createHash('sha256').update((sampleBytes||fs.readFileSync(sample))).digest('hex')};
-  server.previewUrl=receipt.url;if(writeReceipt){fs.writeFileSync(path.join(output,'server.json'),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt));}
+  server.previewUrl=receipt.url;if(writeReceipt){fs.writeFileSync(receiptPath,JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt));}
   return server;
 }
 if(require.main===module)start().catch(e=>{console.error(e);process.exitCode=1;});
-module.exports={start,bundle};
+module.exports={start,bundle,receiptPath};

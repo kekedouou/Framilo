@@ -12,11 +12,11 @@
         "tokens": 1160
       },
       "after": {
-        "sha256": "6f065109f5275c64fc3a350cac34a1566cc087a1eb4804aba65719fc10288405",
-        "characters": 5817,
-        "tokens": 1093
+        "sha256": "a7d361f1fac2d89e89f2308c83197c5170d499c8829e854296e7b0fd37b34d7b",
+        "characters": 5900,
+        "tokens": 1106
       },
-      "reductionPercent": 5.78
+      "reductionPercent": 4.66
     }
   }
 }

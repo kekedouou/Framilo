@@ -10,7 +10,7 @@
 - Discuss unresolved choices affecting experience, output, data, resources or scope promptly. Handle routine implementation independently; do not re-ask settled decisions. Investigate failures/inefficiency first; explain facts, impact, uncertainty and options instead of blind edits or repeated user testing.
 - Reference product R/P requirements and acceptance criteria; confirm scope/files before coding, without unrelated refactoring. Follow [product principles](docs/product.md#当前产品定位与设计原则) and [module boundaries](docs/architecture.md#现行模块地图); do not merge UI, Eagle API, media or cache logic back into the entry point.
 - Register goals/scope/budgets/acceptance before multi-stage work; record results/evidence/limits in the shared history. Separate plans/reports are for major proposals or independent experiments, not every edit. Put PoCs in prototypes; passing experiments does not approve production architecture, release or another stage.
-- Use the named browser: official Browser Use for built-in/Edge/Chrome, ego-browser skill for ego; default to ego. Never use mouse control; use DOM/semantic APIs or direct navigation.
+- Project previews use the built-in browser via official Browser Use. For other browsing, honor the named browser; use the ego-browser skill for ego (default), official Browser Use for Edge/Chrome. Never use mouse control; use DOM/semantic APIs or direct navigation.
 
 ## Permissions and data
 - Explicit authorization is required to install software/dependencies, load/install Eagle plugins, modify libraries, import assets, modify/delete source videos, modify the Eagle installation, delete outside the project, or create/push remote repositories. Do not re-request existing authorization.
