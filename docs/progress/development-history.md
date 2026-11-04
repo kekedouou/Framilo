@@ -66,6 +66,8 @@
 
 整理：verification-runs/seek-reuse只保留有界模型/原生JSON及失败/通过日志；未生成媒体、下载物、ZIP或临时源码副本，无须删除用户/旧任务文件。新增两项开发脚本及模型回归作为可复查来源保留；未恢复用户监测、旧报告或E编号工作包。提交前/后按交接协议核对，不自动推送。
 
+交付身份：运行源码提交2a5f6b3；提交前check-handoff --base HEAD、diff --check及提交后--require-clean通过。随后仅回填当前候选/待验状态与本条身份，不改运行代码或重跑媒体。本地直接更新plugin，未打包/安装/推送；真实体验与后续窗口决策保持待验。
+
 ## 2026-11-04 文档维护
 
 类型：文档/治理修复。基线b2a27c4，工作区干净。用户批准三步方案和参考[frun README](https://github.com/Nongfsq/frun/blob/main/README.md)的用户表述。
