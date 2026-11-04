@@ -55,11 +55,14 @@ class FilmcraftClient {
   }
   finish(status,more={}) { const cur=this.current;if(!cur)return;this.current=null;clearTimeout(cur.timer);cur.resolve({id:cur.id,target:cur.target.pts,targetTicks:cur.target.ticks,status,ms:performance.now()-cur.start,...more}); }
   fail(error){this.failure=error.message;clearTimeout(this.openTimer);this.openReject(error);this.finish('error',{error:error.message});}
-  request(ordinal){
+  extendDeadline(timeoutMs){const cur=this.current;if(!cur)return;clearTimeout(cur.timer);
+    cur.timer=setTimeout(()=>{if(this.current===cur)this.finish('timeout');},Math.max(0,cur.start+Math.max(10000,Math.min(60000,timeoutMs))-performance.now()));
+  }
+  request(ordinal,{timeoutMs=10000}={}){
     if(this.dead)return Promise.resolve({status:'closed'});
     if(this.failure)return Promise.resolve({status:'error',error:this.failure});
     this.finish('superseded');this.blank();const target=targetAt(this.frames,ordinal);
-    return new Promise(resolve=>{const id=++this.id;this.current={id,target,resolve,start:performance.now(),timer:setTimeout(()=>this.finish('timeout'),10000)};this.proc.stdin.write(`${id} ${target.ticks}\n`);});
+    return new Promise(resolve=>{const id=++this.id;this.current={id,target,resolve,start:performance.now(),timer:setTimeout(()=>this.finish('timeout'),Math.max(10000,Math.min(60000,timeoutMs)))};this.proc.stdin.write(`${id} ${target.ticks}\n`);});
   }
   cancel(){this.finish('superseded');if(!this.dead&&!this.exit&&!this.failure)this.proc.stdin.write(`cancel ${++this.id}\n`);}
   snapshot(){return {...this.stats,open:this.openInfo,stderr:this.stderr};}

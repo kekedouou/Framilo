@@ -28,13 +28,13 @@
   _startIdleRead(n,kind,reserved){const reader=this.reader,job={n,reader,info:this.info,lease:this._beginRead(reader,kind),reserved,promoted:false};this.idleRead=job;
    const read=()=>{
     if(this.disposed||this.reader!==reader||this.readOwner!==job.lease||!job.promoted&&(this.state!=='paused'||this.pendingTargets))return {status:'superseded'};
-    return reader.request(n);
+    return reader.request(n,{timeoutMs:job.final?60000:10000});
    };if(kind==='record'){try{job.promise=Promise.resolve(read());}catch(e){job.promise=Promise.reject(e);}}else job.promise=Promise.resolve().then(read);return job;
   }
   _finishIdleRead(job,transferred=false){if(this.idleRead===job)this.idleRead=null;if(!job.promoted){if(!transferred)this.budget.release(job.reserved);this._endRead(job.lease);}}
   _targetRead(n,version,final){const active=this.foregroundRead;this._clearQueued();
    if(active&&active.reader===this.reader&&this.readOwner===active.lease){
-    if(active.n===n)return active.promise;
+    if(active.n===n){if(final)active.reader.extendDeadline?.(60000);return active.promise;}
     // A slow completed read is not a reason to starve the next one. Preserve only
     // useful progress, with one absolute deadline measured from the original start.
     const current=this.currentIndex,remaining=SEEK_COMPLETION_MS-(this.now()-active.lease.at);
@@ -43,13 +43,13 @@
       next.timer=setTimeout(()=>{if(this.queuedRead===next&&this.foregroundRead===active)this._runQueued(active,true);},remaining);
      });
    }
-   const idle=this.idleRead;if(idle&&idle.n===n&&idle.reader===this.reader&&idle.info===this.info&&this.readOwner===idle.lease)return this._startTargetRead(n,version,idle);
+   const idle=this.idleRead;if(idle&&idle.n===n&&idle.reader===this.reader&&idle.info===this.info&&this.readOwner===idle.lease){idle.final=final;if(final)idle.reader.extendDeadline?.(60000);return this._startTargetRead(n,version,idle);}
    if(this.readerBusy){this.reader.cancel();this.readOwner=null;this.readerBusy=false;}
-   return this._startTargetRead(n,version);
+   return this._startTargetRead(n,version,null,final);
   }
-  _startTargetRead(n,version,idle){const reader=this.reader,info=this.info,lease=idle?idle.lease:this._beginRead(reader),task={n,version,reader,lease};let reserved=idle?.reserved;
+  _startTargetRead(n,version,idle,final=false){const reader=this.reader,info=this.info,lease=idle?idle.lease:this._beginRead(reader),task={n,version,reader,lease};let reserved=idle?.reserved;
    if(idle){idle.promoted=true;idle.reserved=null;lease.kind='foreground';}this.foregroundRead=task;
-   task.promise=(async()=>{let r;try{r=await (idle?idle.promise:reader.request(n));}catch(e){r={status:'error',error:e?.message||String(e)};}
+   task.promise=(async()=>{let r;try{r=await (idle?idle.promise:reader.request(n,{timeoutMs:final?60000:10000}));}catch(e){r={status:'error',error:e?.message||String(e)};}
     // Retained as a diagnostic, never a cancellation-derived estimate.
     if(r.status==='exact'&&!this.disposed&&this.reader===reader&&this.readOwner===lease)this.seekReadMs=this.now()-lease.at;
     // A promoted idle reservation has exactly one new owner. Commit it before
@@ -75,7 +75,15 @@
    audioAvailable:!!this.audio,playRequested:this.playRequested,playbackRate:this.playbackRate,transport:this.transportSnapshot(),lastIssue:this.lastIssue,lastErrorCode:this.lastErrorCode,
    frameDecoder:this.reader?.snapshot(),native:true,proxyActive:!!this.proxyActive,audioSource:this.audioSourceKind||'original',audioSourceIssue:this.audioSourceIssue||null,forwardPredecode:this.forwardPredecode,forwardStatus:this.readerBusy?'preparing':this.fillStatus,forwardIssue:this.forwardIssue,memoryScope:'managed YUV/RGBA frames, thumbnails, compressed audio source, render-surface allowance and native GOP reservation; OS audio and decoder/driver internal buffers excluded'};}
   auxiliaryBudget(){return {budget:this.budget,evict:()=>this._evict()};}
-  _evict(){for(const [n,e] of this.cache){if(n===this.currentIndex)continue;this.cache.delete(n);this.budget.release(e.token);this.revision++;return true;}return false;}
+  _cachePriority(n){const target=this.state==='playing'?this.currentIndex:this.seekTarget??this.currentIndex;
+   if(n===this.currentIndex||n===target)return Infinity;
+   if(Math.abs(n-target)<=1)return 3;
+   if(this.recentTargets?.includes(n)&&Math.abs(this.info.frames[n].time-this.info.frames[target].time)<=.5)return 2;
+   if(this.fillPlan?.members?.has(n))return 1;return 0;
+  }
+  _evict(optional=false){let victim=null,score=Infinity;for(const n of this.cache.keys()){const rank=this._cachePriority(n);if(rank<score){victim=n;score=rank;}}
+   if(victim===null||optional&&score>=1)return false;const e=this.cache.get(victim);this.cache.delete(victim);this.budget.release(e.token);this.revision++;return true;
+  }
   _entry(n,r,reserved){if(this.cache.has(n)){if(reserved)this.budget.release(reserved);return this.cache.get(n);}const bytes=r.pixels.byteLength;
    const token=reserved||this.budget.reserve(bytes+256,'native-frame-pixels',()=>this._evict());if(reserved)this.budget.shrink(token,bytes+256,'native-frame-pixels');
    const image=this.renderer?null:new ImageData(new Uint8ClampedArray(r.pixels.buffer,r.pixels.byteOffset,bytes),r.metrics.width,r.metrics.height),entry={image,token,pixels:r.pixels,header:r.metrics};
@@ -111,24 +119,25 @@
     this.audioSourceIssue=e.message;this.audioSourceKind='original';return require('url').pathToFileURL(this.info.source.filePath).href;
    }finally{if(token)this.budget.release(token);}
   }
-  async _takeProxy(){if(this.disposed||this.frameHeld||this.pendingTargets||this.proxyActive||this.switchTask)return this.switchTask;
-   let retry=false;
+  async _takeProxy(){if(this.disposed||this.frameHeld&&!this.pendingTargets||this.proxyActive||this.switchTask)return this.switchTask;
    this.switchTask=(async()=>{let extra=null,candidate=null;try{
     extra=this.budget.reserve(this.runtime.nativeBytes,'native-handover',()=>this._evict());candidate=await this.runtime.createReader({proxy:true});this.candidateReader=candidate;
     if(this.disposed)return;const n=this.currentIndex??0,version=this.serial,r=await candidate.request(n);
     if(this.disposed)return;if(r.status!=='exact')throw Error('代理目标帧未校验通过。');
-    if(version!==this.serial||this.pendingTargets){retry=true;return;}
-    const old=this.reader;this.reader=candidate;candidate=null;this.proxyActive=true;this.readerBusy=false;old.cancel();await this.runtime.closeReader(old);
+    // Verification proves this reader's source mapping, not ownership of the
+    // cursor. Adopt it even when the intent moved; never submit its old picture.
+    const old=this.reader;this.reader=candidate;candidate=null;this.proxyActive=true;this.readOwner=null;this.readerBusy=false;old.cancel();await this.runtime.closeReader(old);
     // The cached/displayed frame is still the same source identity. Never restore an old target.
     if(version===this.serial&&!this.pendingTargets&&this.state==='paused')this._draw(n,this._entry(n,r));this._change();
    }finally{if(candidate)await this.runtime.closeReader(candidate);this.candidateReader=null;if(extra)this.budget.release(extra);}})();
-   try{await this.switchTask;}finally{this.switchTask=null;this.fillFailures.clear();this._scheduleFill();if(retry&&!this.disposed&&!this.pendingTargets)this._takeProxy().catch(()=>{});}
+   try{await this.switchTask;}finally{this.switchTask=null;this.fillFailures.clear();this._scheduleFill();}
   }
   async seek(time,settings={}){
    if(this.disposed||!this.info)return {status:'superseded'};
    this.pause(false,!!settings.keepPlayIntent);this.audioResume=null;const version=++this.serial,n=settings.index??this.index.frameAt(this.info.frames,Math.max(0,Math.min(this.info.duration,time)));
    if(!this.info.frames[n])throw Error('源帧编号无效。');const cached=this.cache.get(n);this.targetTime=Math.max(0,Math.min(this.info.duration,time));this.pendingTargets=1;this.frameHeld=true;this.state='seeking';
-   if(this.seekTarget!==null&&n!==this.seekTarget)this.seekDirection=Math.sign(n-this.seekTarget);this.seekTarget=n;
+   if(this.seekTarget!==null&&n!==this.seekTarget){const direction=Math.sign(n-this.seekTarget);this.directionRun=this.nextDirection===direction?(this.directionRun||0)+1:1;this.nextDirection=direction;this.seekDirection=direction;if(this.directionRun>=3)this.windowDirection=direction;}
+   this.seekTarget=n;this.fillPlan=null;this.recentTargets=[n,...(this.recentTargets||[]).filter(i=>i!==n)].slice(0,4);
    // A resident native frame is committed synchronously below. Publishing a
    // transient held/seeking state first needlessly rebuilds overlays and layout.
    // Misses still publish the pending state before any asynchronous work.
@@ -143,9 +152,13 @@
    // identity stays unchanged and frameHeld prevents treating it as the target.
    if(this.currentIndex===null)this.canvas.style.visibility='hidden';
    const startedAt=this.now();this._emit('stage-begin',{requestId:version,phase:'native',startedAt});
-   const r=await this._targetRead(n,version,!!settings.final);this._emit('stage',{requestId:version,phase:'native',startedAt});
+   let readFrom=this.reader,r=await this._targetRead(n,version,!!settings.final);
+   // A verified proxy may replace the reader during settings restoration or
+   // dragging. Retry only that handover, never arbitrary decoder failures.
+   if(!this.disposed&&version===this.serial&&readFrom!==this.reader)r=await this._targetRead(n,version,true);
+   this._emit('stage',{requestId:version,phase:'native',startedAt});
    if(this.disposed||version!==this.serial){this._emit('superseded',{requestId:version});return {status:'superseded'};}
-   if(r.status!=='exact'){this._emit('error',{requestId:version});this.pendingTargets=0;this.state='paused';this.lastIssue=r.error||'目标画面暂未准备完成，请重试。';this.lastErrorCode='NATIVE_FRAME_FAILED';this._change();return {status:'error',error:this.lastIssue};}
+   if(r.status!=='exact'){this._emit('error',{requestId:version});this.pendingTargets=0;this.state='paused';this.lastIssue=r.error||(r.status==='timeout'?'目标帧解码超时，请启用GPU或等待代理完成后重试。':'目标画面暂未准备完成，请重试。');this.lastErrorCode=r.status==='timeout'?'NATIVE_FRAME_TIMEOUT':'NATIVE_FRAME_FAILED';this._change();return {status:'error',error:this.lastIssue};}
    const readyAt=this.now(),entry=this._entry(n,r),submit=this.now();this._draw(n,entry);this.pendingTargets=0;this.state='paused';this.lastIssue=null;this._change();
    this._emit('draw',{requestId:version,kind:settings.kind||'seek',frameId:frame.id,time:frame.time,inputAt:began,readyAt,submitStartedAt:submit,drawAt:this.now(),source:'native',nativeMetrics:r.metrics});this._idleWork();if(this.runtime.proxyAsset())this._takeProxy().catch(()=>{});
    return {status:'drawn',frameId:this.info.frames[n].id,actualPtsTicks:this.info.frames[n].ptsTicks};
@@ -153,6 +166,7 @@
   step(delta){const start=this.pendingTargets?this.index.frameAt(this.info.frames,this.targetTime):this.currentIndex??0;const n=Math.max(0,Math.min(this.info.frames.length-1,start+delta));return this.seek(this.info.frames[n].time,{index:n,kind:'step',final:true});}
   pause(notify=true,keepIntent=false){if(!keepIntent){this.playIntent++;this.playRequested=false;}this.playToken++;this.audioStartToken=null;this.audioSeekCancel?.();if(this.rafId!==undefined)this.caf(this.rafId);this.rafId=undefined;
    const wasPlaying=this.state==='playing';this.audio?.pause();
+   if(wasPlaying){this.seekTarget=this.currentIndex;this.fillPlan=null;this.recentTargets=[];}
    if(wasPlaying){this.audioResume=this.audio&&!this.audio.seeking&&!this.audio.ended?{ordinal:this.currentIndex,time:this.audio.currentTime}:null;this.reader?.cancel();this.readOwner=null;this.readerBusy=false;}
    this.anchor=null;if(!this.disposed&&this.info&&wasPlaying)this.state='paused';if(notify)this._change();this._scheduleFill();return Promise.resolve({status:'paused'});}
   async play(){if(this.disposed||!this.info)return {status:'superseded'};const intent=++this.playIntent;this.playRequested=!!this.pendingTargets;if(this.playRequested)this._change();
@@ -230,16 +244,16 @@
    // The same reader supplies foreground and idle work. Fill a finite nearby
    // window, leaving space for an immediately requested picture; never evict
    // another member of that window just to decode it again at the next tick.
-   const center=this.currentIndex,current=this.cache.get(center);if(!current)return;
+   const center=this.seekTarget??this.currentIndex,current=this.cache.get(this.currentIndex);if(!current)return;
    const ledger=this.budget.snapshot(),bytes=current.pixels.byteLength+256,maximum=this.info.width*this.info.height*4+256;
    const fixed=ledger.used-(ledger.kinds['native-frame-pixels']||0),capacity=Math.max(1,Math.min(4096,Math.floor((ledger.limit-fixed-maximum*2)*.75/bytes)));
    const first=this.loopEnabled?this.loopStart:0,last=this.loopEnabled?this.loopEnd:this.info.frames.length-1;
    if(center<first||center>last)return;
-   const key=[center,capacity,first,last,this.seekDirection].join(':');if(this.fillPlan?.key!==key)this.fillPlan={...playback.directionalWindow(this.info.frames,center,capacity,this.seekDirection,first,last),key};
-   const plan=this.fillPlan,n=plan.order.find(i=>!this.cache.has(i)&&!this.fillFailures.has(i));
+   const key=[center,capacity,first,last,this.seekDirection,this.windowDirection||1].join(':');if(this.fillPlan?.key!==key)this.fillPlan={...playback.directionalWindow(this.info.frames,center,capacity,this.seekDirection,first,last,false,true,this.windowDirection||1),key};
+   const plan=this.fillPlan;plan.members ||= new Set(plan.order);const n=plan.order.find(i=>!this.cache.has(i)&&!this.fillFailures.has(i));
    if(n===undefined){this.fillStatus=this.fillFailures.size?'waiting':'ready';this._drainThumbnails();return;}
-   while(this.budget.limit-this.budget.used<maximum*2){let victim=null;for(const i of this.cache.keys())if(i!==this.currentIndex&&(i<plan.start||i>plan.end)){victim=i;break;}
-    if(victim===null){this.fillStatus='budget';this._drainThumbnails();return;}const old=this.cache.get(victim);this.cache.delete(victim);this.budget.release(old.token);this.revision++;
+   while(this.budget.limit-this.budget.used<maximum*2){
+    if(!this._evict(true)){this.fillStatus='budget';this._drainThumbnails();return;}
    }
    const reserved=this.budget.reserve(maximum,'native-fill-pending'),job=this._startIdleRead(n,'forward-fill',reserved),{reader,lease}=job;this.fillStatus='preparing';
    this.fillTask=Promise.resolve().then(async()=>{let transferred=false;try{

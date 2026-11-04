@@ -208,7 +208,7 @@ function createSession(options) {
         ready = player.snapshot();
         if (!located || !['drawn', 'reused'].includes(located.status) || ready.state !== 'paused' || ready.frameId !== located.frameId ||
             request.restoreFrameId !== undefined && ready.frameId !== request.restoreFrameId)
-          throw issue('MEMORY_POSITION_NOT_READY', '应用设置后未能准确恢复当前源帧。');
+          throw issue(ready.lastErrorCode || 'MEMORY_POSITION_NOT_READY', ready.lastIssue || '应用设置后未能准确恢复当前源帧。');
       }
       if (request.transportState && request.transportState.sourceSha256 === info.source.sha256) {
         if (typeof player.restoreTransport !== 'function') throw issue('TRANSPORT_RESTORE_UNAVAILABLE', '播放器不能恢复片段范围和速度。');

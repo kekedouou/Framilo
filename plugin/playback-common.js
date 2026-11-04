@@ -18,7 +18,7 @@
     }
     return { center, capacity: count, start: left + 1, end: right - 1, order };
   }
-  function directionalWindow(frames, center, capacity, direction = 1, first = 0, last = frames.length - 1, looping = false) {
+  function directionalWindow(frames, center, capacity, direction = 1, first = 0, last = frames.length - 1, looping = false, symmetricCore = false, outerDirection = direction) {
     const total = last - first + 1, count = Math.max(1, Math.min(total, capacity)), order = [center], seen = new Set(order);
     const span = frames[last].end - frames[first].time;
     let ahead = 1, behind = 1;
@@ -39,7 +39,8 @@
       while (b !== null && seen.has(b)) b = candidate(++behind, -direction);
       if (a === null && b === null) break;
       // Source-time distance matters for VFR; favour the current direction 3:1.
-      const next = b === null || a !== null && distance(a, direction) / 3 <= distance(b, -direction) ? (ahead++, a) : (behind++, b);
+      const weight = symmetricCore && order.length < 3 ? (ahead === 1 ? Infinity : 0) : outerDirection === direction ? 3 : 1/3;
+      const next = b === null || a !== null && distance(a, direction) / weight <= distance(b, -direction) ? (ahead++, a) : (behind++, b);
       seen.add(next); order.push(next);
     }
     return { center, capacity: order.length, direction, start: Math.min(...order), end: Math.max(...order), order };

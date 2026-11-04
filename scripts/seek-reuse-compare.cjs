@@ -1,7 +1,7 @@
 'use strict';
 // Explicit bounded developer comparison. Models do not measure native/Eagle speed.
 const fs=require('fs'),path=require('path'),vm=require('vm'),crypto=require('crypto'),assert=require('assert/strict'),{execFileSync}=require('child_process');
-const root=path.resolve(__dirname,'..'),baseline='e2ffd0c',out=path.join(root,'verification-runs/seek-reuse');
+const root=path.resolve(__dirname,'..'),baseline=process.argv.includes('--window')?'2a5f6b3':'e2ffd0c',out=path.join(root,'verification-runs/seek-reuse');
 const common=require('../plugin/playback-common.js'),index=require('../plugin/frame-index.cjs');
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 function codes(){return {baseline:execFileSync('git',['show',baseline+':plugin/native-player.js'],{cwd:root,encoding:'utf8',windowsHide:true}),candidate:fs.readFileSync(path.join(root,'plugin/native-player.js'),'utf8')};}

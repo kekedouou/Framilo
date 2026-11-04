@@ -16,3 +16,11 @@ test('close during open settles the pending open promise',async()=>{
 test('native protocol metadata cannot silently accept an older executable',()=>{
  const c=Object.create(FilmcraftClient.prototype);assert.throws(()=>c.receive({event:'ready',protocol:1},Buffer.alloc(0)),/ready metadata/);
 });
+
+test('final completion deadline is bounded from the original read and cancel clears it',async()=>{
+ const c=Object.create(FilmcraftClient.prototype);let writes=0;
+ Object.assign(c,{id:0,blank(){},frames:[{time:0,ptsTicks:'0',timeBase:[1,1000]}],proc:{stdin:{write(){writes++;}}}});
+ const result=c.request(0);assert(c.current.timer._idleTimeout<=10000);
+ c.extendDeadline(999999);assert(c.current.timer._idleTimeout>59000&&c.current.timer._idleTimeout<=60000);
+ c.cancel();assert.equal((await result).status,'superseded');assert.equal(c.current,null);assert.equal(writes,2);
+});

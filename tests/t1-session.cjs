@@ -359,6 +359,13 @@ async function main() {
     assert.equal(h.session.snapshot().state,'paused');assert.equal(h.session.snapshot().previewQuality,'1080p');assert.equal(h.prepared[1].options.previewQuality,'1080p');
     assert(h.events.indexOf('disposed-A')<h.events.lastIndexOf('prepare-A'));await h.session.close();
   });
+  await test('CPU settings restoration preserves the native timeout reason instead of a generic position error',async()=>{
+    let q='720p';const prefs={quality:()=>q,snapshot:()=>({ramMiB:1024}),preview(){},save(_v,n){q=n;}};
+    const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>({...m.makeInfo(v),preview:{quality:o.previewQuality}}),configurePlayer(player,model){if(model.players.length)player.seek=async()=>{player.change({state:'paused',lastErrorCode:'NATIVE_FRAME_TIMEOUT',lastIssue:'native timeout detail'});return {status:'error'};};}});
+    await h.session.loadSelected();await h.session.seek(2);
+    await h.session.setPlaybackSettings({ramMiB:1024,previewQuality:'1080p'});
+    assert.equal(h.session.snapshot().error.code,'NATIVE_FRAME_TIMEOUT');assert.equal(h.session.snapshot().error.message,'native timeout detail');await h.session.close();
+  });
   await test('E03 retains an ordinal frame even when two source frames have identical times',async()=>{
     let q='720p';const prefs={quality:()=>q,snapshot:()=>({ramMiB:1024}),preview(){},save(_v,n){q=n;}};
     const h=harness({memoryPreferences:prefs,prepare:async(v,o,m)=>{const info=m.makeInfo(v);info.frames[1].time=0;return {...info,preview:{quality:o.previewQuality}};}});

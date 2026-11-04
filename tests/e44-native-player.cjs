@@ -56,6 +56,32 @@ async function fixture(options={}){
   rafPending:()=>callbacks.size,
   async cleanup(){await p.dispose();await turn();}};
 }
+test('proxy published during cold drag adopts once and resumes the latest exact target',{timeout:2000},async()=>{
+ const h=await fixture();try{
+  const first=h.p.seek(.017);h.runtime.publish();await turn();assert.equal(h.proxies.length,1);
+  const latest=h.p.seek(.1,{final:true});h.proxies[0].complete(0);await turn();
+  assert.equal(h.primary.closed,1);assert.equal(h.p.proxyActive,true);assert.equal(h.proxies[0].requests.at(-1).ordinal,3);
+  assert.equal(h.p.snapshot().frameHeld,true);h.proxies[0].complete();
+  assert.equal((await latest).frameId,200);assert.equal((await first).status,'superseded');assert.equal(h.proxies.length,1);
+ }finally{await h.cleanup();}
+});
+test('window protects both adjacent frames and recent returns before speculative frames',async()=>{
+ const h=await fixture({frameCount:20});try{
+  for(const n of [0,8,9,10,11,12,18])h.p._entry(n,{pixels:Buffer.from([n,0,0,255]),metrics:{width:1,height:1}});
+  h.p.seekTarget=10;h.p.recentTargets=[10,8];h.p.fillPlan={members:new Set([9,10,11,12])};
+  assert(h.p._evict(true));assert(!h.p.cache.has(18));assert(!h.p._evict(true));assert(h.p.cache.has(8));
+  assert(h.p._evict());assert(!h.p.cache.has(12));assert(h.p.cache.has(9)&&h.p.cache.has(11));
+  const plan=global.EVAPlaybackCommon.directionalWindow(h.info.frames,10,3,1,0,19,false,true);assert.deepEqual([...plan.order].sort((a,b)=>a-b),[9,10,11]);
+ }finally{await h.cleanup();}
+});
+test('final cold requests receive a bounded longer deadline without changing ordinary drag',async()=>{
+ const h=await fixture();try{const request=h.primary.request.bind(h.primary),seen=[];h.primary.request=(n,o)=>{seen.push(o.timeoutMs);return request(n);};
+  let seek=h.p.seek(.017);h.primary.complete();await seek;seek=h.p.seek(.1,{final:true});h.primary.complete();await seek;assert.deepEqual(seen,[10000,60000]);
+ }finally{await h.cleanup();}
+});
+test('pausing playback centers subsequent preparation on the actual picture instead of an old drag',async()=>{
+ const h=await fixture();try{h.p.seekTarget=0;h.p.currentIndex=2;h.p.state='playing';h.p.pause();assert.equal(h.p.seekTarget,2);assert.equal(h.p.fillPlan,null);}finally{await h.cleanup();}
+});
 test('late seek result cannot replace the newest target or picture',{timeout:2000},async()=>{
  const h=await fixture();try{
   const a=h.p.seek(.017),b=h.p.seek(.05);assert.equal(h.p.snapshot().targetTime,.05);assert.equal(h.view.style.visibility,'visible');assert.equal(h.p.snapshot().frameHeld,true);
@@ -222,15 +248,15 @@ test('a cached confirmed target retries a ready proxy blocked during held failur
   h.proxies[0].complete(0);await turn();assert.equal(h.p.snapshot().proxyActive,true);assert.equal(h.p.snapshot().frameId,100);assert.equal(h.p.snapshot().targetTime,0);assert.equal(h.p.snapshot().frameHeld,false);
  }finally{await h.cleanup();}
 });
-test('a new cached intent replaces a proxy candidate without overlap or target rollback',{timeout:2000},async()=>{
+test('a new cached intent retains the verified proxy without target rollback',{timeout:2000},async()=>{
  const h=await fixture();try{
   const warm=h.p.seek(.017);h.primary.complete(1);await warm;
   const failed=h.p.seek(.1);h.primary.requests[2].done=true;h.primary.requests[2].reject(Error('target failed'));await failed;h.runtime.publish();await turn();
   await h.p.seek(0);await turn();assert.equal(h.proxies.length,1);assert.equal(h.proxies[0].requests[0].ordinal,0);
   await h.p.seek(.017);const afterNew=h.view.draws.length;assert.equal(h.proxies.length,1);
   h.proxies[0].complete(0);await turn();assert.equal(h.p.snapshot().frameId,117);assert.equal(h.p.snapshot().targetTime,.017);assert(!h.view.draws.slice(afterNew).includes(0));
-  assert.equal(h.proxies[0].closed,1);assert.equal(h.proxies.filter(r=>!r.closed).length,1);assert.equal(h.proxies[1].requests[0].ordinal,1);
-  h.proxies[1].complete(0);await turn();assert.equal(h.p.snapshot().proxyActive,true);assert.equal(h.p.snapshot().frameId,117);assert.equal(h.p.snapshot().targetTime,.017);
+  assert.equal(h.proxies[0].closed,0);assert.equal(h.proxies.length,1);assert.equal(h.primary.closed,1);
+  await turn();assert.equal(h.p.snapshot().proxyActive,true);assert.equal(h.p.snapshot().frameId,117);assert.equal(h.p.snapshot().targetTime,.017);
  }finally{await h.cleanup();}
 });
 test('pending or failed held frames cannot be fixed as clip endpoints',{timeout:2000},async()=>{
