@@ -305,3 +305,5 @@ AGENTS参考token由1093变为1106，4组分词样例通过，低于1160上限�
 确认新包完整后，按旧包SHA256及独占访问复核删除private.9-f6d257c的ZIP和校验文件，共4514968字节，回执review1-old-package-cleanup.json；此前旧包身份/构建来源保全，新审查包展开目录为当前核验工作副本，保留到整体审查，未作为另一插件安装。收尾证据约1.38MiB，未超原2MiB；无历史失败证据删除。运行源码/安装说明已提交，后续文档回执提交不改变包内源码身份。整体审查、是否上架和未覆盖真实IME/外部安装验证仍待安排，不发tag。
 
 远端同步：用户已明确授权，使用push.followTags=false正常快进推送main，远端由904dfb3更新到运行源码0fa8818；ls-remote已核对一致。同步此前124个本地提交与本次源码提交，不改写历史；本段及包回执另作文档提交后同步。未创建/推送新tag、未建立Release、未提交商店，整体提交审查是下一步独立工作。源代码提交后--require-clean通过，文档回执完成后再核对；本轮不重跑已通过且无源码变化的完整回归。
+
+追加仓库名称同步：用户要求GitHub主页名称也改为Framilo。GitHub连接器没有仓库重命名接口，使用ego-browser的DOM语义操作在既有仓库设置中将eagle-frame-analyzer改为Framilo；页面面包屑和主页标题已显示新名称。主页为https://github.com/kekedouou/Framilo，本地origin同步为git@github.com:kekedouou/Framilo.git，新远端main核对为4c1f4d5，与改名前本地一致。README增加正式主页入口，交接同步完成；历史发行/实验记录中的旧名称不改写，plugin身份、代码和1.0.0审查ZIP未变，不重打包或新增tag。临时浏览器任务已结束，五个本轮操作脚本按路径/摘要/独占读取核对后清除，回执在verification-runs/bugfix-four/repo-rename-20261104/cleanup.json；沿用原2MiB预算，未引入新依赖、权限或规则。此次仅元数据和文档变化，验证限新远端身份、文档/交接及差异检查，不重跑媒体或宿主验收。

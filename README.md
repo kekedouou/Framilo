@@ -4,7 +4,7 @@
 
 Framilo 是 Eagle 中的视频参考与标注播放器。逐帧观察动作，循环查看片段，把文字和圈画留在对应画面上。
 
-[开始使用](#开始使用) · [常用操作](#常用操作) · [你的数据](#你的数据) · [能力与限制](docs/releases/motionote-capabilities.md)
+[GitHub主页](https://github.com/kekedouou/Framilo) · [开始使用](#开始使用) · [常用操作](#常用操作) · [你的数据](#你的数据) · [能力与限制](docs/releases/motionote-capabilities.md)
 
 ## 看清细节
 
