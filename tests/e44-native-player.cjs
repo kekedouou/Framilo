@@ -317,6 +317,70 @@ test('E49 paused audio cursor settling never forces a new source seek on unchang
  }finally{await h.cleanup();}
 });
 
+test('repeated pause and resume holds the displayed picture when audio has advanced to a later cached frame',{timeout:2000},async()=>{
+ const h=await fixture({audio:true,eventAudio:true});try{
+  for(let n=1;n<h.info.frames.length;n++)h.p._entry(n,{pixels:Buffer.from([n,0,0,255]),metrics:{width:1,height:1}});
+  h.audio.completeSeek();await h.p.play();
+  for(let cycle=0;cycle<3;cycle++){
+   h.audio.currentTime=.17;h.audio.completeSeek();await h.p.pause();
+   assert.equal(h.p.snapshot().frameOrdinal,0);assert.equal(h.p.snapshot().targetTime,0);
+   const draws=h.view.draws.length,plays=h.audio.playCount,starting=h.p.play();await turn();
+   assert.equal(h.audio.currentTime,.1);assert.equal(h.audio.seeking,true);assert.equal(h.audio.playCount,plays);
+   assert.equal(h.view.draws.length,draws);assert.equal(h.p.snapshot().frameOrdinal,0);
+   h.audio.completeSeek();assert.equal((await starting).status,'playing');assert.equal(h.p.snapshot().frameOrdinal,0);assert.equal(h.audio.playCount,plays+1);
+  }
+  h.advance(.017);assert.equal(h.p.snapshot().frameOrdinal,1);
+ }finally{await h.cleanup();}
+});
+
+test('resume validates the live paused audio cursor against VFR frame bounds and source origin',{timeout:2000},async()=>{
+ for(const origin of [0,.1,5])for(const position of ['before','inside','end','after']){
+  const h=await fixture({audio:true,eventAudio:true,origin});try{
+   for(let n=1;n<h.info.frames.length;n++)h.p._entry(n,{pixels:Buffer.from([n,0,0,255]),metrics:{width:1,height:1}});
+   await h.p.seek(.05,{final:true});h.audio.completeSeek();await h.p.play();await h.p.pause();
+   const frame=h.info.frames[2],source=position==='before'?.04:position==='inside'?.08:position==='end'?frame.end:.12;
+   h.audio.currentTime=origin+source;h.audio.completeSeek();
+   const cursor=h.audio.currentTime,plays=h.audio.playCount,starting=h.p.play();await turn();
+   assert.equal(h.p.currentIndex,2);
+   if(position==='inside'){assert.equal(h.audio.currentTime,cursor);assert.equal(h.audio.seeking,false);}
+   else{assert.equal(h.audio.playCount,plays);assert.equal(h.audio.currentTime,origin+frame.time);assert.equal(h.audio.seeking,true);h.audio.completeSeek();}
+   assert.equal((await starting).status,'playing');assert.equal(h.p.currentIndex,2);assert.equal(h.audio.listenerCount(),0);
+  }finally{await h.cleanup();}
+ }
+});
+
+test('pause, new seek and close cancel picture-aligned resume before any stale sound can start',{timeout:2000},async()=>{
+ for(const action of ['pause','seek','close']){const h=await fixture({audio:true,eventAudio:true});try{
+  h.audio.completeSeek();await h.p.play();h.audio.currentTime=.17;h.audio.completeSeek();await h.p.pause();
+  const plays=h.audio.playCount,starting=h.p.play();await turn();assert.equal(h.audio.seeking,true);
+  if(action==='close')await h.p.dispose();
+  else if(action==='pause')await h.p.pause();
+  else{const locating=h.p.seek(.05,{final:true});h.primary.complete();await locating;}
+  h.audio.completeSeek();assert.equal((await starting).status,'superseded');
+  assert.equal(h.audio.playCount,plays);assert.equal(h.audio.paused,true);assert.equal(h.rafPending(),0);assert.equal(h.audio.listenerCount(),0);
+  assert.equal(h.p.currentIndex,action==='seek'?2:0);
+ }finally{await h.cleanup();}}
+});
+
+test('pause parks the visible target at the confirmed frame and silent resume starts there',async()=>{
+ const h=await fixture();try{
+  for(let n=1;n<h.info.frames.length;n++)h.p._entry(n,{pixels:Buffer.from([n,0,0,255]),metrics:{width:1,height:1}});
+  await h.p.play();h.advanceSilent(.08);assert.equal(h.p.currentIndex,2);assert.equal(h.p.targetTime,.08);
+  await h.p.pause();assert.equal(h.p.targetTime,.05);h.advanceSilent(1);await h.p.play();
+  assert.equal(h.p.currentIndex,2);assert.equal(h.p._clock(),.05);
+ }finally{await h.cleanup();}
+});
+
+test('restored 4x playback presents every available refresh without a fallback frame-rate cap',async()=>{
+ const h=await fixture({frameCount:90});try{
+  h.info.frames.forEach((f,n)=>{f.time=n/60;f.end=(n+1)/60;});h.info.duration=1.5;
+  for(let n=1;n<h.info.frames.length;n++)h.p._entry(n,{pixels:Buffer.from([n,0,0,255]),metrics:{width:1,height:1}});
+  h.p.playbackRate=4;await h.p.play();const requests=h.primary.requests.length;
+  for(let refresh=1;refresh<=12;refresh++){h.advanceSilent(1/60);assert.equal(h.view.draws.length,refresh+1);assert(Math.abs(h.p.time-refresh*4/60)<1/60+1e-9);}
+  assert.equal(h.primary.requests.length,requests);assert.equal(h.rafPending(),1);
+ }finally{await h.cleanup();}
+});
+
 test('E49 audio completion anchors the silent tail at its current cursor instead of the original play input',{timeout:2000},async()=>{
  const h=await fixture({audio:true,eventAudio:true,deferredPlay:true});try{
   for(let n=1;n<h.info.frames.length;n++)h.p._entry(n,{pixels:Buffer.from([n,0,0,255]),metrics:{width:1,height:1}});

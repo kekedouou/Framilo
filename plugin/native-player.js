@@ -166,7 +166,7 @@
   step(delta){const start=this.pendingTargets?this.index.frameAt(this.info.frames,this.targetTime):this.currentIndex??0;const n=Math.max(0,Math.min(this.info.frames.length-1,start+delta));return this.seek(this.info.frames[n].time,{index:n,kind:'step',final:true});}
   pause(notify=true,keepIntent=false){if(!keepIntent){this.playIntent++;this.playRequested=false;}this.playToken++;this.audioStartToken=null;this.audioSeekCancel?.();if(this.rafId!==undefined)this.caf(this.rafId);this.rafId=undefined;
    const wasPlaying=this.state==='playing';this.audio?.pause();
-   if(wasPlaying){this.seekTarget=this.currentIndex;this.fillPlan=null;this.recentTargets=[];}
+   if(wasPlaying){this.seekTarget=this.currentIndex;this.targetTime=this.time;this.fillPlan=null;this.recentTargets=[];}
    if(wasPlaying){this.audioResume=this.audio&&!this.audio.seeking&&!this.audio.ended?{ordinal:this.currentIndex,time:this.audio.currentTime}:null;this.reader?.cancel();this.readOwner=null;this.readerBusy=false;}
    this.anchor=null;if(!this.disposed&&this.info&&wasPlaying)this.state='paused';if(notify)this._change();this._scheduleFill();return Promise.resolve({status:'paused'});}
   async play(){if(this.disposed||!this.info)return {status:'superseded'};const intent=++this.playIntent;this.playRequested=!!this.pendingTargets;if(this.playRequested)this._change();
@@ -177,10 +177,11 @@
    this.serial++;if(this.readerBusy)this.reader.cancel();this.readOwner=null;this.readerBusy=false;
    if(this.currentIndex===this.info.frames.length-1&&!this.loopEnabled){const r=await this.seek(0,{final:true,keepPlayIntent:true});if(!['drawn','reused'].includes(r.status)||this.disposed||intent!==this.playIntent)return {status:'superseded'};}
    const token=++this.playToken,audio=this.audio,resume=this.audioResume;
-   // Browser audio may finish settling its paused cursor after pause() returns.
-   // Every explicit seek clears audioResume, so an unchanged picture owns the
-   // current paused audio cursor without an unnecessary sub-millisecond rewind.
-   const resumeTime=audio&&resume&&resume.ordinal===this.currentIndex&&!audio.seeking&&!audio.ended?audio.currentTime:null;
+   // Keep sub-frame audio progress only while it still belongs to the displayed
+   // source frame. A stalled picture can be behind the paused audio clock; in
+   // that case align to the picture before restarting, rather than jumping ahead.
+   const frame=this.info.frames[this.currentIndex],origin=this.info.metrics.sourceVideoOrigin||0,cursor=audio?.currentTime;
+   const resumeTime=audio&&resume&&resume.ordinal===this.currentIndex&&!audio.seeking&&!audio.ended&&frame&&cursor>=frame.time+origin&&cursor<frame.end+origin?cursor:null;
    const media=resumeTime===null?this.time:Math.max(0,resumeTime-(this.info.metrics.sourceVideoOrigin||0));
    this.anchor={at:this.now(),time:media};
    // A play intent is immediately pausable. Decoder lookahead belongs to _tick,
