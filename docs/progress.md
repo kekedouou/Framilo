@@ -4,7 +4,7 @@
 任务状态：待验收
 产品阶段：插件稳定性与上架准备
 维护记录：[缓存窗口与代理接管](progress/development-history.md#2026-11-04-缓存窗口与代理接管)
-候选提交：2a5f6b3
+候选提交：0f07d1f
 工作区登记：[保留清单](workspace-exceptions.json)
 
 ## 目标与授权
