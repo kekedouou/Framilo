@@ -34,7 +34,7 @@
     return result;
   }
   function spaceAllowed(event, timeline) {
-    if (!(event.code === 'Space' || event.key === ' ') || event.repeat || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false;
+    if (!(event.code === 'Space' || event.key === ' ') || event.repeat || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false;
     const target = event.target;
     if (!target) return true;
     if (target.isContentEditable) return false;
@@ -43,7 +43,7 @@
     return !control || control === timeline;
   }
   function frameStepKey(event) {
-    if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return 0;
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return 0;
     const target = event.target;
     if (target && (target.isContentEditable || typeof target.closest === 'function' && target.closest('input,textarea,select,[contenteditable],[role="textbox"]'))) return 0;
     if (event.code === 'BracketLeft' || event.key === '[' || event.key === '【') return -1;
@@ -597,7 +597,17 @@
         entry.button.setAttribute('aria-expanded', String(entry.id === id));
       }
     }
-    let commentComposing = false, commentCompositionEnd = -Infinity;
+    let commentComposing = false, commentCompositionEnd = -Infinity, commentCommitted = '';
+    function currentCommentInput() {
+      const d = state.comments?.draft;
+      return session && d && d.id === editorId && state.epoch === editorEpoch && d.kind !== 'delete' && ['editing', 'failed', 'obsolete'].includes(d.status);
+    }
+    function syncCommentInput() {
+      if (!currentCommentInput() || commentComposing || el.commentText.value === commentCommitted) return;
+      // Update before Session notifies synchronously; trailing input must not publish twice.
+      commentCommitted = el.commentText.value;
+      invoke(() => session.setCommentText(commentCommitted));
+    }
     const commentButtons = [];
     function seekComment(event) {
       const button = event.target && event.target.closest && event.target.closest('button[data-comment-id]');
@@ -647,11 +657,17 @@
     }
     on(el.commentAdd, 'click', beginNote);
     on(el.commentChoice, 'change', () => { if (session && el.commentChoice.value) invoke(() => session.chooseComment(el.commentChoice.value)); });
-    on(el.commentText, 'input', () => { if (session) invoke(() => session.setCommentText(el.commentText.value)); });
-    on(el.commentText, 'compositionstart', () => { commentComposing = true; });
+    const beginCommentComposition = () => { if (currentCommentInput()) commentComposing = true; };
+    on(el.commentText, 'compositionstart', beginCommentComposition);
+    on(el.commentText, 'compositionupdate', beginCommentComposition);
+    on(el.commentText, 'beforeinput', event => { if (event.isComposing || event.inputType === 'insertCompositionText') beginCommentComposition(); });
+    on(el.commentText, 'input', event => {
+      if (event.isComposing) beginCommentComposition();
+      if (!commentComposing) syncCommentInput();
+    });
     on(el.commentText, 'compositionend', () => {
       commentComposing = false; commentCompositionEnd = now();
-      if (session) invoke(() => session.setCommentText(el.commentText.value));
+      syncCommentInput();
     });
     on(el.commentShade, 'pointerdown', event => { if (event.button === 0) { event.preventDefault(); event.stopPropagation?.(); } });
     on(el.commentShade, 'wheel', event => event.preventDefault(), {passive:false});
@@ -772,8 +788,11 @@
       set(el.commentDraftPreview, 'hidden', !draft || draft.kind === 'delete' || !draft.text?.trim());
       set(el.commentDraftPreview, 'textContent', draft && draft.kind !== 'delete' ? formatTime(draft.time) + ' · 草稿\n' + (draft.text || '') : '');
       set(el.commentEditorStatus, 'textContent', draft?.message || '');
-      if (value === renderedComments) return;
+      if (value === renderedComments && (!draft || editorEpoch === state.epoch)) return;
       const previous = renderedComments; renderedComments = value;
+      if (!draft || editorId !== draft.id || editorEpoch !== state.epoch) {
+        commentComposing = false; commentCompositionEnd = -Infinity; commentCommitted = draft?.text || '';
+      }
       set(el.commentStatus, 'textContent', draft?.message || value?.syncMessage || value?.message || '');
       // Hiding a focused editor can synchronously move activeElement to body.
       const editorHadFocus = [el.commentText, el.commentSave, el.commentCancel].includes(doc.activeElement);
@@ -799,12 +818,12 @@
       set(el.commentCancel, 'hidden', !deleting && !['unknown', 'obsolete', 'choosing'].includes(draft.status));
       set(el.commentTime, 'textContent', Number.isFinite(draft.time) ? (editable ? '固定时间 ' : '原保存时间 ') + formatTime(draft.time) : '正在固定画面…');
       set(el.commentText, 'disabled', draft.status === 'pausing'); set(el.commentText, 'readOnly', !editable && !commentComposing || deleting);
-      if (!commentComposing || editorId !== draft.id) set(el.commentText, 'value', draft.text);
+      if (!commentComposing) { commentCommitted = draft.text || ''; set(el.commentText, 'value', commentCommitted); }
       set(el.commentKeyboardHint, 'hidden', !editable || deleting);
       set(el.commentSave, 'textContent', draft.status === 'unknown' ? '核对保存结果' : deleting ? '确认删除' : '保存');
       set(el.commentSave, 'disabled', !editable && draft.status !== 'unknown');
       set(el.commentCancel, 'disabled', !['editing', 'failed', 'pausing', 'obsolete', 'choosing'].includes(draft.status));
-      if (editable && editorId !== draft.id) { editorId = draft.id; editorEpoch = state.epoch; if (!deleting) el.commentText.focus(); }
+      if (editable && (editorId !== draft.id || editorEpoch !== state.epoch)) { editorId = draft.id; editorEpoch = state.epoch; if (!deleting) el.commentText.focus(); }
     }
     function update(snapshot) {
       if (closingSurface) {

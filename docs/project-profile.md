@@ -30,7 +30,7 @@ UI持续维护产品的交互章节，暂不另拆一套文档。阶段任务引
 | 格式、画质与长片能力 | [候选能力表](releases/motionote-capabilities.md) |
 | 未来需求、优先级与待决项 | [路线图](roadmap.md) |
 | 某阶段方案、实测或失败 | [实验索引](experiments/README.md)，仅追溯相关工作包 |
-| 自用安装/恢复、历史发布 | [Framilo自用](releases/framilo-private.md)、[E49冻结](releases/e49-frozen-2026-10-30.md)、[Beta2发行](releases/v0.1.0-beta.2.md) |
+| 使用/审查/恢复、历史发布 | [Framilo使用说明](releases/framilo-private.md)、[E49冻结](releases/e49-frozen-2026-10-30.md)、[Beta2发行](releases/v0.1.0-beta.2.md) |
 | 追溯旧规则与旧入口 | [整理索引](progress/2026-10-31-document-reorganization.md)；[旧性能体系](history/retired-performance-2026-10-31/README.md)、[退役监测](history/retired-monitor-e55/README.md)（只读，不执行） |
 
 命令和副作用按需查[执行命令](development-plan.md#命令及副作用)，不默认运行历史实验或打包。

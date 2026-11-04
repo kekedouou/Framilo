@@ -130,7 +130,7 @@ Codex变更入口异常先核对真实Git根/状态/提交，再核对项目绑�
 | node scripts/check-handoff.cjs --base HEAD | 提交前只读检查；使用本轮基线或精确文件清单隔离其他任务 |
 | node scripts/check-handoff.cjs --require-clean | 提交后核对；有其他任务差异会失败，须登记且不能声称干净 |
 | node scripts/package-release.cjs native-experience | 只读核对原生运行文件及许可闭包，不生成ZIP；仅运行文件变化时需要 |
-| node scripts/package-private.cjs build HEAD / verify 路径 | 仅明确打包任务使用：干净提交→dist/ZIP；既有配方≤256MiB，不安装/推送；verify只读 |
+| node scripts/package-private.cjs build HEAD / build-review HEAD / verify 路径 | 仅明确打包任务使用：干净提交→dist/ZIP；build为自用快照，build-review为正式版本号的首轮上架前审查快照，均不等于商店批准；既有配方≤256MiB，不安装/推送；verify只读 |
 | node scripts/e53-native-check.cjs [包目录] [--smoke] | 复用E52自有样本读取准确帧/关闭，回执写e53；≤10分钟，不生成媒体/写库，不是宿主验收 |
 | node scripts/frontend-preview.cjs | 按需启动仅本机同源UI预览；生成一个合成样本和服务回执到verification-runs/e52/frontend，不访问Eagle/真实素材；由Codex打开/恢复并保护待反馈草稿 |
 | node scripts/e52-format-check.cjs / scripts/e52-lifecycle-check.cjs | 仅在E52授权预算内显式运行；生成合成素材/使用原生工具，证据写e52；不加载Eagle或写库，不属于默认检查 |

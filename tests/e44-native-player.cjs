@@ -36,12 +36,13 @@ async function fixture(options={}){
  const info={width:1,height:1,duration:frames.videoDuration,frames:frames.frames,source:{filePath:'D:/source.mp4'},metrics:{sourceVideoOrigin:options.origin??.1}};
  const audio={paused:true,ended:false,currentTime:0,playbackRate:1,playCount:0,pause(){this.paused=true;},async play(){this.playCount++;this.paused=false;},removeAttribute(){},load(){}};
  if(options.eventAudio){
-  let time=0;const listeners=new Map();audio.seeking=false;audio.pauseCount=0;audio.playGates=[];audio.playRejects=[];
+  let time=0;const listeners=new Map(),onceListeners=new WeakSet();audio.seeking=false;audio.pauseCount=0;audio.playGates=[];audio.playRejects=[];
   Object.defineProperty(audio,'currentTime',{get:()=>time,set:value=>{if(Math.abs(value-time)>.000001){time=value;audio.seeking=true;}}});
-  audio.addEventListener=(name,fn)=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(fn);};
+  audio.addEventListener=(name,fn,options={})=>{if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(fn);if(options.once)onceListeners.add(fn);};
   audio.removeEventListener=(name,fn)=>listeners.get(name)?.delete(fn);
   audio.listenerCount=()=>[...listeners.values()].reduce((sum,items)=>sum+items.size,0);
-  audio.completeSeek=()=>{audio.seeking=false;for(const fn of [...(listeners.get('seeked')||[])])fn();};
+  audio.emitSeeked=()=>{for(const fn of [...(listeners.get('seeked')||[])]){if(onceListeners.has(fn))listeners.get('seeked').delete(fn);fn();}};
+  audio.completeSeek=()=>{audio.seeking=false;audio.emitSeeked();};
   audio.pause=()=>{audio.pauseCount++;audio.paused=true;};
   audio.play=()=>{audio.playCount++;if(!options.deferredPlay){audio.paused=false;return Promise.resolve();}
    return new Promise((resolve,reject)=>{audio.playGates.push(()=>{audio.paused=false;resolve();});audio.playRejects.push(reject);});};
@@ -360,6 +361,22 @@ test('pause, new seek and close cancel picture-aligned resume before any stale s
   assert.equal(h.audio.playCount,plays);assert.equal(h.audio.paused,true);assert.equal(h.rafPending(),0);assert.equal(h.audio.listenerCount(),0);
   assert.equal(h.p.currentIndex,action==='seek'?2:0);
  }finally{await h.cleanup();}}
+});
+
+test('a queued old seeked event cannot start resumed audio while the current alignment is seeking',{timeout:2000},async()=>{
+ const h=await fixture({audio:true,eventAudio:true});try{
+  for(let n=1;n<h.info.frames.length;n++)h.p._entry(n,{pixels:Buffer.from([n,0,0,255]),metrics:{width:1,height:1}});
+  h.audio.completeSeek();await h.p.play();
+  for(let cycle=0;cycle<5;cycle++){
+   h.audio.currentTime=.17;h.audio.completeSeek();await h.p.pause();
+   const plays=h.audio.playCount,starting=h.p.play();await turn();assert.equal(h.audio.seeking,true);
+   // An already queued event for an older positioning operation arrives after
+   // the new listener was installed. The media element is still seeking.
+   h.audio.emitSeeked();await turn();assert.equal(h.audio.playCount,plays);
+   assert.equal(h.p.currentIndex,0);assert.equal(h.audio.listenerCount(),2);
+   h.audio.completeSeek();assert.equal((await starting).status,'playing');assert.equal(h.p.currentIndex,0);
+  }
+ }finally{await h.cleanup();}
 });
 
 test('pause parks the visible target at the confirmed frame and silent resume starts there',async()=>{

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NOTE-02 原生文本框隔离</title>
+<style>body{font:16px system-ui;margin:24px;max-width:900px}textarea{display:block;width:90%;height:80px;margin:12px 0}pre{white-space:pre-wrap;font-size:12px;max-height:320px;overflow:auto}button{margin-right:12px}</style>
+<h1>原生文本框隔离</h1>
+<p>仅用虚构测试文字。此页不加载 Framilo、Session 或播放器，不设置输入值、焦点、只读状态，不拦截按键。外部浏览器结果不能代表 Eagle；同宿主对照须在隔离环境中打开，不能替换未保存草稿所在页面。</p>
+<label>输入框 A<textarea id="a" maxlength="128" aria-label="隔离输入 A"></textarea></label>
+<label>输入框 B<textarea id="b" maxlength="128" aria-label="隔离输入 B"></textarea></label>
+<button id="start">开始记录</button><button id="stop">停止记录</button><span id="status">默认关闭；最多120条，不记录完整文字，不保存或上传。</span>
+<pre id="events" aria-label="事件记录"></pre>
+<script>
+'use strict';
+let enabled=false,start=0,rows=[],timer;
+const out=document.getElementById('events'),status=document.getElementById('status');
+function stop(){enabled=false;clearTimeout(timer);status.textContent='已停止，共'+rows.length+'条；记录仅在当前页面内存中。';}
+document.getElementById('start').onclick=()=>{rows=[];out.textContent='';start=performance.now();enabled=true;clearTimeout(timer);timer=setTimeout(stop,300000);status.textContent='记录中（最多5分钟 / 120条）。';};
+document.getElementById('stop').onclick=stop;
+for(const type of ['focus','blur','keydown','keyup','beforeinput','input','compositionstart','compositionupdate','compositionend'])document.addEventListener(type,event=>{
+ if(!enabled||event.target.tagName!=='TEXTAREA')return;
+ const n=event.target;rows.push({ms:Math.round(performance.now()-start),event:type,target:n.id,active:document.activeElement?.id||null,trusted:event.isTrusted,isComposing:event.isComposing,inputType:event.inputType,keyCode:event.keyCode,defaultPrevented:event.defaultPrevented,length:n.value.length,selection:[n.selectionStart,n.selectionEnd]});
+ out.textContent=rows.map(row=>JSON.stringify(row)).join('\n');if(rows.length>=120)stop();
+},true);
+</script></html>

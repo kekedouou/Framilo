@@ -28,7 +28,7 @@
   function help(n,id){if(!helps[id])return;n.onpointerenter=n.onfocus=()=>{hideHint();hintTimer=setTimeout(()=>{if(settings.hidden||!n.isConnected)return;tooltip.textContent=helps[id];tooltip.hidden=false;const r=n.getBoundingClientRect();tooltip.style.left=Math.max(8,Math.min(win.innerWidth-tooltip.offsetWidth-8,r.left))+'px';tooltip.style.top=Math.max(8,Math.min(win.innerHeight-tooltip.offsetHeight-8,r.bottom+6))+'px';},450);};n.onpointerleave=n.onblur=hideHint;}
   function button(label,fn){const b=make('button','shell-setting-choice',label);b.type='button';b.onclick=fn;return b;}
   const triggers=new Map();
-  for(const id of ['qualitySelect','display','drawingFadeSeconds','wheelFrames','advanced']){const b=button(names[id],()=>openPath(path[0]===id?[]:[id]));b.setAttribute('aria-expanded','false');b.dataset.setting=id;if(id==='advanced')b.classList.add('shell-settings-advanced');help(b,id);body.append(b);triggers.set(id,b);}
+  for(const id of ['qualitySelect','display','drawingFadeSeconds','advanced']){const b=button(names[id],()=>openPath(path[0]===id?[]:[id]));b.setAttribute('aria-expanded','false');b.dataset.setting=id;if(id==='advanced')b.classList.add('shell-settings-advanced');help(b,id);body.append(b);triggers.set(id,b);}
   const apply=find('memoryApply');move(footer,apply);
   function openPath(next){cancelScrub();path=next;signature='';hideHint();render();position();}
   function restoreControls(){for(const {n,parent,next} of placements)if(panels.some(p=>p.node.contains(n)))parent.insertBefore(n,next?.parentNode===parent?next:null);}
@@ -37,7 +37,7 @@
    for(const [id,b]of triggers){b.setAttribute('aria-expanded',String(path[0]===id));const control=find(id);b.disabled=!!control?.disabled;}
    panels.forEach((p,i)=>{const id=path[i];p.node.hidden=settings.hidden||!id;if(!id)return;p.node.setAttribute('aria-label',names[id]);
     if(id==='display'){toggle(p.content,'showDrawings','画面标注');toggle(p.content,'drawingToolbar','圈画工具条');toggle(p.content,'showCacheStrip','缓存绿条');}
-    else if(id==='advanced'){for(const key of ['memoryMiB','rateStep']){if(!find(key))continue;const b=button(names[key],()=>openPath(path[1]===key?['advanced']:['advanced',key]));help(b,key);b.dataset.setting=key;b.setAttribute('aria-expanded',String(path[1]===key));b.disabled=!!find(key)?.disabled;p.content.append(b);}if(find('gpuAcceleration'))toggle(p.content,'gpuAcceleration','GPU加速');for(const key of ['cacheClearOther'])move(p.content,find(key));}
+    else if(id==='advanced'){for(const key of ['memoryMiB','rateStep','wheelFrames']){if(!find(key))continue;const b=button(names[key],()=>openPath(path[1]===key?['advanced']:['advanced',key]));help(b,key);b.dataset.setting=key;b.setAttribute('aria-expanded',String(path[1]===key));b.disabled=!!find(key)?.disabled;p.content.append(b);}if(find('gpuAcceleration'))toggle(p.content,'gpuAcceleration','GPU加速');for(const key of ['cacheClearOther'])move(p.content,find(key));}
     else{const control=find(id);if(!control)return;if(control.tagName==='SELECT'){for(const option of control.options){if(option.hidden)continue;const b=button(option.textContent,()=>{control.value=option.value;control.dispatchEvent(new Event('change',{bubbles:true}));signature='';render();position();});b.disabled=control.disabled||option.disabled;b.setAttribute('aria-pressed',String(control.value===option.value));p.content.append(b);}}
      else{const row=make('label','shell-setting-row',id==='drawingFadeSeconds'?'时长（秒）':names[id]);move(row,control);p.content.append(row);}}
    });rendering=false;

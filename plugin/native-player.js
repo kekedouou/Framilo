@@ -206,10 +206,12 @@
    // not wait here or restart an already pending seek to the same timestamp.
    if(Math.abs(a.currentTime-target)<.0001)return;try{a.currentTime=target;}catch(_){}
   }
-  _audioSeek(time){const a=this.audio;if(!a)return Promise.resolve();return new Promise((resolve,reject)=>{let timer;const clean=()=>{clearTimeout(timer);a.removeEventListener?.('seeked',done);a.removeEventListener?.('error',bad);if(this.audioSeekCancel===cancel)this.audioSeekCancel=null;},done=()=>{clean();resolve();},bad=()=>{clean();reject(Error('音频定位失败。'));},cancel=()=>{clean();resolve();};
+  _audioSeek(time){const a=this.audio;if(!a)return Promise.resolve();return new Promise((resolve,reject)=>{let timer;const clean=()=>{clearTimeout(timer);a.removeEventListener?.('seeked',done);a.removeEventListener?.('error',bad);if(this.audioSeekCancel===cancel)this.audioSeekCancel=null;},done=()=>{if(a.seeking)return;clean();resolve();},bad=()=>{clean();reject(Error('音频定位失败。'));},cancel=()=>{clean();resolve();};
+   // A queued seeked event may belong to an earlier seek. It cannot hand the
+   // clock to playback while the current picture-alignment seek is unfinished.
    // Test clocks and sources already at the requested point need no asynchronous seek.
    if(typeof a.addEventListener!=='function'){a.currentTime=time;resolve();return;}if(Math.abs(a.currentTime-time)<.0001&&!a.seeking){resolve();return;}
-   this.audioSeekCancel=cancel;a.addEventListener('seeked',done,{once:true});a.addEventListener('error',bad,{once:true});timer=setTimeout(bad,3000);try{if(Math.abs(a.currentTime-time)>=.0001)a.currentTime=time;}catch(e){clean();reject(e);}
+   this.audioSeekCancel=cancel;a.addEventListener('seeked',done);a.addEventListener('error',bad,{once:true});timer=setTimeout(bad,3000);try{if(Math.abs(a.currentTime-time)>=.0001)a.currentTime=time;}catch(e){clean();reject(e);}
   });}
   _clock(){if(this.audio&&!this.audio.ended&&(!this.audio.paused||this.audioStartToken===this.playToken))return Math.max(0,this.audio.currentTime-(this.info.metrics.sourceVideoOrigin||0));return this.anchor?this.anchor.time+(this.now()-this.anchor.at)/1000*this.playbackRate:this.time;}
   _tick(token){if(this.disposed||token!==this.playToken||this.state!=='playing')return;

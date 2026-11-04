@@ -6,6 +6,7 @@ E编号是工作包，不是产品大阶段。现有A/B/S/T/UI/E记录保留原�
 
 | 阶段 | 计划 | 结果 | 专项 |
 | --- | --- | --- | --- |
+| NOTE-02 Windows输入法取消接口 | [授权与范围](../progress/development-history.md#note-02-原生取消接口独立验证) | [结果与限制](../progress/development-history.md#note-02-原生取消接口独立验证) | [独立源码](../../prototypes/note-ime-cancel/probe.rs)；未接入正式插件 |
 | E60 | [plan.md](E60/plan.md) | [report.md](E60/report.md) | 整窗黑屏、首帧阻塞和窗口拖动错误根因排查 |
 | E59 | [plan.md](E59/plan.md) | [report.md](E59/report.md) | 关闭重开累积、跨屏拖动、退出异常及兼容/数据安全回归 |
 | E58 | [plan.md](E58/plan.md) | [report.md](E58/report.md) | 冷帧续播光标、启动加载、容量提示及指定4K素材续播调查 |

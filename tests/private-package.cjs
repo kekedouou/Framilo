@@ -7,6 +7,14 @@ const files=Object.fromEntries(p.RUNTIME.map(n=>[n,fs.readFileSync(path.join(roo
 const version=JSON.parse(files['manifest.json']).version;
 const info={schema:'framilo-private-package-v1',version,sourceCommit:'a'.repeat(40),pluginId:'EVAVIDEOANALYSIS20261011',publicRelease:false,longTermAccepted:false,files:Object.fromEntries(Object.entries(files).map(([n,b])=>[n,{bytes:b.length,sha256:sha(b)}]))};
 assert(p.checkFiles(files,info).licenseClosureVerified);
+const review=p.packageIdentity(version,'a'.repeat(40),'store-review');
+assert.equal(review.basename,'framilo-'+version+'-store-review.1-aaaaaaa-win-x64');
+const {basename,...reviewIdentity}=review,reviewInfo={...info,...reviewIdentity};
+assert(p.checkFiles(files,reviewInfo).licenseClosureVerified);
+assert.throws(()=>p.checkFiles(files,{...reviewInfo,storeSubmissionApproved:true}));
+assert.throws(()=>p.checkFiles(files,{...reviewInfo,stage:'published'}));
+assert.throws(()=>p.packageIdentity('1.0.0-private.1','a'.repeat(40),'store-review'));
+assert.equal(p.packageIdentity(version,'a'.repeat(40)).schema,'framilo-private-package-v1');
 assert.throws(()=>p.checkFiles({...files,'memory-settings.json':Buffer.from('{}')},info));
 assert.throws(()=>p.checkFiles({...files,'logo.png':Buffer.from('changed')},info),assert.AssertionError);
 assert.throws(()=>p.checkFiles(files,{...info,version:'wrong'}));

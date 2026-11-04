@@ -76,4 +76,31 @@ test('Actions expand one row at a time, stay open during editing, and collapse o
  h.update({comments:{...h.state.comments,draft:null}});h.win.fire('pointerdown');assert(action.hidden);
  h.el('commentList').fire('click',{target:row.children[0]});assert(!action.hidden);h.update({epoch:2});assert(action.hidden);h.ui.destroy();
 });
+test('Composition input stays local through synchronous Session/UI echoes and commits once in either Chromium event order',()=>{
+ for(const order of ['input-before-end','end-before-input']){
+  const h=harness(),draft={id:201,status:'editing',time:2,text:'原文'};h.update({comments:{...h.state.comments,draft}});
+  h.session.setCommentText=text=>{h.calls.push(['setCommentText',text]);h.update({comments:{...h.state.comments,draft:{...draft,text}}});};
+  const input=h.el('commentText');input.fire('compositionstart');
+  for(const text of ['原文n','原文ni','原文你好']){input.value=text;input.fire('input',{isComposing:true,inputType:'insertCompositionText'});h.update({playback:{time:2}});assert.equal(input.value,text);}
+  assert.deepEqual(h.calls,[],'preedit must not enter Session');
+  if(order==='input-before-end')input.fire('input',{isComposing:false});
+  input.fire('compositionend');if(order==='end-before-input')input.fire('input',{isComposing:false,inputType:'insertText'});
+  assert.deepEqual(h.calls,[['setCommentText','原文你好']]);
+  for(const text of ['原文你好abc','粘贴文本','粘贴','']){input.value=text;input.fire('input',{isComposing:false});assert.equal(h.calls.at(-1)[1],text);}
+  h.ui.destroy();
+ }
+});
+test('beforeinput/input composition signals protect preedit even without compositionstart; a new draft revokes that state',()=>{
+ for(const signal of ['beforeinput','input']){const h=harness(),draft={id:202,status:'editing',time:2,text:''};h.update({comments:{...h.state.comments,draft}});
+  const input=h.el('commentText');input.value='nihao';input.fire(signal,{isComposing:true,inputType:'insertCompositionText'});
+  h.update({comments:{...h.state.comments,draft:{...draft,text:''}}});assert.equal(input.value,'nihao');assert.deepEqual(h.calls,[]);
+  input.value='你好';input.fire('compositionend');input.fire('input',{isComposing:false});assert.deepEqual(h.calls,[['setCommentText','你好']]);
+  input.fire('compositionstart');h.update({epoch:2,comments:{...h.state.comments,draft:{...draft,text:'新素材'}}});assert.equal(input.value,'新素材');
+  input.value='新素材英文';input.fire('input');assert.equal(h.calls.at(-1)[1],'新素材英文');h.ui.destroy();
+ }
+});
+test('229 Space and frame-step keys stay with IME even when isComposing is false and target is not a textarea',()=>{
+ const h=harness();for(const key of [' ','[',']']){const event=h.win.fire('keydown',{key,keyCode:229,isComposing:false,target:h.el('screen')});assert(!event.prevented);}
+ assert.deepEqual(h.calls,[]);h.win.fire('keydown',{key:' ',target:h.el('screen')});h.win.fire('keydown',{key:'[',target:h.el('screen')});h.win.fire('keydown',{key:']',target:h.el('screen')});assert.deepEqual(h.calls.map(v=>v[0]),['toggle','step','step']);h.ui.destroy();
+});
 console.log('T3 UI checks: '+count+'; DOM model only, no actual Eagle layout/input');
