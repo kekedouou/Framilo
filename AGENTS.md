@@ -1,27 +1,29 @@
-# Eagle Video Analysis: Agent Rules
+# Framilo Agent 协作规范
 
-## Reading and maintenance
-- Reply briefly in Chinese; explain necessary jargon on first use. Read the [project map](docs/project-profile.md) and [handoff](docs/progress.md), then relevant topics and local AGENTS. Do not read all history by default.
-- Subject to system/developer instructions, current user instructions and explicit authorization take priority; local rules add directory boundaries. Find related rules before adding requirements: merge duplicates, update additions in place, archive replaced decisions. Put feature details in product/verification docs. Only new general rules belong here; no dated patches.
-- Follow [document maintenance](docs/development-plan.md#文档维护机制) for ownership, merging, language and synchronization. Keep roadmap stages, details and priorities aligned with settled decisions; do not only append sections. Explain substantive document changes in the delivery message. Codex reconciles meaning; scripts check structure/links, not every semantic conflict.
+## Purpose and precedence
+- Framilo is a Windows/Eagle video reference and annotation player for fluent observation, precise frame inspection and notes.
+- Subject to system/developer instructions, current owner requests and applicable authorization take precedence over this file, then referenced documents. Local AGENTS apply within their scope; history does not renew authorization.
 
-## Authorization and implementation
-- Investigation/proposals are read-only by default. Within an approved stage, implement, check and repair continuously; deliver feature bundles. Subtasks/commits do not require renewed approval. Pause dependent work only for required manual acceptance, major product/architecture/experience changes or unauthorized restricted actions; continue the rest.
-- Discuss unresolved choices affecting experience, output, data, resources or scope promptly. Handle routine implementation independently; do not re-ask settled decisions. Investigate failures/inefficiency first; explain facts, impact, uncertainty and options instead of blind edits or repeated user testing.
-- Reference product R/P requirements and acceptance criteria; confirm scope/files before coding, without unrelated refactoring. Follow [product principles](docs/product.md#当前产品定位与设计原则) and [module boundaries](docs/architecture.md#现行模块地图); do not merge UI, Eagle API, media or cache logic back into the entry point.
-- Register goals/scope/budgets/acceptance before multi-stage work; record results/evidence/limits in the shared history. Separate plans/reports are for major proposals or independent experiments, not every edit. Put PoCs in prototypes; passing experiments does not approve production architecture, release or another stage.
-- Project previews use the built-in browser via official Browser Use. For other browsing, honor the named browser; use the ego-browser skill for ego (default), official Browser Use for Edge/Chrome. Never use mouse control; use DOM/semantic APIs or direct navigation.
+## Authority
+- Reviews and proposals are read-only. Change requests authorize scoped local edits and non-destructive checks; do not re-ask settled permissions.
+- Environment changes, real-data operations, remote writes/releases and deletion outside the project require explicit approval under [development-plan.md: authority](docs/development-plan.md#权限边界).
 
-## Permissions and data
-- Explicit authorization is required to install software/dependencies, load/install Eagle plugins, modify libraries, import assets, modify/delete source videos, modify the Eagle installation, delete outside the project, or create/push remote repositories. Do not re-request existing authorization.
-- Development annotation writes/deletes require dedicated test assets and specific authorization for that proposal. Product users save through the defined operation, without an experiment-authorization-file workflow.
-- Write outputs only to designated project directories. Never send assets, annotations, preferences or credentials over the network. Keep one repository; no nested repos or history rewriting. Preserve ignored configuration/evidence during migration. Git rollback cannot undo library writes.
+## Product and code boundaries
+- Follow [product.md](docs/product.md) and [architecture.md: modules](docs/architecture.md#现行模块地图). Keep UI, Eagle API, media and cache logic out of the entry point; avoid unrelated refactoring.
+- Write only to designated directories. Never send assets, annotations, preferences or credentials over the network. Protect user data, unknown/active files and original evidence, including ignored files during migration. Git rollback cannot undo library writes; no nested repositories or history rewriting.
 
-## Verification and delivery
-- Run affected checks under the [verification protocol](docs/verification.md); first identify command side effects. Use only approved test directories/budgets; do not default to rerunning old experiments, reset, or rebuilding/importing samples. For performance-related changes, state verification necessity and reasons under the [performance workflow](docs/performance/WORKFLOW.md).
-- Notification changes must meet [lifetime rules](docs/product.md#提示与错误反馈) and [timing regressions](docs/verification.md#提示计时与准备选择). Persistence changes require inventorying all readers/writers and old-format compatibility; cover normal reopening and closure/interruption during each affected operation.
-- For visible frontend changes, provide the [preview workflow](docs/development-plan.md#前端预览与反馈流程) without reminders; record availability, limits and recovery.
-- Codex runs commands, measurements and statistics; users assess the experience in consolidated acceptance. Distinguish code completion, local models, standalone browsers, real Eagle and manual observation; label failures, untested claims and inferences. Claim passage only within the scope supported by evidence and required acceptance; commits do not replace acceptance.
-- Preserve original evidence with source/time/conditions. Recalculations/retests create separate bounded records; never overwrite old records. Do not raise quotas or delete old evidence to make room without authorization. Preserve archived prototypes within existing boundaries. Retrospectives briefly separate practices, mistakes and verified corrections; do not present unverified methods as successful workflows.
-- At completion, synchronize affected document bodies/navigation and explain unaffected/frozen files. Clear temporary outputs promptly under [F-01–F-07](docs/development-plan.md#文件整理f-01f-07), checking paths, ownership, identity, use and bounded receipts. Protect unknown files, active directories, required evidence and sole delivery packages; Git ignore is not deletion permission.
-- Follow [Git boundaries](docs/development-plan.md#git提交边界): commit complete, independently checkable changes, not each message/edit. Before committing run node scripts/check-handoff.cjs --base HEAD; afterwards run node scripts/check-handoff.cjs --require-clean. Exclude other tasks, commit without reminders, never push automatically; report the short hash and unverified items.
+## Workflow
+- Read the [project map](docs/project-profile.md) and [handoff](docs/progress.md), then relevant topics and local AGENTS. Re-read changed files; do not read all history by default.
+- Define scope and completion criteria before editing; register goals, steps and budgets for multi-stage work. Continue approved implementation, checks and repairs. Pause only dependent work for necessary acceptance, unresolved major choices or unapproved restricted actions.
+- For unfamiliar technology, compatibility questions or unexplained failures, check local evidence and version-matched primary sources. Follow [development-plan.md: investigation](docs/development-plan.md#调查与受阻处理): separate goals from hypotheses, check prerequisites, and stop unchanged retries without new evidence. Never bypass permissions.
+
+## Validation and delivery
+- Run affected checks in [verification.md](docs/verification.md), including applicable notification, persistence and performance checks. Confirm side effects and approved directories/budgets; do not default to old experiments, resets or sample generation/imports.
+- Proactively provide interactive previews for visible frontend changes, using built-in official Browser Use. Follow [development-plan.md: preview and browser rules](docs/development-plan.md#前端预览与反馈流程) for isolation, browser selection, availability and recovery; never use mouse control.
+- Completion requires agreed criteria and necessary acceptance, with evidence and remaining limits recorded. Separate implementation, models, browsers, real Eagle and owner feedback; commits or task switches do not imply passage. Apply [development-plan.md: acceptance and handoff](docs/development-plan.md#状态接续与冲突).
+- Reply briefly in Chinese; explain necessary jargon. Codex runs checks and measurements; the owner assesses experience. Commit complete units locally under [development-plan.md: Git](docs/development-plan.md#git提交边界), preserving other work; never push automatically. Report changes, checks, limits and the short hash.
+
+## Maintenance
+- Keep durable rules here; merge evidence-supported recurring lessons into their owning documents and explain changes. Follow [development-plan.md: maintenance](docs/development-plan.md#文档维护机制) for synchronization, language and rule replacement, not dated patches.
+- Verify files and target headings/lines before citing. Scripts check structure and links, not semantic correctness or chat-link usability.
+- Clean task outputs under [development-plan.md: F-01–F-07](docs/development-plan.md#文件整理f-01f-07), protecting required evidence, archived prototypes and sole delivery packages. Git ignore is not deletion permission.
