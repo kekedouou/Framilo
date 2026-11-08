@@ -1,29 +1,25 @@
 # 当前交接
 
-当前任务：README-RELEASE
-任务状态：已完成
+当前任务：RELEASE-DOCS
+任务状态：进行中
 产品阶段：首个正式版本的上架前整体审查
-维护记录：[正式版GitHub说明与远端同步](progress/development-history.md#2026-11-08-正式版github说明与远端同步)
+维护记录：[包内说明与审核数据文档](progress/development-history.md#2026-11-08-包内说明与审核数据文档)
 候选提交：75f4691
 工作区登记：[保留清单](workspace-exceptions.json)
 
 ## 目标与授权
 
-负责人批准GitHub README优化方案，明确最低Eagle 4.0 Build 22，并要求更新为首个正式版本的长期说明，不写“尚未上架”等过渡措辞；授权将当前仓库提交到origin/main。本轮基线89553ef，工作区干净。只更新根README及必要交接/历程，不修改包内README、运行代码或已导出插件，不打包、不发tag/Release、不代为投稿。
+负责人批准三份完整草稿，要求更新包内README、保存审核说明和数据说明、补齐链接，重新打包替换旧版本且dist仅保留最新包，日常插件数据不动。基线166ff35，工作区干净。本轮仅本地文档、独立发布副本及必要核验；不继承上一轮推送授权，不修改运行代码、安装/运行Eagle或G盘导出件，不写素材库。
 
 ## 方案、步骤与预算
 
-保留完整功能介绍，补全正式安装、快捷键/轮盘、性能限制及数据提醒；开发用法从公开入门流程撤下，反馈只留一句GitHub Issues。3060个人体验仅放GitHub，原视频与插件画质均为2K，不进入已定稿商店说明。文案保留真实限制，不将正式版说明措辞当成商店审核证据。
+包内README继续由docs/releases/framilo-package-readme.md提供；审核说明保存为framilo-review-notes.md，完整数据说明保存为framilo-data.md，同处docs/releases。审核说明链接包内模板及数据说明，GitHub根README改链完整数据说明，开发使用导航接入两份材料。只把包内README放入ZIP，其余为仓库/投稿材料，避免重复塞入安装包；保留全部许可证和固定商店UUID。
 
-步骤：核对远端及待推送范围→更新README→核对链接/文案/受影响打包回归→文档检查/本地提交→正常快进推送main并核对远端SHA。远端起点2b1aeee，已fetch确认无分叉，本地领先5提交；本轮没有新增媒体、安装包或证据文件。沿用dist只保留最新已核验发布版的规则，忽略的用户数据及ZIP不提交。
+步骤：保存批准正文/补链接→文档与既有打包回归→本地提交→白名单构建新包→比较前后包（只允许README、BUILD-INFO变化）并检查数据排除/许可→核对旧目录无数据/链接/活动进程后清理→同步实际回执/本地提交。dist总预算256MiB，verification-runs/release-docs证据≤1MiB，不生成媒体。旧替换目标仅dist/framilo-1.0.0-store-review.1-75f4691-win-x64目录、ZIP和.sha256；旧ZIP SHA256为0b459be63aee80c55cf96f9effcce021bb3b5d04818958ae3eb8f9838bfffaeb，待新包通过后才删除。若策略拒绝删除，不绕过，明确交由负责人手动处理。
 
 ## 完成条件与接续
 
-README内容/链接校对、check-docs、check-handoff及差异检查通过；private-package、26项native-experience-package和19项release-package回归通过。README提交f932871已正常快进推送origin/main（2b1aeee→f932871），ls-remote与本地完整SHA一致；本次完成记录随后一并提交推送，最终SHA以Git及交付回复为准。工作区无其它任务差异，未重新打包。
-
-唯一候选仍为[75f4691发布ZIP](../dist/framilo-1.0.0-store-review.1-75f4691-win-x64.zip)，其来源、摘要和G盘.eagleplugin核验见[清理记录](progress/development-history.md#2026-11-08-旧发布产物清理核验)。本轮不改变包内容。真实安装运行及商店审核结果未新增证据，见[验收登记](acceptance.md)。
-
-商店说明已在对话中定稿；其余包内README、审核补充及完整数据说明后续单独收尾。当前根README的数据细则链接复用已有产品规范，不创建尚未核对的新链接。
+完成条件为新包正文、运行文件/许可证/UUID不变、无偏好/圈画/缓存、链接及摘要通过，dist仅余最新目录/ZIP/摘要，日常永久数据核对不变。新包完成后由负责人导出.eagleplugin，再做最终包检查；实际导出、安装和商店审核不能用本地检查替代。
 
 ## 前端预览恢复
 
