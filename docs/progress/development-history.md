@@ -4,7 +4,13 @@
 
 ## 2026-11-08 兼容性更新推送与重新打包
 
-负责人授权把兼容性更新推送origin/main，并重新打包替换项目dist中的旧ZIP，随后由负责人导出.eagleplugin供最终检查。基线252d57f；沿用原1.0.0/store-review打包配方，只同步包内README的Windows x64、Eagle 4.0 Build 22最低要求和缺失接口恢复提示。源码/库/偏好不动，不发tag、GitHub Release或商店提交；步骤和目录预算见[交接](../progress.md)，实际交付结果待补齐。
+负责人授权把兼容性更新推送origin/main，并重新打包替换项目dist中的旧ZIP，随后由负责人导出.eagleplugin供最终检查。基线252d57f；沿用原1.0.0/store-review打包配方，只同步包内README的Windows x64、Eagle 4.0 Build 22最低要求和缺失接口恢复提示。源码/库/偏好不动，不发tag、GitHub Release或商店提交；步骤和目录预算见[交接](../progress.md)，实际交付结果如下。
+
+交付：5858cf17942016bf02db3b950edd24759f92c762生成dist/framilo-1.0.0-store-review.1-5858cf1-win-x64.zip，4518583字节，SHA256 `d5e108e1f3f4167e0f30f13861ac6650351a5b2d85703c6130609d01758590b3`。73运行文件逐一与该提交或原生保护构建身份匹配，75个ZIP条目、132依赖包/68许可文本检查通过。首次额外比较将工作区CRLF与Git归档LF直接比较而停止替换；查证只有换行差异后改为对照精确Git blob，全部匹配，没有改动运行代码。打包脚本语法、private-package、文档和交接检查通过；复用上一轮完整回归，无无关媒体重测。
+
+替换：原0fa8818 ZIP的SHA256与历史记录9b567546…9a40一致；新包通过后仅删除该旧ZIP及.sha256，保留旧展开目录、用户数据及G盘历史导出件。verification-runs/eagle-compatibility-package/{build,source-check,replacement}.json保存来源、摘要和删除范围，约2KiB，未超2MiB预算；原始历史交付记录不改写。新普通ZIP仍不是.eagleplugin，等待负责人导出后最终检查。
+
+远端：使用push.followTags=false正常快进推送main，cc27440→5858cf1，ls-remote核对一致；文档收尾后继续同步并核对最终HEAD。不强推、不发tag或Release，不把远端推送视作商店发行；本包未新增真实Eagle安装验收。
 
 ## 2026-11-08 最低版本与接口提示
 
