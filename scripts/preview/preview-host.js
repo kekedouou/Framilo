@@ -12,6 +12,11 @@
  const label=document.createElement('span');label.textContent='交互预览 · 示例数据';label.title='正式UI与Session；浏览器样本播放。不能验证原生编解码、帧精度、性能或Eagle保存。';
  const reset=document.createElement('button');reset.textContent='重置示例';reset.onclick=async()=>{if(session.hasDrawingDraft()&&!await ui.confirmDrawingExit())return;await session.close();sessionStorage.removeItem(storageKey);location.reload();};if(dense)label.textContent='交互预览 · 密集标注示例';bar.append(label,reset);document.body.append(bar);
  ui=EVAUI.createUI({hostAction:async action=>{if(action==='fullscreen'){if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}else label.textContent='预览不支持原生窗口操作；请在Eagle中体验';}});await ui.prepareEntry();
+ if(scenario==='eagle-version'||scenario==='eagle-interface'){
+  label.textContent='兼容性提示预览 · 模拟错误，不连接 Eagle';reset.hidden=true;
+  const message=scenario==='eagle-version'?'当前 Eagle 4.0 Build 21 版本过低。Framilo 需要 Eagle 4.0 Build 22 或更高版本，请升级 Eagle 后重新打开。':'当前 Eagle 缺少标注读取接口。请使用 Eagle 4.0 Build 22 或更高版本，并重启 Eagle 后再打开 Framilo。';
+  ui.update({state:'error',source:null,duration:0,playback:null,error:{message}});return;
+ }
  if(scenario==='e60-reopen'){
   ui.destroy({closing:true});ui.update({state:'closing',reopening:true,error:null});
   const button=document.querySelector('[data-eva-closing] button');button.onclick=()=>{ui.update({state:'closing',reopening:false,error:null});button.disabled=true;button.title='预览仅展示取消重开后的提示；实际关闭需在Eagle验证';};

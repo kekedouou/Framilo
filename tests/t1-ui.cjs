@@ -31,6 +31,15 @@ function harness({gpuCheckbox=false}={}) {
   ui.bindSession(session); ui.update(state);
   return { ui, el: id => doc.getElementById(id), win, calls, state, doc };
 }
+test('Compatibility errors persist across timer ticks and clear only on recovery',()=>{
+ const h=harness(),timers=new Map();let serial=0;
+ h.win.setTimeout=fn=>{timers.set(++serial,fn);return serial;};h.win.clearTimeout=id=>timers.delete(id);
+ const message='当前 Eagle 缺少标注读取接口。请使用 Eagle 4.0 Build 22 或更高版本，并重启 Eagle 后再打开 Framilo。';
+ const failed={...h.state,state:'error',error:{message}};h.ui.update(failed);
+ for(const fn of [...timers.values()])fn();timers.clear();h.ui.update(failed);
+ assert.equal(h.el('error').hidden,false);assert.equal(h.el('error').textContent,message);
+ h.ui.update({...h.state,error:null});assert.equal(h.el('error').hidden,true);assert.equal(h.el('error').textContent,'');h.ui.destroy();
+});
 test('E46 proxy progress and one-shot completion fade work without the retired manual proxy controls',()=>{
  const h=harness(),timers=new Map();let serial=0;
  h.win.setTimeout=fn=>{timers.set(++serial,fn);return serial;};h.win.clearTimeout=id=>timers.delete(id);

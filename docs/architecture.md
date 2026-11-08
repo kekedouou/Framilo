@@ -32,7 +32,7 @@ app装配/宿主生命周期 → UI发操作 → Session持有库/源快照和�
 | plugin/context-wheel.js | 观看/圈画右键方向选择、单次打开预建并复用类型/颜色外圈、悬停取消及销毁；通过UI调用既有操作，无媒体或Eagle访问 |
 | plugin/preview-profile.cjs | 720p/1080p/1440p/2160p预览尺寸与身份；共用原缓存预算，不放大小源 |
 | plugin/session.cjs | 素材/库快照、状态与任务所有权，协调适配、准备、缓存和播放 |
-| plugin/eagle.cjs | 唯一素材/标注 API 边界；独立读回，不直接写 metadata.json |
+| plugin/eagle.cjs | 唯一素材/标注 API 边界；读取选中前用同步app.version/build识别明确低于4.0 Build 22的宿主，未知版本交由按操作接口检查；缺失接口提示与非法数据分开。独立读回，不直接写 metadata.json |
 | plugin/export.cjs、export-work/ | 源视频图片/片段导出、本次暂存及本地保存；由既有后台任务执行，暂存累计1GiB、正常结束清本次，异常/导入未知保留核对，不受预览缓存清理器删除 |
 | plugin/media.cjs | 只读源媒体、分析和 FFmpeg；转发proxyBudget/closeProxyBatch，通过缓存句柄受限写入，不自行淘汰目录 |
 | plugin/media-wire.cjs | 整数PTS/共同时间基准/显式结束时间的紧凑控制协议，≤6MiB/120000帧、摘要/版本检查及无损重建；不读素材或改源SHA |

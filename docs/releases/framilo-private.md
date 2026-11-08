@@ -4,7 +4,7 @@
 
 ## 打开与使用
 
-Windows x64、Eagle 4.0 Build 22+和Eagle的FFmpeg依赖模块即可使用，无需另装Rust或Node.js。尚未安装依赖时，在Eagle插件中心搜索并安装FFmpeg；插件清单已声明该依赖，Eagle可在安装插件时提示准备它，插件自身不下载或内置FFmpeg/ffprobe。内置的FilmCraft原生组件不是FFmpeg模块。依赖读取与缺失提示沿用现有实现；契约见[官方FFmpeg文档](https://developer.eagle.cool/plugin-api/zh-cn/extra-module/ffmpeg)。在Eagle选中视频，打开Framilo。未选素材时先回Eagle选中，再重新调用插件。
+Windows x64、Eagle 4.0 Build 22+和Eagle的FFmpeg依赖模块即可使用，无需另装Rust或Node.js。尚未安装依赖时，在Eagle插件中心搜索并安装FFmpeg；插件清单已声明该依赖，Eagle可在安装插件时提示准备它，插件自身不下载或内置FFmpeg/ffprobe。内置的FilmCraft原生组件不是FFmpeg模块。版本明确低于4.0 Build 22时会提示升级并停止加载素材；缺少选中/标注/FFmpeg接口时提示版本要求与重启办法，FFmpeg未安装仍单独提示安装，不提供旧版降级存储。契约见[官方FFmpeg文档](https://developer.eagle.cool/plugin-api/zh-cn/extra-module/ffmpeg)。在Eagle选中视频，打开Framilo。未选素材时先回Eagle选中，再重新调用插件。
 
 常用入口：MP4/M4V、MOV、MKV、WebM；不同文件的实际兼容情况见[能力表](motionote-capabilities.md)。首次画质随屏幕选择1080p/2K/4K，已有偏好保留、不放大小源；默认显示圈画工具条。原片先播放，代理后台准备。超过1 GB的临时媒体预计占用会询问是否继续；不继续仍可播放原片。
 

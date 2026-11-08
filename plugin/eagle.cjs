@@ -10,13 +10,29 @@ function selectionError(code, message, diagnostics) {
   return error;
 }
 function toolError(code, message) { const error = new Error(message); error.code = code; return error; }
+const compatibilityHelp = '请使用 Eagle 4.0 Build 22 或更高版本，并重启 Eagle 后再打开 Framilo。';
+function missingInterface(label) { return '当前 Eagle 缺少' + label + '接口。' + compatibilityHelp; }
+function unsupportedVersion(api) {
+  // These are synchronous SDK properties. Unknown metadata is not proof of an
+  // old host; operation-specific capability checks remain authoritative.
+  let version, build;
+  try { const app = api && api.app; version = app && app.version; build = app && app.build; } catch (_) { return null; }
+  if (typeof version !== 'string' || !/^\d+\.\d+(?:\.\d+)*$/.test(version)) return null;
+  const [major, minor] = version.split('.').map(Number);
+  if (!Number.isSafeInteger(major) || !Number.isSafeInteger(minor)) return null;
+  const number = typeof build === 'number' ? build : typeof build === 'string' && /^\d+$/.test(build) ? Number(build) : NaN;
+  const knownBuild = Number.isSafeInteger(number) && number >= 0;
+  if (major < 4 || major === 4 && minor === 0 && knownBuild && number < 22)
+    return '当前 Eagle ' + version + (knownBuild ? ' Build ' + number : '') + ' 版本过低。Framilo 需要 Eagle 4.0 Build 22 或更高版本，请升级 Eagle 后重新打开。';
+  return null;
+}
 async function discoverTools(eagleApi, options = {}) {
   const io = options.fs || fs;
   let module, installed, paths;
   try {
     module = eagleApi && eagleApi.extraModule && eagleApi.extraModule.ffmpeg;
     if (!module || typeof module.isInstalled !== 'function' || typeof module.getPaths !== 'function')
-      throw toolError('TOOLS_API_UNAVAILABLE', '当前 Eagle 没有可用的 FFmpeg 工具读取接口。');
+      throw toolError('TOOLS_API_UNAVAILABLE', missingInterface(' FFmpeg 工具读取'));
     // Public SDK wraps its internal module in asynchronous IPC calls. Await
     // both forms, preserving the receiver; never install or write to Eagle.
     installed = await module.isInstalled.call(module);
@@ -200,6 +216,7 @@ function guardLibrary(api, expected) {
   return current;
 }
 function cloneComments(value) {
+  if (value === undefined) throw commentError('COMMENTS_API_UNAVAILABLE', missingInterface('标注读取'));
   if (!Array.isArray(value)) throw commentError('COMMENTS_INVALID', 'Eagle标注返回异常，未将它当作空列表。');
   const ids = new Set();
   return Object.freeze(value.map(item => {
@@ -213,7 +230,7 @@ function cloneComments(value) {
 }
 async function commentItem(api, source, expectedLibrary, options, waitForCompletion = false) {
   const selected = validateSnapshot(source), context = guardLibrary(api, expectedLibrary);
-  if (!api.item || typeof api.item.getById !== 'function') throw commentError('COMMENTS_API_UNAVAILABLE', '当前Eagle没有标注读取接口。');
+  if (!api.item || typeof api.item.getById !== 'function') throw commentError('COMMENTS_API_UNAVAILABLE', missingInterface('标注读取'));
   const pending = api.item.getById(selected.id);
   const item = await (waitForCompletion ? pending : commentDeadline(pending, options));
   guardLibrary(api, context);
@@ -258,7 +275,7 @@ async function saveComment(api, proposal, settings = {}, options = {}) {
       if (existing.length) return proposal.reuseSameFrame ? { status: 'saved', commentId: existing[0].id, items: before, reused: true, message: '已关联当前帧已有文字。' }
         : { status: 'failed', items: before, message: '当前帧已在Eagle添加文字，请取消后按N修改已有标注；你的输入仍保留。' };
     }
-    if (typeof result.item.addComment !== 'function') throw commentError('COMMENT_WRITE_UNAVAILABLE', '当前Eagle没有时间点标注添加接口。');
+    if (typeof result.item.addComment !== 'function') throw commentError('COMMENT_WRITE_UNAVAILABLE', missingInterface('标注添加'));
     guardLibrary(api, proposal.libraryPath);
     if (settings.isCurrent && !settings.isCurrent()) throw commentError('COMMENT_SUPERSEDED', '原提案已失效，未发送标注。');
     attempt = Object.freeze({ source: Object.freeze({ ...proposal.source }), libraryPath: result.libraryPath,
@@ -296,7 +313,7 @@ async function mutateComment(api, proposal, settings, options) {
         original.revision !== undefined && target.revision !== original.revision)
       return { status: 'failed', items: before, message: '这条标注已被其他操作修改或删除。列表已刷新，请取消后重新选择。' };
     const method = proposal.kind === 'edit' ? result.item.updateComment : result.item.removeComment;
-    if (typeof method !== 'function') throw commentError('COMMENT_WRITE_UNAVAILABLE', '当前Eagle没有可用的标注修改或删除接口。');
+    if (typeof method !== 'function') throw commentError('COMMENT_WRITE_UNAVAILABLE', missingInterface(proposal.kind === 'edit' ? '标注修改' : '标注删除'));
     const guard = () => {
       guardLibrary(api, proposal.libraryPath);
       if (settings.isCurrent && !settings.isCurrent()) throw commentError('COMMENT_SUPERSEDED', '原标注操作已失效，未发送修改。');
@@ -348,10 +365,12 @@ function captureSelected(eagleApi, options = {}) {
     return selectionError(code, message, diagnostics);
   };
   let itemApi, method, response;
+  const versionIssue = unsupportedVersion(eagleApi);
+  if (versionIssue) return Promise.reject(rejected('EAGLE_VERSION_UNSUPPORTED', versionIssue));
   try {
     itemApi = eagleApi && eagleApi.item; method = itemApi && itemApi.getSelected;
   } catch (error) { return Promise.reject(rejected('SELECTION_API_UNAVAILABLE', '读取 Eagle 选中 API 失败：' + String(error && error.message || error).slice(0, 512))); }
-  if (typeof method !== 'function') return Promise.reject(rejected('SELECTION_API_UNAVAILABLE', '当前环境没有 Eagle 选中素材读取 API。'));
+  if (typeof method !== 'function') return Promise.reject(rejected('SELECTION_API_UNAVAILABLE', missingInterface('选中素材读取')));
   // Invoke immediately, before the caller's serial load/cancel/dispose queue.
   // Preserve the official receiver and use exactly this one API, without fallback.
   diagnostics.stage = 'api-call'; diagnostics.attempts = 1;

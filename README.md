@@ -24,6 +24,8 @@ Framilo 是 Eagle 中的视频参考与标注播放器。逐帧观察动作，�
 
 需要 Windows x64、Eagle 4.0 Build 22+ 和 Eagle 的 FFmpeg 模块；使用时不用另装 Node.js 或 Rust。缺少 FFmpeg 时，可在 Eagle 插件中心安装。
 
+不支持 Build 22 之前的 Eagle。版本过低会提示升级；若提示缺少接口，请确认版本符合要求并重启 Eagle 后重新打开 Framilo。
+
 当前版本为 1.0.0，处于首轮上架前整体审查，尚未公开发行，也不代表最终以此版本上架。已在 Eagle 注册本仓库插件的用户：
 
 1. 在 Eagle 选中一个本地视频。

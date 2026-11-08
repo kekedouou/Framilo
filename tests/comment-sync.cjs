@@ -37,6 +37,7 @@ function harness(settings = {}) {
       } finally { h.activeReads--; }
     }
   } };
+  h.api = api;
   h.adapter = createEagleAdapter(api, { commentTimeoutMs: 50 });
   h.session = createSession({ eagleAdapter: h.adapter, commentTimers: h.clock,
     media: { async prepare(selected) { h.preparations++; return { source: { ...selected, sha256: 'a'.repeat(64) }, duration: 4,
@@ -58,6 +59,23 @@ function harness(settings = {}) {
 let count = 0;
 async function test(name, run) { await run(); count++; console.log('ok ' + name); }
 (async () => {
+  await test('Missing write capability preserves the draft and sends no write; recovery saves once', async () => {
+    const h=harness();await h.load();await h.session.editComment('note');h.session.setCommentText('接口恢复前保留的草稿');
+    const lookup=h.api.item.getById;
+    h.api.item.getById=async id=>{const item=await lookup(id);delete item.updateComment;return item;};
+    const result=await h.session.saveComment();assert.equal(result.status,'failed');assert.equal(h.writes.length,0);
+    assert.equal(h.session.snapshot().comments.draft.text,'接口恢复前保留的草稿');assert.match(result.message,/Eagle 4\.0 Build 22/);
+    await h.clock.advance(5000);assert.equal(h.session.snapshot().comments.draft.text,'接口恢复前保留的草稿');
+    h.api.item.getById=lookup;assert.equal((await h.session.saveComment()).status,'saved');assert.equal(h.writes.length,1);
+    assert.equal(h.session.snapshot().comments.draft,null);await h.close();
+  });
+  await test('Missing read capability keeps existing records and reports a persistent sync error', async () => {
+    const h=harness();h.visible();await h.load();const items=h.session.snapshot().comments.items,lookup=h.api.item.getById;
+    h.api.item.getById=async id=>{const item=await lookup(id);delete item.comments;return item;};
+    await h.clock.advance(3000);const state=h.session.snapshot();
+    assert.strictEqual(state.comments.items,items);assert.match(state.comments.syncMessage,/Eagle 4\.0 Build 22/);
+    assert.equal(h.preparations,1);assert.equal(h.writes.length,0);await h.close();
+  });
   await test('Visible polling imports native additions, edits and removals without preparing, seeking or pausing video', async () => {
     const h = harness(); h.visible(); await h.load(); await h.session.play();
     h.rows.A.push({ id: 'new', duration: 2, annotation: '外部新增' }); await h.clock.advance(1000);
