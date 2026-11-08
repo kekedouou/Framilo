@@ -14,6 +14,8 @@
 
 负责人随后回复“清理完成”。基线a10a9dc只读复核：annotation-data、memory-settings.json及performance-reports已不存在，cache/export-work仅余空目录，个人数据文件清理完成，由负责人执行，不归功于代理。G盘备份2960文件完整解压校验及ZIP摘要再次通过，新581bca6发布包verify与原摘要一致；结果保存于verification-runs/release-consolidate/cleanup-followup.json。dist仍有新旧三套共9项，已明确告知75f4691/d6bbe41六个旧项目尚未移除；记录同步远端，保留该清理待办，不宣称dist仅最新。
 
+负责人再次明确dist旧版本已删除。基线28b1033复核dist精确剩余581bca6展开目录、ZIP及.sha256三项，75f4691/d6bbe41旧六项均不存在；package-private verify通过，ZIP SHA256仍为5cea22b5b006f760591bb8c8e2a2dafa11d121612058fea1d5e17bf96883a348。回执verification-runs/release-consolidate/dist-cleanup-confirmed.json；删除由负责人执行，代理未重新打包、修改运行代码或私人备份。本轮合并/打包/备份/清理完成，更新交接与验收并同步记录；后续.eagleplugin检查及商店审核保持独立待办。
+
 ## 2026-11-08 包内说明与审核数据文档
 
 负责人确认三份草稿，授权更新包内README、保存审核/数据说明、补链接，重新打包替换旧发布产物并保护日常数据。基线166ff35，工作区干净；范围和目录预算登记于当前交接。本轮只做文档及本地包，不改播放器、不安装/运行Eagle、不写库、不推送或修改G盘导出件。
