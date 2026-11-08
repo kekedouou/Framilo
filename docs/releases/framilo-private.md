@@ -19,7 +19,7 @@ Windows x64、Eagle 4.0 Build 22+和Eagle的FFmpeg依赖模块即可使用，无
 
 正式包内README正文由[发布说明模板](framilo-package-readme.md)提供，store-review构建读取同一来源提交中的模板；开发使用/恢复说明不再注入正式包README。导出.eagleplugin使用独立、未运行过的干净发布副本；日常使用目录的偏好、圈画和缓存不要随包复制，也不要为打包删除日常数据。运行过发布副本后应重新核对再导出。
 
-[审核说明](framilo-review-notes.md)用于投稿补充，[数据说明](framilo-data.md)集中维护公开的保存、清理与备份规则；两者保存在仓库，未重复加入安装包。审核说明引用包内README验证步骤，GitHub入口引用完整数据说明。
+运行条件、验证步骤、本地进程与许可、完整数据规则统一维护在[包内README模板](framilo-package-readme.md)，构建时完整写入包根README.md，审核无需访问GitHub即可阅读。根README链接其中[数据说明](framilo-package-readme.md#数据说明)，不再单独维护审核/数据重复正文。
 
 商店身份固定为 `65709e49-3320-4c75-8925-526e55dd0ecb`（UUID v4），仅store-review打包时写入manifest和BUILD-INFO；后续商店版本保持此ID，不每次生成。日常plugin/私人快照保留 `EVAVIDEOANALYSIS20261011`，本地可载入不等于商店接受其ID。首次商店包是另一插件身份，不自动接管旧开发入口、圈画或偏好；不要为此卸载旧入口或清理它的数据，也不要同时用两个入口编辑同一素材。文字标注仍由Eagle素材管理。无自动迁移功能，不能把此包称为旧开发入口的原位升级。
 
