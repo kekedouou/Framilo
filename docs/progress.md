@@ -1,7 +1,7 @@
 # 当前交接
 
 当前任务：README-RELEASE
-任务状态：进行中
+任务状态：已完成
 产品阶段：首个正式版本的上架前整体审查
 维护记录：[正式版GitHub说明与远端同步](progress/development-history.md#2026-11-08-正式版github说明与远端同步)
 候选提交：75f4691
@@ -19,7 +19,7 @@
 
 ## 完成条件与接续
 
-完成条件为README内容/链接校对、文档及受影响检查通过、本地提交与远端main一致。当前仍在执行，不以计划代替推送成功。
+README内容/链接校对、check-docs、check-handoff及差异检查通过；private-package、26项native-experience-package和19项release-package回归通过。README提交f932871已正常快进推送origin/main（2b1aeee→f932871），ls-remote与本地完整SHA一致；本次完成记录随后一并提交推送，最终SHA以Git及交付回复为准。工作区无其它任务差异，未重新打包。
 
 唯一候选仍为[75f4691发布ZIP](../dist/framilo-1.0.0-store-review.1-75f4691-win-x64.zip)，其来源、摘要和G盘.eagleplugin核验见[清理记录](progress/development-history.md#2026-11-08-旧发布产物清理核验)。本轮不改变包内容。真实安装运行及商店审核结果未新增证据，见[验收登记](acceptance.md)。
 

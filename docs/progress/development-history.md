@@ -10,7 +10,7 @@
 
 远端预检：fetch origin/main（不拉取tag）后确认起点2b1aeee，本地领先5提交、无分叉；待同步内容是此前UUID修复、打包校验、干净副本及清理规则，未跟踪dist、偏好、缓存或圈画。完成需文档与适用打包检查、差异核对、本地提交、普通快进推送并验证远端SHA，不以README措辞宣称商店审核通过。
 
-本地完成：根README保留完整功能介绍，补全正式安装、格式/兼容性、快捷键及轮盘，集中性能/数据限制；移除上架准备和开发目录更新措辞、历史版本入口、自指GitHub链接。Issues仅一句，保留真实已知问题与许可边界。check-docs、check-handoff --base HEAD、git diff --check通过；待同步打包逻辑的private-package、26项native-experience-package及19项release-package回归通过。只读复核ZIP与G盘.eagleplugin SHA分别仍为0b459be6…fffaeb、aefde324…948c2，未重打包或改写。远端推送及核对结果在完成后补记。
+本地完成：根README保留完整功能介绍，补全正式安装、格式/兼容性、快捷键及轮盘，集中性能/数据限制；移除上架准备和开发目录更新措辞、历史版本入口、自指GitHub链接。Issues仅一句，保留真实已知问题与许可边界。check-docs、check-handoff --base HEAD、git diff --check通过；待同步打包逻辑的private-package、26项native-experience-package及19项release-package回归通过。只读复核ZIP与G盘.eagleplugin SHA分别仍为0b459be6…fffaeb、aefde324…948c2，未重打包或改写。远端：以push.followTags=false正常快进推送main，2b1aeee→f93287112abcc01a32f37a674ac563e3b5e33d6a，ls-remote与本地SHA一致；同步此前5个未推送提交及本次README提交。完成回执随后一并同步，不发tag/Release，不以仓库推送等同商店上架。
 
 ## 2026-11-08 旧发布产物清理核验
 
