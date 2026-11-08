@@ -8,6 +8,10 @@
 
 沿用已有README模板和73运行文件白名单；审核/数据说明仅作为仓库与投稿材料，不新增包内重复文档。新增两份文件分别负责审核核验信息、完整数据规则；根README及开发使用导航补入引用。新包必须与75f4691基线仅README和BUILD-INFO有差异，固定UUID、运行文件和许可保持；新包验证后才清理已核对旧目录/ZIP/摘要。日常偏好与圈画只读哈希快照位于verification-runs/release-docs/daily-data-before.json，清理不能指向plugin或G盘。
 
+完成文档提交d6bbe41358a91375fcbeff0c9a43191a75249c86后从干净提交构建，新ZIP为framilo-1.0.0-store-review.1-d6bbe41-win-x64.zip，4518427字节，SHA256为2cf02d172efda728bbeab3f605dde92c3029dd6160ad353ebcde7786c2584263。check-docs、check-handoff、diff检查、private-package回归及新旧package-private verify通过。前后75文件逐字节比较仅README、BUILD-INFO变化，73运行文件、固定UUID和许可不变；132依赖包/68许可文本闭包通过，无偏好、圈画或缓存。日常37个永久数据文件哈希/数量一致，G盘导出件SHA256仍为aefde32474003093e3d7a1a83969d669a6b23aafbfdabd4fe42cdcf2780948c2。证据见verification-runs/release-docs/build.json及content-check.json。
+
+旧75f4691目录与ZIP逐文件一致，无额外文件/空目录、重解析点或活动运行引用，绝对目标均在dist内；直接PowerShell删除命令仍在执行前被工具以blocked by policy拒绝，未执行也未绕过。因此目前dist有新旧两套共6项，“仅保留最新”尚未完成，已交由负责人手动删除旧目录、ZIP及摘要并等待复核。日常plugin和G盘均未修改；本轮不推送，负责人之后从新干净副本导出.eagleplugin供最终检查。
+
 ## 2026-11-08 正式版GitHub说明与远端同步
 
 负责人认可保留完整项目介绍的README调整方案，确认最低支持Eagle 4.0 Build 22，并授权更新文档、将当前仓库推送远端。要求按首个正式插件版本写长期使用说明，不写“目前尚未上架”或等待通过后再补文案。基线89553ef，工作区干净；只修改根README及交接/本条记录，不改运行代码、包内README或发布包，不发tag/Release或代替投稿。
