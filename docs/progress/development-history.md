@@ -10,6 +10,8 @@
 
 回归先确认旧校验未拒绝非UUID导致新增测试失败，再验证固定UUID格式、重复构建稳定、旧ID/其它UUID拒绝、开发/商店身份混用拒绝、manifest只改id、BUILD-INFO身份及摘要匹配、偏好排除。private-package、26项native-experience-package和19项冻结release-package回归通过，原生/132依赖包与68许可文本沿用检查；文档初检状态枚举写成“执行中”失败，改为既有“进行中”后复验。后续构建及差异回执记录在verification-runs/store-uuid；不将本地回归记作Eagle上传成功。
 
+构建结果：来源75f46912cf1c3a726de516b4c4553241354ee01d，dist/framilo-1.0.0-store-review.1-75f4691-win-x64.zip，4518926字节，SHA256 `0b459be63aee80c55cf96f9effcce021bb3b5d04818958ae3eb8f9838bfffaeb`。75文件与旧e181e96包相比仅manifest及BUILD-INFO变化，README、播放器、二进制与全部许可逐字节不变；74项BUILD-INFO摘要、CRC、无偏好/圈画/缓存检查通过。回执verification-runs/store-uuid/{build,content-check}.json，约2KiB。G盘被拒.eagleplugin原SHA未变；保留旧包证据。文档/交接校验修正状态枚举后通过。本地修复完成，实际新身份导出/上传/安装仍待验，不推送。
+
 说明材料核查：[准备插件](https://developer.eagle.cool/plugin-api/zh-cn/distribution/prepare)要求相关特殊条件的可执行测试信息放投稿说明或包根README；[发布插件](https://developer.eagle.cool/plugin-api/zh-cn/distribution/publish)列出上传、介绍、更新内容和提交审核，并未保证存在两个名为“审核说明”“数据说明”的专用表单。[安全与隐私](https://developer.eagle.cool/plugin-api/zh-cn/plugin-review/criteria/security-and-privacy)与[商店文案](https://developer.eagle.cool/plugin-api/zh-cn/plugin-review/criteria/store-listing-copy)要求向用户说明关键数据处理条件。两份材料名称是组织方式，不是官方强制文件名；先提供负责人简明问卷，不在确认前写正式稿。
 
 ## 2026-11-08 正式包说明与干净发布副本
