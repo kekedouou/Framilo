@@ -12,6 +12,8 @@
 
 远端预检fetch main确认无分叉，待推送3个本地文档提交，已核对无个人数据被跟踪；普通快进推送166ff35→581bca6，ls-remote核对完整SHA一致，不发tag/Release。旧75f4691目标为前轮已知策略拒绝，不重复尝试或绕过；d6bbe41内容/路径核验通过，但被Notepad.exe引用，按活动文件保护暂留，通知负责人关闭并手动清理两套旧产物。个人删除拒绝后现场已有部分数据消失，尚未收到手动清理完成确认，不归功于代理。G盘备份再次摘要复核通过。最新现场：annotation-data及memory-settings.json已不存在，cache/export-work为空目录，performance-reports仍有19文件且与备份一致；dist仍新旧三套共9项。现场结果保存在忽略目录final-state.json，等待负责人完成清理后再复核，不据此声称全部完成。
 
+负责人随后回复“清理完成”。基线a10a9dc只读复核：annotation-data、memory-settings.json及performance-reports已不存在，cache/export-work仅余空目录，个人数据文件清理完成，由负责人执行，不归功于代理。G盘备份2960文件完整解压校验及ZIP摘要再次通过，新581bca6发布包verify与原摘要一致；结果保存于verification-runs/release-consolidate/cleanup-followup.json。dist仍有新旧三套共9项，已明确告知75f4691/d6bbe41六个旧项目尚未移除；记录同步远端，保留该清理待办，不宣称dist仅最新。
+
 ## 2026-11-08 包内说明与审核数据文档
 
 负责人确认三份草稿，授权更新包内README、保存审核/数据说明、补链接，重新打包替换旧发布产物并保护日常数据。基线166ff35，工作区干净；范围和目录预算登记于当前交接。本轮只做文档及本地包，不改播放器、不安装/运行Eagle、不写库、不推送或修改G盘导出件。

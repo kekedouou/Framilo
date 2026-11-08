@@ -17,13 +17,13 @@
 
 私人备份在负责人指定的G盘文件夹独立保存，包含plugin中的annotation-data、memory-settings.json、cache、export-work和performance-reports，保留未知条目及目录结构；预计16MiB，含校验清单及恢复说明，总预算64MiB。逐文件核对ZIP解压读取结果与原始数据后，仅删除已核验的精确数据目标；任何变化/链接/活动写入立即停止。Eagle文字标注和原视频属于素材库，不在插件备份内也不删除。恢复只还原圈画/偏好，不回填缓存/临时报告；原素材库路径与素材身份需保持。证据verification-runs/release-consolidate≤2MiB，不保存私人正文至受Git跟踪的文档。
 
-私人备份已完成：2960文件、15633299字节源数据，压缩后4575806字节，ZIP摘要77fe92966e917bcadab331750b21677e1c5c2ccb28349d033804e9a6714e6c91；核验记录仅保存在忽略目录verification-runs/release-consolidate。Eagle进程已退出，复制前后快照及解压字节校验一致。精确个人数据删除命令在执行前被工具以blocked by policy拒绝，未执行；已通知负责人手动移除上述5个目标，收到通知后复核。
+私人备份已完成：2960文件、15633299字节源数据，压缩后4575806字节，ZIP摘要77fe92966e917bcadab331750b21677e1c5c2ccb28349d033804e9a6714e6c91；核验记录仅保存在忽略目录verification-runs/release-consolidate。Eagle进程已退出，复制前后快照及解压字节校验一致。精确个人数据删除命令在执行前被工具以blocked by policy拒绝，未执行；负责人随后确认清理完成；复核个人文件已全部移除，仅cache/export-work空目录保留，无个人数据。
 
 ## 完成条件与接续
 
 最新交付为dist/framilo-1.0.0-store-review.1-581bca6-win-x64.zip，4519440字节，SHA256为5cea22b5b006f760591bb8c8e2a2dafa11d121612058fea1d5e17bf96883a348。合并正文在包内独立可读，75文件对比旧版仅README和BUILD-INFO变化，73运行文件/许可/UUID不变，无个人数据；文档检查、private-package回归和构建verify通过。普通快进推送已完成，远端由166ff35更新至581bca66669e720b761a00b12649cf3c65cc1ff6并核对一致，个人文件及备份均未跟踪/推送。
 
-清理仍待复核：75f4691旧产物为已知工具策略拒绝目标，未绕过重试；d6bbe41旧目录仍被Notepad进程引用，因此未删除。已通知负责人关闭对应窗口并手动删除两套旧产物，保留581bca6三项。个人数据删除拒绝后，最新复核：annotation-data及memory-settings.json已不存在，cache/export-work仅余空目录，performance-reports仍有19文件且与备份一致；不是Codex执行，等待负责人完成手动清理通知。之后由负责人从新干净副本导出.eagleplugin，继续最终核验。
+负责人确认清理完成后已只读复核：annotation-data、memory-settings.json、performance-reports均不存在，cache/export-work仅余空目录，个人数据文件清理完成；删除由负责人执行。G盘私人备份2960文件再次完整校验通过，最新发布包verify及摘要仍通过。dist旧包尚未清理，当前仍有75f4691、d6bbe41、581bca6三套共9项；已告知负责人删除前两套旧目录/ZIP/摘要，只保留581bca6三项。先前工具策略拒绝与活动文件保护不绕过，当前只剩旧发布产物清理待办。之后由负责人从新干净副本导出.eagleplugin，继续最终核验。
 
 ## 前端预览恢复
 
