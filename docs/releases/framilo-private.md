@@ -17,6 +17,8 @@ Windows x64、Eagle 4.0 Build 22+和Eagle的FFmpeg依赖模块即可使用，无
 - 你当前在Eagle载入的是本项目plugin目录。源码中的正式运行文件更新后，关闭播放器再打开即可使用；不是另外安装一个插件。名称刷新可能需要在Eagle重新打开插件面板。
 - 当前ZIP按framilo-1.0.0-store-review.1-来源提交-win-x64命名，表示首轮上架前审查快照，不是官方.eagleplugin安装包；后者由Eagle“打包插件”生成。审查包只含运行文件、原生程序、第三方许可和说明，不含素材、偏好、圈画、本轮IME诊断工具/开关或实验。完整解压后可载入含manifest.json的目录；同ID不要并行注册两个副本。包内BUILD-INFO记录来源提交、摘要和未获商店提交批准的状态；Git推送不是发行或上架。
 
+正式包内README正文由[发布说明模板](framilo-package-readme.md)提供，store-review构建读取同一来源提交中的模板；开发使用/恢复说明不再注入正式包README。导出.eagleplugin使用独立、未运行过的干净发布副本；日常使用目录的偏好、圈画和缓存不要随包复制，也不要为打包删除日常数据。运行过发布副本后应重新核对再导出。
+
 ## 回退
 
 日常更新直接作用于本仓库plugin，不需要每轮新包、程序快照或搬迁目录。关闭播放器再打开即可；不覆盖annotation-data、memory-settings.json和未知文件。只有明确的发行/安装恢复验证任务才打包，详见[开发流程](../development-plan.md#日常运行与发行)。
