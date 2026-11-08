@@ -9,21 +9,32 @@ function git(args){const r=spawnSync('git',args,{cwd:ROOT,windowsHide:true,maxBu
 function safe(file,dir=false){const s=fs.lstatSync(file);assert(!s.isSymbolicLink()&&(dir?s.isDirectory():s.isFile())&&fs.realpathSync(file).toLowerCase()===path.resolve(file).toLowerCase()&&(dir||s.nlink===1),'Unsafe package path');return s;}
 function read(file){const s=safe(file);assert(s.size<=pack.NATIVE_LIMIT,'Oversize package input');const b=fs.readFileSync(file),after=safe(file);assert.equal(s.ino,after.ino);assert.equal(s.mtimeMs,after.mtimeMs);assert.equal(b.length,s.size);return b;}
 function inventory(dir){safe(dir,true);const out=[];for(const n of fs.readdirSync(dir)){const f=path.join(dir,n),s=fs.lstatSync(f);assert(!s.isSymbolicLink(),'Links refused');if(s.isDirectory())out.push(...inventory(f).map(p=>n+'/'+p));else{safe(f);out.push(n);}}return out.sort();}
-function manifestCheck(m){assert.equal(m.id,ID);assert.equal(m.platform,'win');assert.equal(m.arch,'x64');assert(/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(m.version));}
+function manifestCheck(m,profile='private'){
+ assert(['private','store-review'].includes(profile),'Unknown package profile');
+ if(profile==='store-review')assert(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(m.id),'Store plugin ID must be a UUID v4');
+ assert.equal(m.id,profile==='store-review'?pack.STORE_ID:ID);assert.equal(m.platform,'win');assert.equal(m.arch,'x64');assert(/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(m.version));
+}
+function snapshotManifest(bytes,profile){
+ const m=JSON.parse(bytes);manifestCheck(m);
+ if(profile==='store-review')m.id=pack.STORE_ID;
+ manifestCheck(m,profile);
+ return profile==='store-review'?Buffer.from(JSON.stringify(m,null,2)+'\n'):Buffer.from(bytes);
+}
 function packageIdentity(version,commit,profile='private'){
  assert(['private','store-review'].includes(profile),'Unknown package profile');assert(/^[a-f0-9]{40}$/.test(commit));
  const review=profile==='store-review';if(review)assert(/^\d+\.\d+\.\d+$/.test(version),'Review package requires a formal version');
  return {schema:review?'framilo-review-package-v1':'framilo-private-package-v1',basename:'framilo-'+version+(review?'-store-review.1':'')+'-'+commit.slice(0,7)+'-win-x64',...(review?{stage:'store-review',reviewRound:1,storeSubmissionApproved:false}:{})};
 }
 function checkFiles(files,info){
- assert(['framilo-private-package-v1','framilo-review-package-v1'].includes(info.schema));assert.equal(info.pluginId,ID);assert(/^[a-f0-9]{40}$/.test(info.sourceCommit));
+ assert(['framilo-private-package-v1','framilo-review-package-v1'].includes(info.schema));
+ const review=info.schema==='framilo-review-package-v1';assert.equal(info.pluginId,review?pack.STORE_ID:ID);assert(/^[a-f0-9]{40}$/.test(info.sourceCommit));
  if(info.schema==='framilo-review-package-v1'){assert.equal(info.stage,'store-review');assert.equal(info.reviewRound,1);assert.equal(info.storeSubmissionApproved,false);assert(/^\d+\.\d+\.\d+$/.test(info.version));}
  assert.equal(info.publicRelease,false);assert.equal(info.longTermAccepted,false);
  assert.deepStrictEqual(Object.keys(files).sort(),[...RUNTIME,'README.md'].sort());
  assert.deepStrictEqual(Object.keys(info.files).sort(),Object.keys(files).sort());
  for(const[n,b]of Object.entries(files)){assert(Buffer.isBuffer(b));assert.equal(info.files[n].bytes,b.length);assert.equal(info.files[n].sha256,sha(b),'Changed file: '+n);if(/\.(?:js|cjs|cs|json|html|css|md|exe)$/.test(n))pack.scanText(b,n);}
- const m=JSON.parse(files['manifest.json']);manifestCheck(m);assert.equal(m.version,info.version);
- return pack.validateRuntime(Object.fromEntries(RUNTIME.map(n=>[n,files[n]])),{profile:'native-experience',version:info.version});
+ const m=JSON.parse(files['manifest.json']);manifestCheck(m,review?'store-review':'private');assert.equal(m.version,info.version);
+ return pack.validateRuntime(Object.fromEntries(RUNTIME.map(n=>[n,files[n]])),{profile:review?'store-review':'native-experience',version:info.version});
 }
 function ps(code,env){const r=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; "+code],{cwd:ROOT,windowsHide:true,encoding:'utf8',timeout:60000,maxBuffer:1024**2,env:{...process.env,...env}});if(r.error||r.status!==0)throw Error('Archive operation failed: '+(r.error?.message||r.stderr));return r.stdout.trim().replace(/^\uFEFF/,'');}
 function withinDist(folder){folder=path.resolve(folder);assert(path.dirname(folder)===DIST&&/^framilo-[\w.-]+-win-x64$/.test(path.basename(folder)),'Expected an explicit Framilo snapshot inside dist');safe(DIST,true);safe(folder,true);return folder;}
@@ -49,14 +60,15 @@ function build(ref='HEAD',profile='private'){
  // Only the ignored guard pair may come from the local build, and its exact
  // source/executable hashes are validated by validateRuntime before packaging.
  for(const n of RUNTIME)assert(tracked.has('plugin/'+n)||/^native\/task-host\.local\.(exe|json)$/.test(n),'Unversioned runtime input: '+n);
- const m=JSON.parse(files['manifest.json']);manifestCheck(m);
+ files['manifest.json']=snapshotManifest(files['manifest.json'],profile);
+ const m=JSON.parse(files['manifest.json']);manifestCheck(m,profile);
  const identity=packageIdentity(m.version,commit,profile);
  files['README.md']=Buffer.from('Framilo · 个人使用快照\n版本：'+m.version+'\n来源：'+commit+'\n\n完整解压到独立的非C盘可写目录，再通过Eagle载入本地插件。\n本包不公开发行，实际宿主体验以当前验收记录为准。需要Windows x64、Eagle 4.0 Build 22或更高版本，以及Eagle的FFmpeg模块；无需安装Rust或Node.js。版本过低请先升级；缺少接口时请确认版本符合要求并重启Eagle后重新打开Framilo。\n升级前关闭播放器。保留原目录的memory-settings.json和annotation-data，不移动或覆盖Eagle素材库。\n回退只恢复本插件程序文件；不要删除用户偏好、标注、未知文件或活动缓存。\n相同插件ID不能同时注册两个入口；不要将回退目录当第二个插件同时运行。\n回退版本不支持的新功能和偏好可能无法使用；Git回退不能撤销Eagle标注写入。\n首次在新目录使用可能需要重新生成缓存；正常关闭清理本窗口临时媒体。\n\n第三方许可在bin目录。项目整体开源许可证未指定，本包不授予新许可。\n');
  // Read the approved package copy from the same commit as the runtime. Never
  // inherit a working-directory README, preferences, annotations or cache.
  if(profile==='store-review')files['README.md']=git(['show',commit+':docs/releases/framilo-package-readme.md']);
  const {basename,...identityInfo}=identity;
- const info={...identityInfo,version:m.version,sourceCommit:commit,commitTime,pluginId:ID,publicRelease:false,longTermAccepted:false,files:Object.fromEntries(Object.entries(files).map(([n,b])=>[n,{bytes:b.length,sha256:sha(b)}]))};checkFiles(files,info);
+ const info={...identityInfo,version:m.version,sourceCommit:commit,commitTime,pluginId:m.id,publicRelease:false,longTermAccepted:false,files:Object.fromEntries(Object.entries(files).map(([n,b])=>[n,{bytes:b.length,sha256:sha(b)}]))};checkFiles(files,info);
  if(!fs.existsSync(DIST))fs.mkdirSync(DIST);safe(DIST,true);
  const used=inventory(DIST).reduce((n,p)=>n+safe(path.join(DIST,p)).size,0),size=Object.values(files).reduce((n,b)=>n+b.length,0);assert(used+size*2+1024**2<=BUDGET,'Private snapshot budget exceeded');
  const folder=path.join(DIST,basename);
@@ -67,4 +79,4 @@ function build(ref='HEAD',profile='private'){
  return verify(folder);
 }
 if(require.main===module){const mode=process.argv[2];assert(['build','build-review','verify'].includes(mode)&&process.argv.length<=4);console.log(JSON.stringify(mode==='verify'?verify(process.argv[3]):build(process.argv[3],mode==='build-review'?'store-review':'private'),null,2));}
-module.exports={build,verify,checkFiles,manifestCheck,packageIdentity,RUNTIME};
+module.exports={build,verify,checkFiles,manifestCheck,snapshotManifest,packageIdentity,RUNTIME};

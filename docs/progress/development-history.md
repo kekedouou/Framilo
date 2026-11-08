@@ -2,6 +2,16 @@
 
 本页记录发生过的工作和决定，不维护第二份当前进度。现状见[当前交接](../progress.md)，问题见[验收登记](../acceptance.md)，未来方向见[路线图](../roadmap.md)。每个可独立交付的改动记一条：日期、类型/领域、目标或问题、结果/限制、证据与来源版本。旧事件冻结，错误追加更正；大里程碑结束或记录过长时按里程碑归档并保留索引，不逐次编辑建文件。
 
+## 2026-11-08 正式投稿UUID修复
+
+负责人上传.eagleplugin遭投稿页面拒绝，提示插件ID必须为有效UUID。被拒包SHA256为1720bf197741dcf596df1eb93eacf7c74293e011f9b9a72853ea66577e881e1a；75文件与e181e96干净ZIP逐字节一致，但manifest沿用开发ID EVAVIDEOANALYSIS20261011。此前“发布配置通过”的结论遗漏商店ID约束，予以更正。本地加载、归档完整、许可闭包均不能证明商店字段合法。[官方manifest说明](https://developer.eagle.cool/plugin-api/zh-cn/tutorial/manifest)仍给出非UUID旧示例，当前投稿页面实际校验作为本次故障的直接证据，不能用旧示例推翻真实错误。
+
+最小修复：store-review构建时使用固定UUID 65709e49-3320-4c75-8925-526e55dd0ecb，manifest与BUILD-INFO一致；运行闭包校验区分商店/开发/冻结Beta身份并保留全部原生许可检查。日常plugin及其ID、数据完全不改；正式身份与开发入口分离，旧圈画/偏好不自动迁移，不卸载任何入口。README正文与播放器代码不变。步骤及预算登记于当前交接，不新增产品功能或UI预览。
+
+回归先确认旧校验未拒绝非UUID导致新增测试失败，再验证固定UUID格式、重复构建稳定、旧ID/其它UUID拒绝、开发/商店身份混用拒绝、manifest只改id、BUILD-INFO身份及摘要匹配、偏好排除。private-package、26项native-experience-package和19项冻结release-package回归通过，原生/132依赖包与68许可文本沿用检查；文档初检状态枚举写成“执行中”失败，改为既有“进行中”后复验。后续构建及差异回执记录在verification-runs/store-uuid；不将本地回归记作Eagle上传成功。
+
+说明材料核查：[准备插件](https://developer.eagle.cool/plugin-api/zh-cn/distribution/prepare)要求相关特殊条件的可执行测试信息放投稿说明或包根README；[发布插件](https://developer.eagle.cool/plugin-api/zh-cn/distribution/publish)列出上传、介绍、更新内容和提交审核，并未保证存在两个名为“审核说明”“数据说明”的专用表单。[安全与隐私](https://developer.eagle.cool/plugin-api/zh-cn/plugin-review/criteria/security-and-privacy)与[商店文案](https://developer.eagle.cool/plugin-api/zh-cn/plugin-review/criteria/store-listing-copy)要求向用户说明关键数据处理条件。两份材料名称是组织方式，不是官方强制文件名；先提供负责人简明问卷，不在确认前写正式稿。
+
 ## 2026-11-08 正式包说明与干净发布副本
 
 负责人批准四节正式README，FilmCraft仅标注实际复用的部分，保留原许可证；要求独立发布副本无本机偏好与空缓存，再替换旧ZIP，日常数据不动。基线2b1aeee。方案：已批准正文成为版本化模板，store-review从来源提交读取；以现有运行白名单在新目录构建，避免把使用后产生的数据带入发布，不清理任何原日常目录。计划/预算见[交接](../progress.md)，本轮本地提交、不推送。

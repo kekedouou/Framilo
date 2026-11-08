@@ -12,6 +12,8 @@ const NAMES = [...RUNTIME, 'README.md', 'CHANGELOG.md', 'BUILD-INFO.json'].sort(
 // This profile only validates the registered local development directory. It is
 // deliberately separate from the frozen Beta distribution recipe and its 2MiB cap.
 const NATIVE_LIMIT = 64 * 1024 ** 2, NATIVE_ID = 'EVAVIDEOANALYSIS20261011';
+// Permanent store identity. Keep the registered development entry and its data separate.
+const STORE_ID = '65709e49-3320-4c75-8925-526e55dd0ecb';
 const NATIVE_VERSION = require('../plugin/manifest.json').version;
 const NATIVE_EXCLUDED = new Set(['player.js','proxy-decoder.js','scrub-preview.js','quick-preview.js','record-previews.js',
   'performance-core.cjs','performance-stages.cjs','performance-runtime.cjs','performance-view.js','performance-window.html','performance-window.js','performance.css','live-resources.cjs']);
@@ -56,7 +58,7 @@ function packageManifest(bytes) {
   return Buffer.from(JSON.stringify({ ...original, id: ID, name: '视频分析 · MVP Beta', keywords: ['视频', '逐帧', '分析', 'Beta'] }, null, 2) + '\n');
 }
 function validateRuntime(files, options = {}) {
-  const native = options.profile === 'native-experience';
+  const store = options.profile === 'store-review', native = store || options.profile === 'native-experience';
   assert(!options.profile || native, 'Unknown runtime validation profile.');
   const runtime = native ? NATIVE_RUNTIME : RUNTIME;
   assert.deepStrictEqual(Object.keys(files).sort(), [...runtime].sort(), 'Runtime allowlist incomplete or contains extra data.');
@@ -65,7 +67,7 @@ function validateRuntime(files, options = {}) {
   assert(bytes <= (native ? NATIVE_LIMIT : LIMIT), 'Runtime exceeds profile byte limit.');
   const manifest = JSON.parse(files['manifest.json']);
   assert.equal(manifest.version, native ? (options.version || NATIVE_VERSION) : VERSION); assert.equal(manifest.platform, 'win'); assert.equal(manifest.arch, 'x64');
-  assert.equal(manifest.id, native ? NATIVE_ID : ID); assert.equal(manifest.main.url, 'index.html'); assert.equal(manifest.main.multiple, false); assert.equal(manifest.devTools, false);
+  assert.equal(manifest.id, store ? STORE_ID : native ? NATIVE_ID : ID); assert.equal(manifest.main.url, 'index.html'); assert.equal(manifest.main.multiple, false); assert.equal(manifest.devTools, false);
   assert.equal(manifest.logo, '/logo.png');
   const local = (name, from) => {
     const normalized = path.posix.normalize(path.posix.join(path.posix.dirname(from), name));
@@ -91,7 +93,7 @@ function validateRuntime(files, options = {}) {
   assert.equal(build.sourceSha256, sha(files['native/task-host.cs'])); assert.equal(build.executableSha256, sha(files['native/task-host.local.exe']));
   assert(build.bytes <= 256 * 1024); assert.equal(files['native/task-host.local.exe'].subarray(0, 2).toString(), 'MZ');
   const result = { runtimeFiles: runtime.length, runtimeBytes: bytes, dependenciesChecked: true, guardVerified: true };
-  if (native) Object.assign(result, validateNativeBinary(files), { profile: 'native-experience', localOnly: true, archiveGenerated: false });
+  if (native) Object.assign(result, validateNativeBinary(files), { profile: options.profile, localOnly: true, archiveGenerated: false });
   return result;
 }
 function validateNativeBinary(files) {
@@ -239,5 +241,5 @@ if (require.main === module) {
   const mode = process.argv[2] || 'build'; assert(process.argv.length <= 3 && ['build', 'verify', 'extract', 'verify-install', 'native-experience'].includes(mode));
   console.log(JSON.stringify(({ build, verify, extract, 'verify-install': verifyInstall, 'native-experience': validateNativeExperience })[mode](), null, 2));
 }
-module.exports = { VERSION, NAME, ID, RUNTIME, NATIVE_RUNTIME, NATIVE_LIMIT, NATIVE_VERSION, packageManifest, validateRuntime, validateNativeExperience,
+module.exports = { VERSION, NAME, ID, STORE_ID, RUNTIME, NATIVE_RUNTIME, NATIVE_LIMIT, NATIVE_VERSION, packageManifest, validateRuntime, validateNativeExperience,
   assertLegacyBuildSource, scanText, build, verify, extract, verifyInstall };

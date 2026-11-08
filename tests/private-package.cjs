@@ -2,6 +2,7 @@
 // Read-only snapshots + in-memory mutations; no archives, installation or media.
 const fs=require('fs'),path=require('path'),crypto=require('crypto'),assert=require('assert');
 const p=require('../scripts/package-private.cjs'),root=path.resolve(__dirname,'..');
+const pack=require('../scripts/package-release.cjs');
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const files=Object.fromEntries(p.RUNTIME.map(n=>[n,fs.readFileSync(path.join(root,'plugin',n))]));files['README.md']=Buffer.from('Private build');
 const version=JSON.parse(files['manifest.json']).version;
@@ -9,10 +10,26 @@ const info={schema:'framilo-private-package-v1',version,sourceCommit:'a'.repeat(
 assert(p.checkFiles(files,info).licenseClosureVerified);
 const review=p.packageIdentity(version,'a'.repeat(40),'store-review');
 assert.equal(review.basename,'framilo-'+version+'-store-review.1-aaaaaaa-win-x64');
-const {basename,...reviewIdentity}=review,reviewInfo={...info,...reviewIdentity};
-assert(p.checkFiles(files,reviewInfo).licenseClosureVerified);
-assert.throws(()=>p.checkFiles(files,{...reviewInfo,storeSubmissionApproved:true}));
-assert.throws(()=>p.checkFiles(files,{...reviewInfo,stage:'published'}));
+const {basename,...reviewIdentity}=review;
+// A locally loadable development ID must never pass the store upload gate.
+assert.throws(()=>p.manifestCheck(JSON.parse(files['manifest.json']),'store-review'),/UUID/);
+assert.match(pack.STORE_ID,/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+const sourceManifest=Buffer.from(files['manifest.json']);
+const reviewFiles={...files,'manifest.json':p.snapshotManifest(sourceManifest,'store-review')};
+assert(sourceManifest.equals(files['manifest.json']),'Development manifest must not be mutated');
+assert(p.snapshotManifest(sourceManifest,'private').equals(sourceManifest));
+assert(p.snapshotManifest(sourceManifest,'store-review').equals(reviewFiles['manifest.json']),'Store ID must remain stable across builds');
+assert.deepStrictEqual({...JSON.parse(reviewFiles['manifest.json']),id:info.pluginId},JSON.parse(sourceManifest),'Only release identity may change');
+const reviewInfo={...info,...reviewIdentity,pluginId:pack.STORE_ID,files:Object.fromEntries(Object.entries(reviewFiles).map(([n,b])=>[n,{bytes:b.length,sha256:sha(b)}]))};
+assert(p.checkFiles(reviewFiles,reviewInfo).licenseClosureVerified);
+assert.throws(()=>p.checkFiles(files,{...info,...reviewIdentity}));
+assert.throws(()=>p.checkFiles(reviewFiles,{...reviewInfo,pluginId:info.pluginId}));
+assert.throws(()=>p.checkFiles(reviewFiles,{...reviewInfo,storeSubmissionApproved:true}));
+assert.throws(()=>p.checkFiles(reviewFiles,{...reviewInfo,stage:'published'}));
+assert.throws(()=>p.manifestCheck({...JSON.parse(reviewFiles['manifest.json']),id:'00000000-0000-4000-8000-000000000000'},'store-review'));
+assert.throws(()=>p.manifestCheck(JSON.parse(reviewFiles['manifest.json']),'private'));
+assert.throws(()=>p.snapshotManifest(sourceManifest,'unknown'));
+assert.throws(()=>p.checkFiles({...reviewFiles,'memory-settings.json':Buffer.from('{}')},reviewInfo));
 assert.throws(()=>p.packageIdentity('1.0.0-private.1','a'.repeat(40),'store-review'));
 assert.equal(p.packageIdentity(version,'a'.repeat(40)).schema,'framilo-private-package-v1');
 assert.throws(()=>p.checkFiles({...files,'memory-settings.json':Buffer.from('{}')},info));
