@@ -4,7 +4,7 @@
 任务状态：已完成
 产品阶段：首个正式版本的上架前整体审查
 维护记录：[最低版本与接口提示](progress/development-history.md#2026-11-08-最低版本与接口提示)
-候选提交：0fa8818
+候选提交：b1e6ca9
 工作区登记：[保留清单](workspace-exceptions.json)
 
 ## 目标与授权
